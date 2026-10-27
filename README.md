@@ -105,6 +105,14 @@ Dependencies and signatures are recomputed locally. Nothing received is executed
 installs use `--ignore-scripts`. Tampered source sent under an existing hash is rejected; `sync.test.ts`
 checks this.
 
+**Compiler options** come from the project's `tsconfig.json`: `lib`, strictness, `types` and so on are the
+project's choice. A few options are forced, with a warning when the project sets them otherwise:
+- `module`/`moduleResolution` NodeNext, which import classification and `#codebase` rely on;
+- `verbatimModuleSyntax` and `erasableSyntaxOnly`, which Node's type stripping needs;
+- `allowImportingTsExtensions` and `noEmit`.
+
+`ucm import <dir>` uses the tsconfig nearest that directory. Options never affect hashes, only what typechecks.
+
 Tests: `pnpm test` runs the hashing invariants, the frozen golden hashes and an end-to-end CLI scenario.
 `pnpm typecheck` checks the repo.
 
@@ -129,7 +137,7 @@ The design and milestones are in the plan. Still open:
 - `import.meta` is location-dependent: it is evaluated inside `.ucm/cache`, so ucm warns about it.
   ucm-ts's own `createRequire(import.meta.url)` still finds `@types/node`, because the cache sits inside
   the repo.
-- `ucm import` uses ucm's compiler options, not the project's `tsconfig.json`, and skips test files.
+- `ucm import` skips test files.
 - `find` searches signature *text*; structural type search (signature IR) isn't built.
 - No `merge` between branches.
 - Watch results aren't cached by hash.

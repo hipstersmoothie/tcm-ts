@@ -200,7 +200,7 @@ function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: 
   if (!files.length) throw new UsageError(`no .ts files under ${dir}`);
   console.log(dim(`analyzing ${files.length} files under ${dir}…`));
   cb.refreshShim();
-  const a = cb.analyzeProject(files, (file, name) => cb.lineageSalt(joinName(into, namespaceForFile(root, file), name)));
+  const a = cb.analyzeProject(files, (file, name) => cb.lineageSalt(joinName(into, namespaceForFile(root, file), name)), [], cb.compilerOptions(root));
   for (const w of a.warnings) console.log(yellow(`warning: ${w}`));
   if (a.diagnostics.length || a.errors.length) {
     for (const d of a.diagnostics) process.stdout.write(d.formatted);

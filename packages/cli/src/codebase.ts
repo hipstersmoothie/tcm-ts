@@ -12,6 +12,7 @@ import {
   type DefRecord,
   type ProjectAnalysis,
   isConflicted,
+  projectCompilerOptions,
   saltOf,
   scratchNamespace,
   shortHash,
@@ -66,6 +67,8 @@ export class Codebase {
     if (!fs.existsSync(tsconfig)) {
       const options = {
         target: "esnext",
+        // what Node provides at runtime; add "dom" for code that runs in browsers
+        lib: ["esnext"],
         module: "nodenext",
         moduleResolution: "nodenext",
         strict: true,
@@ -104,12 +107,35 @@ export class Codebase {
     this.store.setSetting("shim_stamp", stamp);
   }
 
-  private host(ignoreDiagnostics: number[], saltFor: SaltFor | undefined, oldProgram?: ts.Program): AnalyzeHost {
+  private optionsCache = new Map<string, ts.CompilerOptions>();
+  private warned = new Set<string>();
+
+  /** Compiler options from the tsconfig.json nearest `dir` (the project root's by default). */
+  compilerOptions(dir = this.lay.root): ts.CompilerOptions {
+    let tsconfig: string | undefined;
+    for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+      if (fs.existsSync(path.join(d, "tsconfig.json"))) {
+        tsconfig = path.join(d, "tsconfig.json");
+        break;
+      }
+      if (d === this.lay.root || path.dirname(d) === d) break;
+    }
+    const key = tsconfig ?? "";
+    if (!this.optionsCache.has(key)) {
+      const { options, warnings } = projectCompilerOptions(tsconfig);
+      for (const w of warnings) if (!this.warned.has(w)) (this.warned.add(w), console.error(`warning: ${w}`));
+      this.optionsCache.set(key, options);
+    }
+    return this.optionsCache.get(key)!;
+  }
+
+  private host(ignoreDiagnostics: number[], saltFor: SaltFor | undefined, oldProgram?: ts.Program, compilerOptions = this.compilerOptions()): AnalyzeHost {
     return {
       cacheDir: this.lay.cacheDir,
       ignoreDiagnostics,
       oldProgram,
       saltFor,
+      compilerOptions,
       resolveName: (name, meaning) => {
         const hs = this.store.hashesAt(name, meaning === "type" ? "type" : "term");
         if (hs.length === 0) throw new Error(`'${name}' is not in the codebase`);
@@ -125,8 +151,8 @@ export class Codebase {
     return a;
   }
 
-  analyzeProject(files: string[], saltFor: SaltFor | undefined, ignoreDiagnostics: number[] = []): ProjectAnalysis {
-    return analyzeProject(files, this.host(ignoreDiagnostics, saltFor));
+  analyzeProject(files: string[], saltFor: SaltFor | undefined, ignoreDiagnostics: number[] = [], compilerOptions?: ts.CompilerOptions): ProjectAnalysis {
+    return analyzeProject(files, this.host(ignoreDiagnostics, saltFor, undefined, compilerOptions));
   }
 
   /**

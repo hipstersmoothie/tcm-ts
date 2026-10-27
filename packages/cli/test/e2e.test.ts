@@ -214,6 +214,27 @@ export const summary = () => [first, second, rest.join("+"), host, port, flag, l
   assert.match(ucm("verify"), /rendering and re-hashing is the identity/);
 });
 
+test("the project's tsconfig.json decides lib and strictness; ucm's required options win", () => {
+  const tsconfigFile = path.join(dir, "tsconfig.json");
+  const original = fs.readFileSync(tsconfigFile, "utf8");
+  try {
+    scratch(`export const pageTitle = () => document.title;\n`);
+    assert.throws(() => ucm("check"), /Cannot find name 'document'/, "init's tsconfig targets Node: no DOM");
+    const t = JSON.parse(original);
+    t.compilerOptions.lib = ["esnext", "dom"];
+    t.compilerOptions.module = "commonjs";
+    t.compilerOptions.noUnusedLocals = true;
+    fs.writeFileSync(tsconfigFile, JSON.stringify(t));
+    const out = ucm("check");
+    assert.match(out, /\+ new\s+pageTitle/, "lib dom from the project's tsconfig");
+    assert.match(out, /ucm requires `module` = NodeNext, ignoring the project's setting/);
+    scratch(`export const f = () => { const unused = 1; return 2; };\n`);
+    assert.throws(() => ucm("check"), /'unused' is declared but its value is never read/);
+  } finally {
+    fs.writeFileSync(tsconfigFile, original);
+  }
+});
+
 test("rejects non-erasable and mutable top-level syntax", () => {
   scratch(`enum Color { Red }\n`);
   assert.throws(() => ucm("check"), /enums are not supported/);

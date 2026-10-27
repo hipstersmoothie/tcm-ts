@@ -18,6 +18,8 @@ export interface AnalyzeHost {
   resolveName(name: string, meaning: "type" | "value"): string;
   ignoreDiagnostics?: number[];
   oldProgram?: ts.Program;
+  /** the project's compiler options (see projectCompilerOptions); ucm's defaults otherwise */
+  compilerOptions?: ts.CompilerOptions;
   /**
    * Lineage salt for a term or class declared as `name` in `file`. JavaScript gives every declaration its own
    * identity (`new Map()` twice is two maps; two identical classes fail each other's `instanceof`), so without
@@ -80,7 +82,7 @@ export function saltOf(ir: string): string | undefined {
  * barrels and workspace packages) become hash references, and import cycles become hash cycles.
  */
 export function analyzeProject(files: string[], host: AnalyzeHost, mode: ExtractMode = "import"): ProjectAnalysis {
-  const program = createProgram(files, host.oldProgram);
+  const program = createProgram(files, host.oldProgram, host.compilerOptions);
   const sfs = files.map((f) => {
     const sf = program.getSourceFile(f);
     if (!sf) throw new Error(`cannot read ${f}`);
