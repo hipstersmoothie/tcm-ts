@@ -195,6 +195,25 @@ export const useBoth = () => greet(User.parse({ name: "ada" })) + " " + (Box("y"
   assert.match(ucm("ls", "model.User"), /model\.User\s+#\w+\s+type(?! \(conflicted)/, "the type isn't part of the conflict");
 });
 
+test("top-level destructuring: each binding is a definition, the statement runs once", () => {
+  scratch(`// ucm: namespace cfg
+const log: string[] = [];
+function* numbers() { log.push("iterated"); yield 1; yield 2; yield 3; }
+export const [first, second, ...rest] = numbers();
+export const { host, port = 8080, nested: { flag } } = { host: "h", nested: { flag: true } } as { host: string; port?: number; nested: { flag: boolean } };
+export const summary = () => [first, second, rest.join("+"), host, port, flag, log.length].join(" ");
+`);
+  assert.match(ucm("add"), /\+ new\s+cfg\.first[\s\S]*\+ new\s+cfg\.rest[\s\S]*\+ new\s+cfg\.flag/);
+  assert.equal(ucm("run", "cfg.summary").trim(), "1 2 3 h 8080 true 1", "the generator was iterated once");
+  assert.notEqual(hashOf("cfg.first"), hashOf("cfg.second"));
+
+  // renaming one binding expands its shorthand and leaves the others alone
+  ucm("mv", "cfg.host", "cfg.hostname");
+  assert.match(ucm("view", "cfg.hostname"), /const \{ host: hostname, port = 8080, nested: \{ flag \} \} =/);
+  assert.equal(ucm("run", "cfg.summary").trim(), "1 2 3 h 8080 true 1");
+  assert.match(ucm("verify"), /rendering and re-hashing is the identity/);
+});
+
 test("rejects non-erasable and mutable top-level syntax", () => {
   scratch(`enum Color { Red }\n`);
   assert.throws(() => ucm("check"), /enums are not supported/);

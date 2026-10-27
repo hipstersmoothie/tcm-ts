@@ -42,6 +42,8 @@ export interface DefSite {
   salt?: string;
   /** from a `// ucm: path a.b.c` comment: the codebase path to bind, regardless of namespace and declared name */
   targetPath?: string;
+  /** bindings of one destructuring statement share a group: one component, emitted once */
+  group?: number;
 }
 
 const PATH_PRAGMA = /^\/\/\s*ucm:\s*path\s+(\S+)\s*$/;
@@ -128,6 +130,7 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
   const byName = new Map<string, DefSite>();
 
   let targetPath: string | undefined;
+  let groups = 0;
   const push = (fields: Omit<DefSite, "id" | "isWatch" | "sf" | "targetPath">) => {
     const site = { ...fields, targetPath };
     // one name may bind a type and a value (`const User = z.object(…)` + `type User = …`); a class is both
@@ -197,7 +200,34 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
       }
       for (const decl of st.declarationList.declarations) {
         if (!ts.isIdentifier(decl.name)) {
-          throw new UcmError("top-level destructuring is not supported yet; bind each value with its own `const`.", decl);
+          // `const { a, b: [c] } = init()`: every bound name is its own definition, but the statement runs
+          // once, so they share its source and are hashed and emitted together (see DefSite.group)
+          if (targetPath) throw new UcmError("a `// ucm: path` comment can't name the bindings of a destructuring", decl);
+          const group = groups++;
+          const bind = (pattern: ts.BindingName) => {
+            if (ts.isIdentifier(pattern)) return;
+            for (const el of pattern.elements) {
+              if (ts.isOmittedExpression(el)) continue;
+              if (!ts.isIdentifier(el.name)) {
+                bind(el.name);
+                continue;
+              }
+              push({
+                name: el.name.text,
+                kind: "term",
+                nodes: [decl],
+                tag: "Destructure",
+                pieces: [{ text: "const " }, { start: decl.getStart(sf), end: decl.end }],
+                initKind: "strict",
+                declarations: [el],
+                nameNode: el.name,
+                nominal: !!el.initializer && isAnonymousFunction(el.initializer),
+                group,
+              });
+            }
+          };
+          bind(decl.name);
+          continue;
         }
         push({
           name: decl.name.text,

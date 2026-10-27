@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 /** An IR node: a tag-first S-expression. Arrays and strings only, so serialization is canonical. */
 export type IR = string | IR[];
 
-export const IR_VERSION = 4;
+export const IR_VERSION = 5;
 const DOMAIN = `ucm-ir-v${IR_VERSION}\0`;
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
 

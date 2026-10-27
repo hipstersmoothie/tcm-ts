@@ -1,4 +1,4 @@
-// Golden corpus for IR v4. Hashes of these definitions are pinned in golden.test.ts: if they change,
+// Golden corpus for IR v5. Hashes of these definitions are pinned in golden.test.ts: if they change,
 // the hash format changed, and every stored codebase would need migrating. Don't edit this file.
 import { readFileSync } from "node:fs";
 

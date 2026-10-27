@@ -43,6 +43,8 @@ export interface RenderOptions {
   annotate?: (hash: string, declaredAs: string) => string | undefined;
   /** put `export` on each member's declaration (for type/value pair modules) */
   exportDeclarations?: boolean;
+  /** keep every identifier as it is written in the stored source (migration re-derives text-identical code) */
+  preserveText?: boolean;
 }
 
 export interface Rendered {
@@ -112,7 +114,7 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
 
   const memberNames = new Map<string, string>();
   // functions and classes keep the name they were hashed with, so `.name` agrees with the hash
-  for (const m of members) memberNames.set(m.hash, uniq(m.nominal ? m.nameHint : displayName(m.hash)));
+  for (const m of members) memberNames.set(m.hash, uniq(m.nominal || opts.preserveText ? m.nameHint : displayName(m.hash)));
 
   interface Imp {
     local: string;
@@ -128,7 +130,8 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
     let imp = imports.get(key);
     if (!imp) {
       // codebase refs take their current name; externals keep the local name they were imported as
-      const base = target ? displayName(target) : m.sourceText.slice(span.start, span.end);
+      const written = m.sourceText.slice(span.start, span.end);
+      const base = target && !opts.preserveText ? displayName(target) : written;
       imp = { local: uniq(base), hash: target, ext: span.ext, value: false };
       imports.set(key, imp);
     }
@@ -173,7 +176,11 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
   if (lines.length) lines.push("");
 
   const ordered = opts.style === "scratch" ? members : initOrder(members);
+  // the bindings of one destructuring statement share its source: emit the statement once
+  const emitted = new Set<string>();
   for (const m of ordered) {
+    if (emitted.has(m.sourceText)) continue;
+    emitted.add(m.sourceText);
     if (opts.style === "scratch" && m.doc) lines.push(`/**\n${m.doc.split("\n").map((l) => ` * ${l}`.trimEnd()).join("\n")}\n */`);
     const note = opts.style === "scratch" ? opts.annotate?.(m.hash, memberNames.get(m.hash)!) : undefined;
     if (note) lines.push(note);

@@ -323,18 +323,26 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
       case ts.SyntaxKind.ParenthesizedType:
         return visit((node as ts.ParenthesizedTypeNode).type);
       case ts.SyntaxKind.ShorthandPropertyAssignment: {
+        // `{ x }` hashes exactly like `{ x: x }` (and `{ x = d }` like `{ x: x = d }`): renaming what `x` refers to
+        // expands the shorthand, and the expanded text must hash the same
         const s = node as ts.ShorthandPropertyAssignment;
         const sym = checker.getShorthandAssignmentValueSymbol(s);
-        const out: IR[] = ["Short", s.name.text, refIR(classifySymbol(sym, s.name, s.name.text), s.name, s.name.text, s.name.text)];
-        if (s.objectAssignmentInitializer) out.push(visit(s.objectAssignmentInitializer));
-        return out;
+        const ref = refIR(classifySymbol(sym, s.name, s.name.text), s.name, s.name.text, s.name.text);
+        const init = s.objectAssignmentInitializer;
+        const value: IR = init
+          ? ["BinaryExpression", ["left", isAnonymousFunction(init) ? ["Named", s.name.text, ref] : ref], ["operatorToken", ["EqualsToken"]], ["right", visit(init)]]
+          : ref;
+        return ["PropertyAssignment", ["name", ["N", s.name.text]], ["initializer", value]];
       }
       case ts.SyntaxKind.BindingElement: {
         const b = node as ts.BindingElement;
         // `const { a } = o` binds a local *and* reads property `a`: keep the property name structural
         if (ts.isObjectBindingPattern(b.parent) && !b.propertyName && !b.dotDotDotToken && ts.isIdentifier(b.name)) {
-          const out: IR[] = ["BindShort", b.name.text, refIR(classifySymbol(checker.getSymbolAtLocation(b.name), b.name, b.name.text), b.name, b.name.text)];
-          if (b.initializer) out.push(visit(b.initializer));
+          // `{ a }` hashes exactly like `{ a: a }`; a top-level binding can be renamed, and the span remembers the
+          // property so the splice writes `{ a: renamed }`
+          const ref = refIR(classifySymbol(checker.getSymbolAtLocation(b.name), b.name, b.name.text), b.name, b.name.text, b.name.text);
+          const out: IR[] = ["BindingElement", ["propertyName", ["N", b.name.text]], ["name", isNamingPosition(b.name) ? ["Named", b.name.text, ref] : ref]];
+          if (b.initializer) out.push(["initializer", visit(b.initializer)]);
           return out;
         }
         break;

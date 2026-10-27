@@ -58,7 +58,8 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
 ## How it works
 
 - **Definitions** are top-level `function`s (overloads included), `const`s, `class`es, `type`s and `interface`s.
-  A type and a value can share a name, like TypeScript's own type and value spaces (`const User = z.object(…)`
+  Top-level destructuring (`const { a, b: [c] } = init()`) binds one definition per name; the bindings share
+  the statement, so it still runs once. A type and a value can share a name, like TypeScript's own type and value spaces (`const User = z.object(…)`
   with `type User = z.infer<typeof User>`). Each half is its own definition, updated, diffed and merged
   independently. The `#codebase` shim exports both under the one name.
   Classes hash as one unit. Top-level `let`/`var`, enums, namespaces, decorators and `declare` are rejected
@@ -84,7 +85,7 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
     declarations, `const f = () => …`, and local functions or bindings that name an anonymous function
     (`function helper() {}`, `(cb = () => {}) =>`). Generated code keeps these names, so `ucm mv` changes the
     codebase path but not `.name`. All other locals and parameters stay alpha-renamable.
-  - **The format is frozen at IR v4.** `packages/core/test/golden.test.ts` pins the hashes of a corpus that
+  - **The format is frozen at IR v5.** `packages/core/test/golden.test.ts` pins the hashes of a corpus that
     covers most syntax. `pnpm compare-ts 5.8` re-hashes the repo and the corpus on another TypeScript
     version: 5.8.3, 5.9.3 and 6.0.3 produce identical hashes.
 - **Storage** (`packages/store`): `node:sqlite`. It holds definitions (IR, original source text, spans of
@@ -125,7 +126,6 @@ half-initialized.
 
 The design and milestones are in the plan. Still open:
 
-- Top-level destructuring (`const { a, b } = …`) is rejected rather than stored as a multi-member component.
 - `import.meta` is location-dependent: it is evaluated inside `.ucm/cache`, so ucm warns about it.
   ucm-ts's own `createRequire(import.meta.url)` still finds `@types/node`, because the cache sits inside
   the repo.

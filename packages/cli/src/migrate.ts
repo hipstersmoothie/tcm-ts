@@ -70,6 +70,7 @@ export function migrate(root: string): boolean {
 
   const map = new Map<string, string>();
   const failed = new Map<string, string>();
+
   for (const c of dependencyOrder(old)) {
     const members = old.componentMembers(c);
     const memberSet = new Set(members.map((m) => m.hash));
@@ -82,7 +83,8 @@ export function migrate(root: string): boolean {
     const src = cb.source();
     materialize(external.map((h) => map.get(h)!), src, cb.lay);
     ensureExternals(cb.lay, members.flatMap((m) => m.spans.flatMap((s) => (s.ext ? [s.ext] : []))));
-    const rendered = render(members, src, cb.lay, { style: "internal", remap: (h) => map.get(h) ?? h });
+    // keep every identifier as written, so the stored source text survives migration unchanged
+    const rendered = render(members, src, cb.lay, { style: "internal", remap: (h) => map.get(h) ?? h, preserveText: true });
     const tmp = path.join(cb.lay.cacheDir, `_migrate_${c}.ts`);
     fs.writeFileSync(tmp, rendered.text);
     const byName = new Map([...rendered.memberNames].map(([h, n]) => [n, members.find((m) => m.hash === h)!]));

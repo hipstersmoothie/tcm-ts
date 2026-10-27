@@ -171,3 +171,9 @@ test("a lineage salt gives identical code separate identities", () => {
   assert.notEqual(salted.cacheA, salted.cacheB, "two `new Map()`s are two maps");
   assert.deepEqual(run((_f, name) => `lib.${name}`), salted, "the same salts reproduce the same hashes");
 });
+
+test("shorthand and explicit property forms hash the same", () => {
+  assert.equal(hashes(`const f = (o: { a: number }) => { const { a } = o; return { a } }`).f, hashes(`const f = (o: { a: number }) => { const { a: a } = o; return { a: a } }`).f);
+  assert.equal(hashes(`const f = (o: { a?: number }) => { const { a = 1 } = o; return a }`).f, hashes(`const f = (o: { a?: number }) => { const { a: a = 1 } = o; return a }`).f);
+  assert.equal(hashes(`const x = 1; const f = () => ({ x })`).f, hashes(`const x = 1; const f = () => ({ x: x })`).f);
+});

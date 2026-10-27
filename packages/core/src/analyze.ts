@@ -275,6 +275,10 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
   });
   if (errors.length) return { defs: [], watches: [], warnings, errors };
   const ok = results as SiteResult[];
+  // bindings of one destructuring statement must share a component (the statement runs once)
+  const groups = new Map<string, DefSite[]>();
+  for (const s of sites) if (s.group !== undefined) groups.set(`${s.sf.fileName} ${s.group}`, [...(groups.get(`${s.sf.fileName} ${s.group}`) ?? []), s]);
+  for (const members of groups.values()) for (const a of members) for (const b of members) if (a !== b) ok[a.id]!.edges.set(b.id, true);
   const sccs = tarjan(sites.length, (v) => ok[v]!.edges.keys());
 
   const hashOf = new Map<number, string>();

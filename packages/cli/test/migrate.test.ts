@@ -34,6 +34,13 @@ export const probe = () => [cacheA === cacheB, square(3)].join(" ");
   ucm("branch", "feature");
   const names = ucm("ls");
   const history = ucm("history", "50");
+  const texts = () => {
+    const db = new DatabaseSync(path.join(dir, ".ucm", "codebase.sqlite"));
+    const rows = db.prepare("SELECT name_hint || ' | ' || source_text AS t FROM definitions ORDER BY t").all() as { t: string }[];
+    db.close();
+    return rows.map((r) => r.t);
+  };
+  const before = texts();
 
   // simulate a codebase from before lineage salts: strip them from the stored IR and mark it v3
   const db = new DatabaseSync(path.join(dir, ".ucm", "codebase.sqlite"));
@@ -51,6 +58,7 @@ export const probe = () => [cacheA === cacheB, square(3)].join(" ");
   // salts are re-derived from where each definition was first added, so the same hashes come back
   assert.equal(ucm("ls"), names);
   assert.equal(ucm("history", "50"), history);
+  assert.deepEqual(texts(), before, "definitions keep the names and source text they were written with");
   assert.match(ucm("branch"), /feature/);
   assert.equal(ucm("run", "state.probe").trim(), "false 9", "two maps are still two maps");
 });
