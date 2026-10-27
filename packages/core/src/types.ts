@@ -21,6 +21,8 @@ export interface Span {
   ext?: ExtRef;
   /** set when the span is a shorthand property `{ x }`; holds the property name */
   shorthand?: string;
+  /** the span is the string literal of a dynamic `import("pkg")`: splicing writes a module specifier */
+  literal?: boolean;
 }
 
 export interface Dep {

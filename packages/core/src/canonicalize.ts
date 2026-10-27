@@ -56,6 +56,7 @@ export interface RawSpan {
   strict: boolean;
   target: { def: number } | { hash: string } | { ext: ExtRef };
   shorthand?: string;
+  literal?: boolean;
 }
 
 export interface SiteResult {
@@ -77,6 +78,7 @@ export interface CanonContext {
   warn(message: string, node: ts.Node): void;
   declToDef: Map<ts.Node, number>;
   classifyImport(decl: ts.ImportSpecifier | ts.ImportClause | ts.NamespaceImport, meaning: Meaning): Resolved;
+  classifyDynamicImport(spec: string, at: ts.Node): ExtRef;
 }
 
 const IDENT_NAME = /^[A-Za-z_$][\w$]*$/;
@@ -360,8 +362,19 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
         break;
       }
       case ts.SyntaxKind.CallExpression: {
-        if ((node as ts.CallExpression).expression.kind === ts.SyntaxKind.ImportKeyword) {
-          throw new UcmError("dynamic `import()` is not content-addressable; use a static import", node);
+        const call = node as ts.CallExpression;
+        if (call.expression.kind === ts.SyntaxKind.ImportKeyword) {
+          const arg = call.arguments[0];
+          if (call.arguments.length !== 1 || !arg || !(ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))) {
+            // a computed specifier loads code the codebase doesn't track (like `import.meta`, it depends on where
+            // the module runs): allowed, hashed as written, and flagged
+            ctx.warn("`import()` with a computed specifier loads code the codebase doesn't track", node);
+            break;
+          }
+          // pinned like a static import; the generated code imports the pinned version
+          const ext = ctx.classifyDynamicImport(arg.text, arg);
+          spans.push({ start: arg.getStart(sf), end: arg.end, pos: "value", strict: false, target: { ext }, literal: true });
+          return ["DynImport", ext.module, ext.subpath];
         }
         break;
       }

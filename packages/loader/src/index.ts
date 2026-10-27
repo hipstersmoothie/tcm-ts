@@ -143,6 +143,13 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
   for (const m of members) {
     let text = m.sourceText;
     for (const span of [...m.spans].sort((a, b) => b.start - a.start)) {
+      if (span.literal && span.ext) {
+        // `import("pkg")`: point at the pinned version (the real package name in editable scratch files)
+        const e = span.ext;
+        const spec = e.module.startsWith("npm:") ? (opts.style === "scratch" ? realPackage(e.module) : npmAlias(e.module)) + (e.subpath ? `/${e.subpath}` : "") : e.module;
+        text = text.slice(0, span.start) + JSON.stringify(spec) + text.slice(span.end);
+        continue;
+      }
       const local = localFor(m, span);
       const replacement = span.shorthand && span.shorthand !== local ? `${span.shorthand}: ${local}` : local;
       text = text.slice(0, span.start) + replacement + text.slice(span.end);

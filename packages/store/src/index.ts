@@ -210,6 +210,11 @@ export class Store {
     return this.branchCache;
   }
 
+  /** Re-read the current branch on next use (another process may have switched it). */
+  forgetBranch() {
+    this.branchCache = undefined;
+  }
+
   branches(): string[] {
     return (this.db.prepare("SELECT name FROM branches ORDER BY id").all() as { name: string }[]).map((r) => r.name);
   }

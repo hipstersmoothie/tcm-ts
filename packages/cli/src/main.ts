@@ -4,6 +4,8 @@ import { isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from
 import { evaluateWatches, render, run } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { migrate } from "./migrate.ts";
+import { dev } from "./dev.ts";
+import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
 import { isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
 import { diffNamespaces, printDiff, rewind, stateOf } from "./diff.ts";
@@ -227,7 +229,14 @@ function verify(cb: Codebase): boolean {
 function header(cb: Codebase, hash: string): string {
   const rec = cb.store.getDef(hash)!;
   const names = cb.store.pathsOf(hash);
-  return `${dim("//")} ${bold(names.join(", ") || "(unnamed)")} ${dim(shortHash(hash))} ${dim(rec.kind === "type" ? rec.signature : ": " + rec.signature)}`;
+  const line = `${dim("//")} ${bold(names.join(", ") || "(unnamed)")} ${dim(shortHash(hash))} ${dim(rec.kind === "type" ? rec.signature : ": " + rec.signature)}`;
+  if (rec.kind === "type") return line;
+  const placement = new Placement(cb);
+  const p = placement.placeOf(hash);
+  const where = p.place === "anywhere" ? "runs anywhere" : `runs ${p.place === "server" ? "on the server" : "in the browser"}: it ${p.why}${p.conflict ? `; but ${p.conflict}` : ""}`;
+  const cross = p.place === "server" && placement.crossable(hash) ? "; browser code calls it by hash" : "";
+  return `${line}
+${dim(`// ${where}${cross}`)}`;
 }
 
 function view(cb: Codebase, targets: string[]) {
@@ -501,6 +510,7 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
                                  changes since a history entry, to another branch, or between branches
   ucm history [n] / reset <id>   name changes on this branch / undo back to an entry
   ucm branch [name] / switch <name>
+  ucm dev <app> [--port 5173]    serve a browser app from the codebase; what needs the server runs there, called by hash
   ucm merge <branch>             three-way merge into this branch; dependents follow the other side's updates
 
   ucm remote [add <name> <url|dir> [--token t] [--fingerprint sha256] | rm <name>]
@@ -565,6 +575,10 @@ square(12);
       return importProject(cb, args[0]!, flags.update ? "update" : "add", into ?? "", !!flags.verbose) ? 0 : 1;
     case "verify":
       return verify(cb) ? 0 : 1;
+    case "dev":
+      need(1, "dev <app> [--port 5173]");
+      await dev(cb, args[0]!, Number(typeof flags.port === "string" ? flags.port : 5173));
+      return -1; // keep serving
     case "test": {
       const ns = args[0] ?? "";
       const names = cb.store.names().filter((n) => n.kind !== "type" && isTestPath(n.path) && (!ns || n.path === ns || n.path.startsWith(ns + ".")));

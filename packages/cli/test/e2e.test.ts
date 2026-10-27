@@ -219,8 +219,10 @@ test("the project's tsconfig.json decides lib and strictness; ucm's required opt
   const original = fs.readFileSync(tsconfigFile, "utf8");
   try {
     scratch(`export const pageTitle = () => document.title;\n`);
-    assert.throws(() => ucm("check"), /Cannot find name 'document'/, "init's tsconfig targets Node: no DOM");
     const t = JSON.parse(original);
+    t.compilerOptions.lib = ["esnext"];
+    fs.writeFileSync(tsconfigFile, JSON.stringify(t));
+    assert.throws(() => ucm("check"), /Cannot find name 'document'/, "a Node-only lib has no DOM");
     t.compilerOptions.lib = ["esnext", "dom"];
     t.compilerOptions.module = "commonjs";
     t.compilerOptions.noUnusedLocals = true;
@@ -233,6 +235,13 @@ test("the project's tsconfig.json decides lib and strictness; ucm's required opt
   } finally {
     fs.writeFileSync(tsconfigFile, original);
   }
+});
+
+test("dynamic import() loads a pinned package lazily", () => {
+  scratch(`export const lazyBase = async (p: string) => (await import("node:path")).basename(p);\n`);
+  ucm("add");
+  assert.equal(ucm("run", "lazyBase", "/a/b/report.txt").trim(), "report.txt");
+  assert.match(ucm("view", "lazyBase"), /await import\("node:path"\)/);
 });
 
 test("rejects non-erasable and mutable top-level syntax", () => {

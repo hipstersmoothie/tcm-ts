@@ -11,7 +11,12 @@ import ts from "typescript";
 const repo = path.resolve(import.meta.dirname, "..");
 const out = path.join(repo, "dist", "package");
 const root = JSON.parse(fs.readFileSync(path.join(repo, "package.json"), "utf8")) as { version?: string };
-const core = JSON.parse(fs.readFileSync(path.join(repo, "packages/core/package.json"), "utf8")) as { dependencies: Record<string, string> };
+// third-party dependencies of every workspace package (workspace links are bundled into this one package)
+const dependencies: Record<string, string> = {};
+for (const pkg of ["core", "store", "loader", "cli"]) {
+  const deps = (JSON.parse(fs.readFileSync(path.join(repo, "packages", pkg, "package.json"), "utf8")) as { dependencies?: Record<string, string> }).dependencies ?? {};
+  for (const [name, range] of Object.entries(deps)) if (!range.startsWith("workspace:")) dependencies[name] = range;
+}
 
 // workspace package → its entry module within the built package
 const ENTRIES: Record<string, string> = {
@@ -75,7 +80,7 @@ fs.writeFileSync(
       // `ucm-ts` too, since Unison's own CLI is also called `ucm`
       bin: { ucm: "bin/ucm.js", "ucm-ts": "bin/ucm.js" },
       engines: { node: ">=22.18" },
-      dependencies: core.dependencies,
+      dependencies,
       files: ["bin", "core", "store", "loader", "cli", "README.md"],
     },
     null,

@@ -61,6 +61,9 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
 
 ## How it works
 
+- **Dynamic `import("pkg")`** of a package or Node builtin is pinned like a static import, so it's still
+  content-addressed. Lazy imports of local files or codebase modules are rejected. A computed specifier
+  (`import(url)`) is allowed with a warning, because it loads code the codebase doesn't track.
 - **Definitions** are top-level `function`s (overloads included), `const`s, `class`es, `type`s and `interface`s.
   Top-level destructuring (`const { a, b: [c] } = init()`) binds one definition per name; the bindings share
   the statement, so it still runs once. A type and a value can share a name, like TypeScript's own type and value spaces (`const User = z.object(…)`
@@ -125,6 +128,57 @@ available as `ucm-ts`, since Unison's own CLI is called `ucm` too.
 
 Tests: `pnpm test` runs the hashing invariants, the frozen golden hashes and an end-to-end CLI scenario.
 `pnpm typecheck` checks the repo.
+
+## Browser apps: no network boundary to write
+
+```ts
+// ucm: namespace app
+import { readFileSync } from "node:fs";
+
+export async function hostCount(): Promise<number> {       // uses node:fs → runs on the server
+  return readFileSync("/etc/hosts", "utf8").split("\n").length;
+}
+export const render = (n: number) => `hosts: ${n}`;        // runs anywhere
+export async function main() {                             // uses document → runs in the browser
+  document.querySelector("#app")!.textContent = render(await hostCount());
+}
+```
+
+`ucm dev app.main` serves this through Vite 8. Nothing is annotated: there's no `"use server"`, no routes, no
+fetch calls and no API layer.
+
+**How placement is inferred** (`ucm view` shows it for every definition):
+- A definition runs **on the server** if it uses Node (`node:*`, `process`, `Buffer`, a server-only npm package),
+  or uses something that does and can't be called remotely.
+- It runs **in the browser** if it uses the DOM.
+- Otherwise it runs **anywhere**.
+- An **async** server function is a cut point. Browser code calling it gets a stub that calls it by hash, and
+  the code around the call stays in the browser.
+- A **synchronous** server function used from the browser is an error that names it ("Make app.machine
+  async"), because a network call can't be synchronous.
+
+**What this guarantees:**
+- **Server code never reaches the browser.** The Vite plugin swaps whole server components for stubs before
+  they're resolved.
+- **The browser can call only the app's own server functions.** The endpoint surface is exactly the server
+  functions the app calls, listed when `ucm dev` starts. Anything else, and cross-origin calls, are refused.
+- **No client/server version skew.** Calls go by hash, as Unison's typed service calls do, and a hash never
+  changes meaning.
+- **Plain data crosses the wire:** JSON plus `Date`, `Map`, `Set`, `BigInt` and `undefined`. Anything else is
+  refused with a message.
+- **Hot reload:** `ucm update` in another shell reloads the browser.
+- **Testable in one process:** in `ucm test` everything runs locally, the counterpart of Unison's local
+  `Remote` handler.
+
+**Not yet:**
+- **Production builds.** `ucm dev` is development only, so `ucm build` plus a production server comes next.
+- **Server functions take only plain data.** Arguments aren't validated against their TypeScript types at
+  runtime, so treat them as untrusted input.
+- **Server-only npm packages are found by a heuristic:** no browser build, and an entry that imports Node
+  builtins.
+- **Module-level state follows its code.** State touched only by code that runs anywhere (`const cache = new
+  Map()`) lives in each browser tab, as in any single-page app. It isn't shared server state unless the code
+  using it needs the server.
 
 ## Self-hosting
 

@@ -67,8 +67,8 @@ export class Codebase {
     if (!fs.existsSync(tsconfig)) {
       const options = {
         target: "esnext",
-        // what Node provides at runtime; add "dom" for code that runs in browsers
-        lib: ["esnext"],
+        // one codebase holds server and browser code; where each definition runs is inferred (see placement.ts)
+        lib: ["esnext", "dom"],
         module: "nodenext",
         moduleResolution: "nodenext",
         strict: true,

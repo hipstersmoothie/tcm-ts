@@ -177,3 +177,9 @@ test("shorthand and explicit property forms hash the same", () => {
   assert.equal(hashes(`const f = (o: { a?: number }) => { const { a = 1 } = o; return a }`).f, hashes(`const f = (o: { a?: number }) => { const { a: a = 1 } = o; return a }`).f);
   assert.equal(hashes(`const x = 1; const f = () => ({ x })`).f, hashes(`const x = 1; const f = () => ({ x: x })`).f);
 });
+
+test("dynamic import() of a package is a pinned external dependency", () => {
+  const [d] = analyze(`export const base = async (p: string) => (await import("node:path")).basename(p);`).defs;
+  assert.deepEqual(d!.deps.map((x) => x.ref), ["node:path#*"]);
+  assert.match(d!.ir, /"DynImport","node:path"/);
+});

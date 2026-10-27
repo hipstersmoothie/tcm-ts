@@ -6,7 +6,7 @@ import { hashFromExportId, hashIR, serializeIR, type IR } from "./hash.ts";
 import { extract, UcmError, type DefSite, type ExtractMode, type Piece } from "./extract.ts";
 import { canonicalizeSite, type CanonContext, type Resolved, type SiteResult } from "./canonicalize.ts";
 import { createProgram, fileDiagnostics, type Diagnostic } from "./program.ts";
-import { depRef, type DefRecord, type Dep, type Span } from "./types.ts";
+import { depRef, type DefRecord, type Dep, type ExtRef, type Span } from "./types.ts";
 
 export interface AnalyzeHost {
   /** absolute path of `.ucm/cache`; relative imports into it address definitions by hash */
@@ -149,18 +149,32 @@ function importClassifier(file: string, host: AnalyzeHost) {
         throw new UcmError(`cannot import local file '${spec}': add it to the codebase and import it from '#codebase/...'`, d);
       }
       r = { kind: "hash", hash };
-    } else if (isBuiltin(spec)) {
-      r = { kind: "ext", ext: { module: spec.startsWith("node:") ? spec : `node:${spec}`, subpath: "", export: exportName } };
     } else {
-      const parts = spec.split("/");
-      const pkgName = spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
-      const subpath = parts.slice(pkgName.split("/").length).join("/");
-      const pkg = findPackage(pkgName, path.dirname(file));
-      if (!pkg) throw new UcmError(`cannot find package '${pkgName}' in node_modules`, d);
-      r = { kind: "ext", ext: { module: `npm:${pkg.name}@${pkg.version}`, subpath, export: exportName } };
+      r = { kind: "ext", ext: externalModule(spec, file, d, exportName) };
     }
     cache.set(key, r);
     return r;
+  };
+}
+
+/** A Node builtin or an npm package (version pinned from node_modules), as imported from `file`. */
+function externalModule(spec: string, file: string, at: ts.Node, exportName: string): ExtRef {
+  if (isBuiltin(spec)) return { module: spec.startsWith("node:") ? spec : `node:${spec}`, subpath: "", export: exportName };
+  const parts = spec.split("/");
+  const pkgName = spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
+  const subpath = parts.slice(pkgName.split("/").length).join("/");
+  const pkg = findPackage(pkgName, path.dirname(file));
+  if (!pkg) throw new UcmError(`cannot find package '${pkgName}' in node_modules`, at);
+  return { module: `npm:${pkg.name}@${pkg.version}`, subpath, export: exportName };
+}
+
+/** `import("pkg")` loads a package lazily; it's as content-addressable as a static import of the same package. */
+function dynamicImportClassifier(file: string) {
+  return (spec: string, at: ts.Node): ExtRef => {
+    if (spec === "#codebase" || spec.startsWith("#codebase/") || spec.startsWith(".") || spec.startsWith("/")) {
+      throw new UcmError("dynamic `import()` of codebase or local modules isn't supported; import definitions statically", at);
+    }
+    return externalModule(spec, file, at, "*");
   };
 }
 
@@ -261,6 +275,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
     declToDef,
     projectFiles: new Set(sfs),
     classifyImport: (d, meaning) => classifiers.get(d.getSourceFile())!(d, meaning),
+    classifyDynamicImport: (spec, at) => dynamicImportClassifier(at.getSourceFile().fileName)(spec, at),
     kindOf: (def) => sites[def]!.kind,
     warn: (message, node) => warnings.push(new UcmError(message, node).message),
   };
@@ -316,6 +331,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
       else if ("hash" in s.target) span.hash = s.target.hash;
       else span.ext = s.target.ext;
       if (s.shorthand) span.shorthand = s.shorthand;
+      if (s.literal) span.literal = true;
       return span;
     });
     const deps = new Map<string, Dep>();
