@@ -382,7 +382,8 @@ export class Codebase {
           patches.set(old, d.hash);
           store.addPatch(old, d.hash);
           for (const p of store.pathsOf(old)) {
-            store.updateName(p, d.hash, d.kind, "update (propagated)");
+            // only this hash moves: a conflicted name keeps its other definitions
+            store.replaceName(p, old, d.hash, d.kind, "update (propagated)");
             updated.push(p);
           }
         }

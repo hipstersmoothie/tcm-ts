@@ -49,7 +49,8 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
 | `ucm todo` | conflicts, plus dependents that need fixing after an update |
 | `ucm diff [<id> \| <branch> \| <a> <b>]` | review changes by meaning: what the last command changed (or since a history entry, or between branches). Edits are shown as line diffs with each side's own names. Definitions re-hashed only because a dependency changed are listed separately, with what triggered them. Renames and aliases are recognized as such, and renaming locals or reformatting doesn't count as a change |
 | `ucm remote add <name> <url\|dir> [--token t]` | a `ucm serve` URL or another codebase directory |
-| `ucm push` / `ucm pull [remote] [branch]` | sync by hash: only components the other side lacks are sent. `pull` mirrors into `origin/main` and fast-forwards your branch if you haven't changed it. `push` refuses if the remote moved since your last sync. There's no merge yet: use `ucm diff main origin/main` |
+| `ucm push` / `ucm pull [remote] [branch]` | sync by hash: only components the other side lacks are sent. `pull` mirrors into `origin/main`. It fast-forwards your branch if you haven't changed it, and merges otherwise. `push` refuses if the remote moved since your last sync |
+| `ucm merge <branch>` | three-way merge of names, against the other branch as of the last merge, sync or fork. A name changed on one side takes that side; changed differently on both sides, it becomes a conflict (`ucm todo`, `ucm resolve`). A definition only re-hashed because a dependency moved doesn't count as a change. Each one-sided update is a patch, so the other side's code is re-derived against it; what no longer typechecks goes to `todo` |
 | `ucm run <name> [args] --on <remote>` | send the definition's missing closure, run it there, and stream stdout/stderr back |
 | `ucm serve [--port] [--host] [--token] [--no-run]` | serve this codebase over HTTP. It listens on localhost and requires a token. Clients can run code unless `--no-run` |
 | `ucm history`, `reset <id>`, `branch`, `switch` | reflog, undo, and branches of the namespace |
@@ -133,8 +134,6 @@ The design and milestones are in the plan. Still open:
 - No `merge` between branches.
 - Watch results aren't cached by hash.
 - The watcher uses `createProgram` with `oldProgram` reuse, not a LanguageService.
-- No namespace **merge**: a diverged `pull` leaves your branch alone and mirrors the remote into
-  `origin/<branch>` for review.
 - To share one definition under two names, use `ucm alias`. Adding the same code twice creates two.
 - TypeScript 7 (the Go compiler) has a different API and isn't supported.
 - Behaviour of transitive npm dependencies is not part of a hash; only the direct `name@version` is.

@@ -313,6 +313,15 @@ export class Store {
     for (const o of old.length ? old : [null]) this.log("update", path, o, newHash, kind, command);
   }
 
+  /** Swap one hash on `path` for another, leaving any other hashes there (a conflict) alone. */
+  replaceName(path: string, oldHash: string, newHash: string, kind: DefKind, command: string) {
+    const b = this.branch().id;
+    const r = this.db.prepare("DELETE FROM names WHERE branch_id = ? AND path = ? AND hash = ?").run(b, path, oldHash);
+    if (!r.changes) return;
+    this.db.prepare("INSERT OR IGNORE INTO names (branch_id, path, hash, kind) VALUES (?, ?, ?, ?)").run(b, path, newHash, kind);
+    this.log("update", path, oldHash, newHash, kind, command);
+  }
+
   private log(op: LogEntry["op"], path: string, oldHash: string | null, newHash: string | null, kind: DefKind, command: string, branchId = this.branch().id) {
     this.batch ??= ((this.db.prepare("SELECT coalesce(max(batch), 0) + 1 AS b FROM name_log").get() as { b: number }).b);
     this.db
@@ -335,11 +344,18 @@ export class Store {
     return ((this.db.prepare("SELECT max(id) AS id FROM name_log").get() as { id: number | null }).id ?? 0) as number;
   }
 
-  history(limit = 50, afterId = 0): LogEntry[] {
+  /** Id of the latest name change on a branch, 0 if none. */
+  branchLogHead(branch: string): number {
+    return ((this.db.prepare("SELECT max(id) AS id FROM name_log WHERE branch_id = ?").get(this.branchId(branch)) as { id: number | null }).id ?? 0) as number;
+  }
+
+  /** Name changes on a branch (default: the current one), newest first. */
+  history(limit = 50, afterId = 0, branch?: string): LogEntry[] {
+    const id = branch === undefined ? this.branch().id : this.branchId(branch);
     return (
       this.db
         .prepare("SELECT * FROM name_log WHERE branch_id = ? AND id > ? ORDER BY id DESC LIMIT ?")
-        .all(this.branch().id, afterId, limit) as Row[]
+        .all(id, afterId, limit) as Row[]
     ).map((r) => ({
       id: r.id as number,
       batch: r.batch as number,

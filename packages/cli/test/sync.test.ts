@@ -63,8 +63,11 @@ test("pull, push and divergence between codebase directories", () => {
   b.scratch(`export const onlyInB = 2;\n`);
   b.ucm("add");
   assert.throws(() => b.ucm("push"), /has changes you don't have/);
-  assert.match(b.ucm("pull"), /not fast-forwarded/);
-  assert.match(b.ucm("diff", "main", "origin/main"), /added\s+\+ onlyInA[\s\S]*removed\s+- onlyInB/);
+  // pulling merges the remote's changes with ours; pushing then publishes the merge
+  assert.match(b.ucm("pull"), /merged origin\/main into main[\s\S]*\+ onlyInA[\s\S]*merged cleanly/);
+  assert.match(b.ucm("ls"), /onlyInA[\s\S]*onlyInB/);
+  assert.match(b.ucm("push"), /pushed origin\/main/);
+  assert.match(a.ucm("ls"), /onlyInA[\s\S]*onlyInB/);
 });
 
 test("ucm serve: run --on sends missing code, streams output, and rejects tampered definitions", async () => {

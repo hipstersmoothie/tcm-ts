@@ -7,6 +7,7 @@ import type { NameRow } from "@ucm/store";
 import { runStreaming } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { diffNamespaces, printDiff, stateOf } from "./diff.ts";
+import { mergeBranch, recordMergeBase } from "./merge.ts";
 import { bold, dim, green, red, yellow } from "./style.ts";
 
 
@@ -266,6 +267,7 @@ export async function push(cb: Codebase, spec: string, remoteBranch: string | un
   if (theirs?.stateHash !== mine) await remote.setBranch(branch, names, theirs?.stateHash ?? null, `push from ${os.hostname()}:${cb.lay.root}`);
   cb.store.setSetting(syncKey(name, branch), mine);
   cb.store.setBranchNames(`${name}/${branch}`, names, `push ${name}`);
+  recordMergeBase(cb, cb.store.branch().name, `${name}/${branch}`);
   const d = theirs ? diffNamespaces(stateOf(theirs.names), stateOf(names), (h) => cb.store.getDef(h)!.ir) : undefined;
   const summary = d ? `${d.added.length} added, ${d.edited.length + d.propagated.length} changed, ${d.removed.length} removed, ${d.renamed.length} renamed` : `${names.length} names (new branch)`;
   console.log(theirs?.stateHash === mine ? dim(`${name}/${branch} is up to date`) : `${green("pushed")} ${bold(`${name}/${branch}`)}: ${summary}; sent ${sent} definition(s)`);
@@ -288,16 +290,20 @@ export async function pull(cb: Codebase, spec: string, remoteBranch: string | un
   const lastSynced = cb.store.getSetting(syncKey(name, branch));
   if (mine === theirs.stateHash) {
     cb.store.setSetting(syncKey(name, branch), mine);
+    recordMergeBase(cb, local, tracking);
     return console.log(dim(`${local} is up to date with ${tracking}`));
   }
   if (cb.store.names().length && mine !== lastSynced) {
-    console.log(`${yellow("not fast-forwarded:")} ${bold(local)} has changes since it last synced with ${tracking}.`);
-    console.log(dim(`  review with \`ucm diff ${local} ${tracking}\` (merging is not supported yet)`));
+    // both sides changed since the last sync: merge the remote's state in; `push` then publishes the result
+    mergeBranch(cb, tracking, `pull ${name} (merge)`);
+    cb.store.setSetting(syncKey(name, branch), theirs.stateHash);
+    console.log(dim(`  \`ucm push ${name}\` to publish the merge`));
     return;
   }
   const before = stateOf(cb.store.names());
   cb.store.setBranchNames(local, theirs.names, `pull ${name}`);
   cb.store.setSetting(syncKey(name, branch), theirs.stateHash);
+  recordMergeBase(cb, local, tracking);
   cb.refreshShim();
   const after = stateOf(cb.store.names());
   printDiff(cb, diffNamespaces(before, after, (h) => cb.store.getDef(h)!.ir), before, after, `fast-forwarded ${local} to ${tracking}`);

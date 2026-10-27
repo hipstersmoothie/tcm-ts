@@ -4,6 +4,7 @@ import { shortHash, type DefRecord } from "@ucm/core";
 import { evaluateWatches, render, run } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { migrate } from "./migrate.ts";
+import { mergeBranch } from "./merge.ts";
 import { isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
 import { diffNamespaces, printDiff, rewind, stateOf } from "./diff.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
@@ -496,6 +497,7 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
                                  changes since a history entry, to another branch, or between branches
   ucm history [n] / reset <id>   name changes on this branch / undo back to an entry
   ucm branch [name] / switch <name>
+  ucm merge <branch>             three-way merge into this branch; dependents follow the other side's updates
 
   ucm remote [add <name> <url|dir> [--token t] | rm <name>]
   ucm push [remote] [--as branch] [--force]   send definitions + this branch's names (refuses if the remote moved)
@@ -672,6 +674,9 @@ square(12);
       cb.store.createBranch(args[0]);
       console.log(`created branch ${args[0]} from ${cb.store.branch().name}`);
       return 0;
+    case "merge":
+      need(1, "merge <branch>");
+      return mergeBranch(cb, args[0]!).conflicts.length ? 1 : 0;
     case "switch":
       need(1, "switch <branch>");
       cb.store.switchBranch(args[0]!);
