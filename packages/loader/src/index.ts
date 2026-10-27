@@ -310,6 +310,80 @@ export function runStreaming(
   return new Promise((resolve) => child.on("close", (code) => resolve(code ?? 1)));
 }
 
+export interface TestRun {
+  hash: string;
+  ok: boolean;
+  message: string;
+  output: string;
+  ms: number;
+  /** the test never reported a result (the runner crashed or exited); never cache this */
+  infrastructure?: boolean;
+}
+
+const TEST_TIMEOUT_MS = 10_000;
+
+/**
+ * Run tests (functions that pass by returning without throwing, and fail on `false`) in one child process,
+ * capturing each one's console output.
+ */
+export function runTests(tests: { hash: string; componentHash: string }[], src: DefSource, lay: Layout): TestRun[] {
+  if (!tests.length) return [];
+  materialize(tests.map((t) => t.hash), src, lay);
+  const runner = path.join(lay.cacheDir, "test_runner.ts");
+  const out = path.join(lay.cacheDir, "test_results.json");
+  fs.rmSync(out, { force: true });
+  const list = tests.map((t) => [t.hash, `./${t.componentHash}.ts`, exportId(t.hash)]);
+  writeIfChanged(
+    runner,
+    `import { inspect } from "node:util";
+import { writeFileSync } from "node:fs";
+const tests: [string, string, string][] = ${JSON.stringify(list)};
+const results: { hash: string; ok: boolean; message: string; output: string; ms: number }[] = [];
+const original = { log: console.log, info: console.info, warn: console.warn, error: console.error, debug: console.debug };
+const save = () => writeFileSync(${JSON.stringify(out)}, JSON.stringify(results));
+for (const [hash, file, id] of tests) {
+  const output: string[] = [];
+  for (const k of Object.keys(original)) {
+    (console as unknown as Record<string, unknown>)[k] = (...args: unknown[]) => output.push(args.map((a) => (typeof a === "string" ? a : inspect(a))).join(" "));
+  }
+  const start = performance.now();
+  let ok = true;
+  let message = "";
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const test = (await import(file))[id];
+    if (typeof test !== "function") throw new Error("a test must be a function");
+    const timeout = new Promise((_, reject) => (timer = setTimeout(() => reject(new Error("timed out after ${TEST_TIMEOUT_MS / 1000}s")), ${TEST_TIMEOUT_MS})));
+    if ((await Promise.race([test(), timeout])) === false) throw new Error("returned false");
+  } catch (e) {
+    ok = false;
+    message = e instanceof Error ? e.message : inspect(e);
+  } finally {
+    clearTimeout(timer);
+    Object.assign(console, original);
+  }
+  results.push({ hash, ok, message, output: output.join("\\n"), ms: Math.round(performance.now() - start) });
+  save();
+}
+save();
+`,
+  );
+  spawnSync(process.execPath, [...NODE_ARGS, runner], { stdio: ["ignore", "inherit", "inherit"], timeout: 5 * 60_000 });
+  const done: TestRun[] = fs.existsSync(out) ? (JSON.parse(fs.readFileSync(out, "utf8")) as TestRun[]) : [];
+  // a test that crashed the runner (e.g. process.exit) is the first one without a result
+  return tests.map(
+    (t) =>
+      done.find((d) => d.hash === t.hash) ?? {
+        hash: t.hash,
+        ok: false,
+        message: "no result: the test runner crashed or exited before this test finished",
+        output: "",
+        ms: 0,
+        infrastructure: true,
+      },
+  );
+}
+
 export interface WatchResult {
   line: number;
   ok: boolean;

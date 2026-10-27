@@ -4,6 +4,7 @@ import { shortHash, type DefRecord } from "@ucm/core";
 import { evaluateWatches, render, run } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { migrate } from "./migrate.ts";
+import { isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
 import { diffNamespaces, printDiff, rewind, stateOf } from "./diff.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
 import { addRemote, listRemotes, newToken, pull, push, runOn, serve } from "./sync.ts";
@@ -110,6 +111,12 @@ function check(cb: Codebase, file: string, into?: string): boolean {
       console.log(`\n  ${dim(String(w.line).padStart(3) + " │")} ${w.expression}`);
       console.log(`      ${r?.ok ? cyan("⧩") : red("✗")} ${(r?.value ?? "").split("\n").join("\n        ")}`);
     }
+  }
+  const tests = rows.filter((r) => r.def.kind !== "type" && isTestPath(r.path));
+  if (tests.length) {
+    const outcomes = runCached(cb, tests.map((r) => ({ path: r.path, rec: r.def })), cb.source([...a.defs, ...a.watches]), false);
+    console.log(`\n  ${dim("tests")}  ${summary(outcomes)}`);
+    printOutcomes(outcomes, "    ");
   }
   const pending = rows.filter((r) => r.status !== "identical");
   if (pending.length) {
@@ -469,6 +476,7 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
   ucm update [file] [--into ns]  add, and replace changed definitions; dependents are re-hashed
   ucm import <dir> [--into ns] [--update] [--verbose]
                                  add an existing project: one namespace per file (src/ and index dropped)
+  ucm test [namespace] [--fresh]  run tests (definitions named test… or under \`tests\`); results are cached by hash
   ucm verify                     re-render and re-hash every live definition; must be the identity
   ucm migrate                    rebuild a codebase written with an older hash format (keeps a backup)
   ucm view <name|#hash>...       show definitions with current names
@@ -550,6 +558,18 @@ square(12);
       return importProject(cb, args[0]!, flags.update ? "update" : "add", into ?? "", !!flags.verbose) ? 0 : 1;
     case "verify":
       return verify(cb) ? 0 : 1;
+    case "test": {
+      const ns = args[0] ?? "";
+      const names = cb.store.names().filter((n) => n.kind !== "type" && isTestPath(n.path) && (!ns || n.path === ns || n.path.startsWith(ns + ".")));
+      if (!names.length) {
+        console.log(dim(`no tests${ns ? ` under ${ns}` : ""} (tests are definitions named test… or under a \`tests\` namespace)`));
+        return 0;
+      }
+      const outcomes = runCached(cb, names.map((n) => ({ path: n.path, rec: cb.store.getDef(n.hash)! })), cb.source(), !!flags.fresh);
+      printOutcomes(outcomes);
+      console.log(`\n${summary(outcomes)}`);
+      return outcomes.every((o) => o.result.ok) ? 0 : 1;
+    }
     case "view":
       need(1, "view <name|#hash>...");
       view(cb, args);

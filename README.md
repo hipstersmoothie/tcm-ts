@@ -40,6 +40,7 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
 | `ucm add` / `ucm update` | save. `update` re-points names and re-hashes every dependent; dependents that stop typechecking keep their old hash and go to `todo` |
 | `ucm import <dir> [--into ns]` | add an existing project. Each file becomes a namespace (`core/src/analyze.ts` → `core.analyze`); imports between files, barrels and workspace packages resolve to hashes; test files are skipped |
 | `ucm migrate` | rebuild a codebase written with an older hash format. Every stored definition is re-rendered against its migrated dependencies and re-hashed; names, history, branches, patches, todo and remotes carry over; the old `.ucm` is kept as a backup |
+| `ucm test [namespace] [--fresh]` | run tests: definitions named `test…` (or under a `tests` namespace) that pass by returning without throwing. A test's hash covers everything it calls, so results are cached by hash and Node version, and only tests whose code or dependencies changed re-run. The watcher runs tests from the scratch file inline. Tests that read the filesystem, clock or network can go stale in the cache; use `--fresh` |
 | `ucm verify` | re-render every live definition from the store and re-hash it. This must be the identity |
 | `ucm view`, `ls`, `find`, `deps`, `dependents`, `docs` | browse. Code is rendered with the *current* names |
 | `ucm run <name> [args]` | run a definition. Functions are called with the args, and the result is awaited and printed |

@@ -126,6 +126,33 @@ export const probe = () => { cacheA.set("k", 1); return String(cacheA === cacheB
   assert.equal(hashOf("state.check"), before);
 });
 
+test("tests are definitions, cached by hash", () => {
+  scratch(`// ucm: namespace calc
+import assert from "node:assert/strict";
+export const double = (x: number) => x * 2;
+export const testDouble = () => assert.equal(double(21), 42);
+export const testBroken = () => { console.log("about to fail"); assert.equal(double(1), 3); };
+export const offset = 10;
+export const testUnrelated = () => assert.ok(offset > 0);
+`);
+  const checked = ucm("check");
+  assert.match(checked, /tests\s+2 passed, 1 failed/);
+  assert.match(checked, /✗ calc\.testBroken[\s\S]*2 !== 3[\s\S]*│ about to fail/);
+  ucm("add");
+  // check already ran them, so `ucm test` is all cache hits; failures still fail the command
+  assert.throws(() => ucm("test", "calc"), /2 passed, 1 failed \(3 cached\)/);
+
+  // changing what a test depends on re-runs exactly the tests that depend on it
+  scratch(`// ucm: namespace calc\nexport const double = (x: number) => x * 2 + 1;\n`);
+  ucm("update");
+  let after = "";
+  assert.throws(() => ucm("test", "calc"), (e: Error) => ((after = e.message), true));
+  assert.match(after, /✓ calc\.testBroken\s+\d+ms/, "re-ran, and now passes");
+  assert.match(after, /✗ calc\.testDouble\s+\d+ms[\s\S]*43 !== 42/, "re-ran, and now fails");
+  assert.match(after, /✓ calc\.testUnrelated\s+\(cached\)/, "doesn't depend on double, so not re-run");
+  assert.match(after, /2 passed, 1 failed \(1 cached\)/);
+});
+
 test("rejects non-erasable and mutable top-level syntax", () => {
   scratch(`enum Color { Red }\n`);
   assert.throws(() => ucm("check"), /enums are not supported/);

@@ -39,12 +39,26 @@ CREATE TABLE IF NOT EXISTS name_log (
 CREATE TABLE IF NOT EXISTS patches (branch_id INTEGER NOT NULL, old_hash TEXT NOT NULL, new_hash TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (branch_id, old_hash));
 CREATE TABLE IF NOT EXISTS todo (branch_id INTEGER NOT NULL, hash TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY (branch_id, hash));
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS test_results (
+  hash TEXT NOT NULL, node_version TEXT NOT NULL, ok INTEGER NOT NULL, message TEXT NOT NULL,
+  output TEXT NOT NULL, duration_ms INTEGER NOT NULL, ts INTEGER NOT NULL,
+  PRIMARY KEY (hash, node_version)
+);
 `;
 
 export interface NameRow {
   path: string;
   hash: string;
   kind: DefKind;
+}
+
+export interface TestResult {
+  hash: string;
+  ok: boolean;
+  message: string;
+  /** console output captured while the test ran */
+  output: string;
+  ms: number;
 }
 
 export interface LogEntry {
@@ -353,6 +367,20 @@ export class Store {
 
   setSetting(key: string, value: string) {
     this.db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, value);
+  }
+
+  // ---- test results ----------------------------------------------------------
+
+  /** A cached result. A test's hash covers everything it depends on, so a result stays valid for that hash. */
+  testResult(hash: string, nodeVersion: string): TestResult | undefined {
+    const r = this.db.prepare("SELECT * FROM test_results WHERE hash = ? AND node_version = ?").get(hash, nodeVersion) as Row | undefined;
+    return r && { hash, ok: r.ok === 1, message: r.message as string, output: r.output as string, ms: r.duration_ms as number };
+  }
+
+  putTestResult(r: TestResult, nodeVersion: string) {
+    this.db
+      .prepare("INSERT OR REPLACE INTO test_results (hash, node_version, ok, message, output, duration_ms, ts) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(r.hash, nodeVersion, r.ok ? 1 : 0, r.message, r.output, r.ms, Date.now());
   }
 
   // ---- patches & todo --------------------------------------------------------
