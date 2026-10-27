@@ -47,7 +47,13 @@ interface Row {
 const joinName = (...parts: string[]) => parts.filter(Boolean).join(".");
 
 function classify(cb: Codebase, defs: DefRecord[], ns: string): Row[] {
-  return classifyPaths(cb, defs.map((def) => ({ def, path: joinName(ns, def.nameHint) })));
+  const planned = defs.map((def) => ({ def, path: def.targetPath ?? joinName(ns, def.nameHint) }));
+  const seen = new Set<string>();
+  for (const p of planned) {
+    if (seen.has(p.path)) throw new UsageError(`two definitions in this file are bound to ${p.path}`);
+    seen.add(p.path);
+  }
+  return classifyPaths(cb, planned);
 }
 
 function classifyPaths(cb: Codebase, planned: { def: DefRecord; path: string }[]): Row[] {
@@ -284,19 +290,29 @@ function todo(cb: Codebase) {
 }
 
 function edit(cb: Codebase, targets: string[], file: string, force: boolean) {
-  const hashes = targets.map((t) => cb.lookupOne(t));
-  const nss = new Set(hashes.map((h) => {
-    const p = cb.store.pathsOf(h)[0] ?? "";
-    return p.includes(".") ? p.slice(0, p.lastIndexOf(".")) : "";
-  }));
-  if (nss.size > 1) throw new UsageError("edit definitions from one namespace at a time (the scratch file has a single target namespace)");
   if (fs.existsSync(file) && fs.readFileSync(file, "utf8").trim() && !force) {
     throw new UsageError(`${path.basename(file)} is not empty; pass --force to overwrite or --file <other.ts>`);
   }
-  const ns = [...nss][0]!;
-  const recs = hashes.map((h) => cb.store.getDef(h)!);
-  // references to replaced definitions point at their replacements, so a todo item is edited against the new code
-  const text = render(recs, cb.source(), cb.lay, { style: "scratch", remap: (h) => cb.store.patched(h) }).text;
+  const pathOf = new Map<string, string | undefined>();
+  for (const t of targets) {
+    const h = cb.lookupOne(t);
+    if (!pathOf.has(h)) pathOf.set(h, t.startsWith("#") ? cb.store.pathsOf(h)[0] : t);
+  }
+  const nsOf = (p: string) => (p.includes(".") ? p.slice(0, p.lastIndexOf(".")) : "");
+  const nss = new Set([...pathOf.values()].filter((p) => p !== undefined).map(nsOf));
+  const ns = nss.size === 1 ? [...nss][0]! : "";
+  const recs = [...pathOf.keys()].map((h) => cb.store.getDef(h)!);
+  const text = render(recs, cb.source(), cb.lay, {
+    style: "scratch",
+    // references to replaced definitions point at their replacements, so a todo item is edited against the new code
+    remap: (h) => cb.store.patched(h),
+    // a definition whose path isn't `<namespace>.<declared name>` (other namespace, or renamed while keeping
+    // its runtime name) says where it goes, so `update` binds it back to the same path
+    annotate: (h, declaredAs) => {
+      const p = pathOf.get(h);
+      return p && p !== joinName(ns, declaredAs) ? `// ucm: path ${p}` : undefined;
+    },
+  }).text;
   fs.writeFileSync(file, (ns ? `// ucm: namespace ${ns}\n` : "") + text);
   console.log(`wrote ${targets.join(", ")} to ${path.basename(file)}`);
 }

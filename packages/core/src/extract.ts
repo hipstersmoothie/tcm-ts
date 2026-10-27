@@ -40,6 +40,22 @@ export interface DefSite {
   nominal: boolean;
   /** lineage salt giving the definition its own identity; see AnalyzeHost.saltFor */
   salt?: string;
+  /** from a `// ucm: path a.b.c` comment: the codebase path to bind, regardless of namespace and declared name */
+  targetPath?: string;
+}
+
+const PATH_PRAGMA = /^\/\/\s*ucm:\s*path\s+(\S+)\s*$/;
+const DOTTED = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
+
+function pathPragma(node: ts.Node, sf: ts.SourceFile): string | undefined {
+  let found: string | undefined;
+  for (const r of ts.getLeadingCommentRanges(sf.text, node.getFullStart()) ?? []) {
+    const m = PATH_PRAGMA.exec(sf.text.slice(r.pos, r.end));
+    if (!m) continue;
+    if (!DOTTED.test(m[1]!)) throw new UcmError(`'${m[1]}' is not a valid codebase path`, node);
+    found = m[1];
+  }
+  return found;
 }
 
 /**
@@ -110,7 +126,9 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
   const warnings: string[] = [];
   const byName = new Map<string, DefSite>();
 
-  const push = (site: Omit<DefSite, "id" | "isWatch" | "sf">) => {
+  let targetPath: string | undefined;
+  const push = (fields: Omit<DefSite, "id" | "isWatch" | "sf" | "targetPath">) => {
+    const site = { ...fields, targetPath };
     const existing = byName.get(site.name);
     if (existing) {
       throw new UcmError(
@@ -131,6 +149,10 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
       throw new UcmError("`declare` is not supported; external code comes in through `import`.", st);
     }
     const doc = jsDocText(st, sf);
+    targetPath = pathPragma(st, sf);
+    if (targetPath && ts.isVariableStatement(st) && st.declarationList.declarations.length > 1) {
+      throw new UcmError("a `// ucm: path` comment names one definition; split this `const` list", st);
+    }
 
     if (ts.isImportDeclaration(st)) {
       imports.push(st);

@@ -142,7 +142,8 @@ export class Codebase {
 
   /** Salts for a scratch file whose definitions go into `into` (or the file's namespace pragma). */
   scratchSalts(into?: string): SaltFor {
-    return (file, name) => {
+    return (file, name, targetPath) => {
+      if (targetPath) return this.lineageSalt(targetPath);
       const ns = into ?? scratchNamespace(fs.readFileSync(file, "utf8")) ?? "";
       return this.lineageSalt(ns ? `${ns}.${name}` : name);
     };

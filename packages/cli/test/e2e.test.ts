@@ -46,6 +46,11 @@ export const main = (...args: string[]) => \`\${sumSquares(args.map(Number))} \$
   // rendering a definition and re-hashing it is the identity
   ucm("edit", "lib.sumSquares", "lib.main", "--file", "roundtrip.ts");
   assert.match(ucm("check", "roundtrip.ts"), /= identical\s+lib\.sumSquares[\s\S]*= identical\s+lib\.main/);
+  // across namespaces, including a function renamed by `mv` (it keeps its runtime name `square`)
+  ucm("edit", "lib.sumSquares", "math.sq", "--file", "cross.ts");
+  const cross = fs.readFileSync(path.join(dir, "cross.ts"), "utf8");
+  assert.match(cross, /\/\/ ucm: path math\.sq\nconst square =/);
+  assert.match(ucm("check", "cross.ts"), /= identical\s+lib\.sumSquares[\s\S]*= identical\s+math\.sq/);
 
   // a compatible update propagates to dependents
   scratch(`// ucm: namespace math\nexport const sq = (x: number): number => x * x * x;\n`);
@@ -89,6 +94,9 @@ export const probe = () => [new UsageError("u") instanceof ConflictError, new Co
   assert.match(ucm("mv", "errors.ConflictError", "errors.Clash"), /still named `ConflictError` at runtime/);
   assert.equal(ucm("run", "errors.probe").trim(), "false ConflictError");
   assert.match(ucm("view", "errors.Clash"), /class ConflictError extends Error/);
+  // editing it binds it back to errors.Clash, not to a fresh errors.ConflictError
+  ucm("edit", "errors.Clash", "--file", "clash.ts");
+  assert.match(ucm("check", "clash.ts"), /= identical\s+errors\.Clash/);
 });
 
 test("separately declared definitions keep separate identities", () => {

@@ -44,7 +44,7 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
 | `ucm view`, `ls`, `find`, `deps`, `dependents`, `docs` | browse. Code is rendered with the *current* names |
 | `ucm run <name> [args]` | run a definition. Functions are called with the args, and the result is awaited and printed |
 | `ucm mv`, `alias`, `rm`, `resolve` | name operations. They never touch code |
-| `ucm edit <name>` | write definitions to a scratch file, with references following any updates |
+| `ucm edit <name>...` | write definitions to a scratch file, with references following any updates. Names can span namespaces; a definition whose path isn't `<namespace>.<declared name>` gets a `// ucm: path a.b.c` comment, so `update` binds it back to the same path. You can write those comments yourself too |
 | `ucm todo` | conflicts, plus dependents that need fixing after an update |
 | `ucm diff [<id> \| <branch> \| <a> <b>]` | review changes by meaning: what the last command changed (or since a history entry, or between branches). Edits are shown as line diffs with each side's own names. Definitions re-hashed only because a dependency changed are listed separately, with what triggered them. Renames and aliases are recognized as such, and renaming locals or reformatting doesn't count as a change |
 | `ucm remote add <name> <url\|dir> [--token t]` | a `ucm serve` URL or another codebase directory |

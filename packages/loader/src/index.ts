@@ -39,6 +39,8 @@ export interface RenderOptions {
   omitImports?: boolean;
   /** names to render with instead of the current branch's (a diff shows each side with its own names) */
   nameOf?: (hash: string) => string | undefined;
+  /** scratch style: a comment line to put above a member, given the identifier it is declared as */
+  annotate?: (hash: string, declaredAs: string) => string | undefined;
 }
 
 export interface Rendered {
@@ -171,6 +173,8 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
   const ordered = opts.style === "scratch" ? members : initOrder(members);
   for (const m of ordered) {
     if (opts.style === "scratch" && m.doc) lines.push(`/**\n${m.doc.split("\n").map((l) => ` * ${l}`.trimEnd()).join("\n")}\n */`);
+    const note = opts.style === "scratch" ? opts.annotate?.(m.hash, memberNames.get(m.hash)!) : undefined;
+    if (note) lines.push(note);
     lines.push(bodies.get(m.hash)!, "");
   }
   if (opts.style === "cache") {

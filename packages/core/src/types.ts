@@ -46,6 +46,8 @@ export interface DefRecord {
   nameHint: string;
   /** the declared name is observable at runtime, so generated code must keep it */
   nominal: boolean;
+  /** scratch-file only: the path a `// ucm: path` comment binds this definition to (not stored) */
+  targetPath?: string;
   deps: Dep[];
   signature: string;
   doc?: string;

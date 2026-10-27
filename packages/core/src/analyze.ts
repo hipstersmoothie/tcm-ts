@@ -20,7 +20,7 @@ export interface AnalyzeHost {
    * identity (`new Map()` twice is two maps; two identical classes fail each other's `instanceof`), so without
    * a salt identical code at two places would wrongly become one definition. Return undefined for none.
    */
-  saltFor?(file: string, name: string): string | undefined;
+  saltFor?(file: string, name: string, targetPath?: string): string | undefined;
 }
 
 export interface WatchRecord extends DefRecord {
@@ -246,7 +246,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
   }
   const declToDef = new Map<ts.Node, number>();
   for (const s of sites) for (const d of s.declarations) declToDef.set(d, s.id);
-  for (const s of sites) if (s.kind !== "type") s.salt = host.saltFor?.(s.sf.fileName, s.name);
+  for (const s of sites) if (s.kind !== "type") s.salt = host.saltFor?.(s.sf.fileName, s.name, s.targetPath);
   const classifiers = new Map(sfs.map((sf) => [sf, importClassifier(sf.fileName, host)]));
   const ctx: CanonContext = {
     checker,
@@ -327,6 +327,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
       initKind: site.initKind,
       nameHint: site.name,
       nominal: site.nominal,
+      targetPath: site.targetPath,
       deps: [...deps.values()],
       signature: signatureOf(site, checker),
       doc: site.doc,
