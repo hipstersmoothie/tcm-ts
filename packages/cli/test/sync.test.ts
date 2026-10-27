@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 
 const BIN = process.env.UCM_BIN ? path.resolve(process.env.UCM_BIN) : fileURLToPath(new URL("../bin/ucm.js", import.meta.url));
@@ -26,16 +27,21 @@ function codebase(name: string) {
   return { dir, ucm, scratch };
 }
 
-/** Start `ucm serve` on a free port; resolves to its base URL. */
-function startServer(dir: string, token: string): Promise<string> {
-  const child = spawn(process.execPath, [BIN, "serve", "--port", "0", "--token", token], { cwd: dir, env });
+/** Start `ucm serve` on a free port; resolves to its base URL (and certificate fingerprint with --tls). */
+function startServer(dir: string, token: string, ...extra: string[]): Promise<string> {
+  return startServerInfo(dir, token, ...extra).then((i) => i.url);
+}
+
+function startServerInfo(dir: string, token: string, ...extra: string[]): Promise<{ url: string; fingerprint?: string }> {
+  const child = spawn(process.execPath, [BIN, "serve", "--port", "0", "--token", token, ...extra], { cwd: dir, env });
   servers.push(child);
   return new Promise((resolve, reject) => {
     let out = "";
     child.stdout.setEncoding("utf8").on("data", (d: string) => {
       out += d;
-      const m = /url\s+(http:\/\/[\d.]+:\d+)/.exec(out);
-      if (m) resolve(m[1]!);
+      const m = /url\s+(https?:\/\/[\d.]+:\d+)/.exec(out);
+      const fp = /sha256 ([0-9A-F:]+)/.exec(out)?.[1];
+      if (m && (!extra.includes("--tls") || fp)) resolve({ url: m[1]!, fingerprint: fp });
     });
     child.on("exit", (code) => reject(new Error(`server exited ${code}: ${out}`)));
   });
@@ -104,4 +110,41 @@ export const report = (n: string) => { console.log("cwd " + process.cwd()); retu
   assert.equal(rejected.status, 400);
   assert.match(rejected.body.error, /source does not match their hashes/);
   assert.deepEqual((await call(url, "tok", "put", { records: [rec] })).body, { stored: 1 });
+});
+
+test("ucm serve --tls: clients pin the certificate and never send the token to an impostor", async () => {
+  const server = codebase("tls-server");
+  const client = codebase("tls-client");
+  client.ucm("add");
+  const { url, fingerprint } = await startServerInfo(server.dir, "tlstok", "--tls");
+  assert.match(url, /^https:/);
+  client.ucm("remote", "add", "s", url, "--token", "tlstok", "--fingerprint", fingerprint!);
+  assert.match(client.ucm("run", "square", "7", "--on", "s"), /^49$/m);
+
+  // an impostor with a different certificate: the handshake completes, but no request bytes may follow
+  const other = codebase("impostor");
+  spawnSync(process.execPath, [BIN, "serve", "--tls", "--port", "1"], { cwd: other.dir, env, timeout: 5000 }); // creates other/.ucm/tls
+  const received: Buffer[] = [];
+  const impostor = tls.createServer(
+    { cert: fs.readFileSync(path.join(other.dir, ".ucm/tls/cert.pem")), key: fs.readFileSync(path.join(other.dir, ".ucm/tls/key.pem")) },
+    (socket) => socket.on("data", (d) => received.push(d)),
+  );
+  await new Promise<void>((r) => impostor.listen(0, "127.0.0.1", r));
+  const port = (impostor.address() as { port: number }).port;
+  client.ucm("remote", "add", "fake", `https://127.0.0.1:${port}`, "--token", "tlstok", "--fingerprint", fingerprint!);
+  // run the client asynchronously: the impostor lives in this process and must keep serving the handshake
+  const attempt = await new Promise<{ code: number | null; out: string }>((resolve) => {
+    const child = spawn(process.execPath, [BIN, "run", "square", "7", "--on", "fake"], { cwd: client.dir, env });
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (out += d));
+    child.on("close", (code) => resolve({ code, out }));
+  });
+  assert.equal(attempt.code, 1);
+  assert.match(attempt.out, /fingerprint mismatch[\s\S]*refusing to send the token/);
+  await new Promise((r) => setTimeout(r, 200));
+  impostor.close();
+  assert.equal(Buffer.concat(received).length, 0, "nothing, not even headers, reached the impostor");
+
+  assert.throws(() => server.ucm("serve", "--host", "0.0.0.0", "--port", "0"), /without TLS would send the token in clear text/);
 });

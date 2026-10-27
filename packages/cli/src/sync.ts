@@ -1,7 +1,11 @@
+import fs from "node:fs";
 import http from "node:http";
+import https from "node:https";
+import type { TLSSocket } from "node:tls";
+import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual, X509Certificate } from "node:crypto";
 import { shortHash, type DefRecord } from "@ucm/core";
 import type { NameRow } from "@ucm/store";
 import { runStreaming } from "@ucm/loader";
@@ -123,36 +127,69 @@ class DirectoryRemote implements Remote {
 }
 
 /** A `ucm serve` server. */
+/** Normalize `AB:cd:…` / `abcd…` fingerprints for comparison. */
+const normalizeFingerprint = (f: string) => f.replace(/:/g, "").toUpperCase();
+
 class HttpRemote implements Remote {
   readonly label: string;
-  private url: string;
+  private url: URL;
   private token: string | undefined;
+  private fingerprint: string | undefined;
 
-  constructor(url: string, token?: string) {
+  constructor(url: string, token?: string, fingerprint?: string) {
     this.label = url;
-    this.url = url.replace(/\/$/, "");
+    this.url = new URL(url.endsWith("/") ? url : url + "/");
     this.token = token;
+    this.fingerprint = fingerprint && normalizeFingerprint(fingerprint);
+    if (this.fingerprint && this.url.protocol !== "https:") throw new Error(`a certificate fingerprint needs an https:// URL (${url})`);
   }
 
-  private async post(route: string, body: unknown): Promise<Response> {
-    let res: Response;
-    try {
-      res = await fetch(`${this.url}/${route}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) },
-        body: JSON.stringify(body),
+  /**
+   * POST and resolve with the response stream. With a pinned fingerprint the server's certificate is checked
+   * as soon as TLS is up, before any of the request (including the token) is written.
+   */
+  private post(route: string, body: unknown): Promise<http.IncomingMessage> {
+    const target = new URL(route, this.url);
+    const payload = JSON.stringify(body);
+    const headers = { "content-type": "application/json", "content-length": Buffer.byteLength(payload), ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) };
+    return new Promise((resolve, reject) => {
+      const tls = target.protocol === "https:";
+      const req = (tls ? https : http).request(target, { method: "POST", headers, ...(tls && this.fingerprint ? { rejectUnauthorized: false } : {}) }, (res) => {
+        if ((res.statusCode ?? 500) < 300) return resolve(res);
+        let text = "";
+        res.setEncoding("utf8").on("data", (d: string) => (text += d)).on("end", () => {
+          const msg = ((): string => {
+            try {
+              return (JSON.parse(text) as { error?: string }).error ?? res.statusMessage ?? "error";
+            } catch {
+              return res.statusMessage ?? "error";
+            }
+          })();
+          reject(res.statusCode === 409 ? new ConflictError(msg) : new Error(`${this.label}: ${msg}`));
+        });
       });
-    } catch (e) {
-      throw new Error(`cannot reach ${this.url}: ${(e as Error).cause ?? (e as Error).message}`);
-    }
-    if (res.ok) return res;
-    const msg = ((await res.json().catch(() => ({}))) as { error?: string }).error ?? res.statusText;
-    if (res.status === 409) throw new ConflictError(msg);
-    throw new Error(`${this.url}: ${msg}`);
+      req.on("error", (e) => reject(e instanceof ConflictError ? e : new Error(`cannot reach ${this.label}: ${e.message}`)));
+      // a server that accepts and then stalls must not hang the client; `run` may legitimately be quiet for long
+      if (route !== "run") req.setTimeout(60_000, () => req.destroy(new Error("no response for 60s")));
+      const send = () => req.end(payload);
+      if (!tls || !this.fingerprint) return send();
+      req.on("socket", (socket) => {
+        const check = () => {
+          const got = (socket as TLSSocket).getPeerCertificate().fingerprint256 ?? "";
+          if (normalizeFingerprint(got) === this.fingerprint) send();
+          else req.destroy(new Error(`certificate fingerprint mismatch (got ${got}); refusing to send the token`));
+        };
+        if ((socket as TLSSocket).encrypted && !(socket as TLSSocket).connecting && (socket as TLSSocket).getPeerCertificate().fingerprint256) check();
+        else socket.once("secureConnect", check);
+      });
+    });
   }
 
   private async call<T>(route: string, body: unknown): Promise<T> {
-    return (await (await this.post(route, body)).json()) as T;
+    const res = await this.post(route, body);
+    let text = "";
+    for await (const chunk of res) text += chunk;
+    return JSON.parse(text) as T;
   }
 
   async missing(components: string[]) {
@@ -174,7 +211,6 @@ class HttpRemote implements Remote {
   /** Output streams back as NDJSON: `{"o":"stdout","d":"..."}` lines, then `{"exit":0}`. */
   async run(hash: string, args: string[], out: Output) {
     const res = await this.post("run", { hash, args });
-    const decoder = new TextDecoder();
     let buf = "";
     let exit = 1;
     const handle = (line: string) => {
@@ -184,8 +220,9 @@ class HttpRemote implements Remote {
       if (msg.error) out("stderr", `${msg.error}\n`);
       if (msg.exit !== undefined) exit = msg.exit;
     };
-    for await (const chunk of res.body!) {
-      buf += decoder.decode(chunk as Uint8Array, { stream: true });
+    res.setEncoding("utf8");
+    for await (const chunk of res) {
+      buf += chunk as string;
       const lines = buf.split("\n");
       buf = lines.pop()!;
       lines.forEach(handle);
@@ -200,12 +237,15 @@ class HttpRemote implements Remote {
 interface RemoteConfig {
   url: string;
   token?: string;
+  /** pinned SHA-256 certificate fingerprint for a `ucm serve --tls` server */
+  fingerprint?: string;
 }
 
-export function addRemote(cb: Codebase, name: string, url: string, token?: string) {
+export function addRemote(cb: Codebase, name: string, url: string, token?: string, fingerprint?: string) {
   if (!/^[\w.-]+$/.test(name)) throw new Error(`invalid remote name '${name}'`);
   const resolved = /^https?:\/\//.test(url) ? url : path.resolve(url);
-  cb.store.setSetting(`remote.${name}`, JSON.stringify({ url: resolved, token } satisfies RemoteConfig));
+  if (fingerprint && !resolved.startsWith("https://")) throw new Error("--fingerprint needs an https:// URL");
+  cb.store.setSetting(`remote.${name}`, JSON.stringify({ url: resolved, token, fingerprint } satisfies RemoteConfig));
 }
 
 export function listRemotes(cb: Codebase): [string, RemoteConfig][] {
@@ -217,9 +257,9 @@ export function openRemote(cb: Codebase, spec: string): { remote: Remote; name?:
   const configured = cb.store.getSetting(`remote.${spec}`);
   if (configured) {
     const c = JSON.parse(configured) as RemoteConfig;
-    return { remote: c.url.startsWith("http") ? new HttpRemote(c.url, c.token) : new DirectoryRemote(c.url), name: spec };
+    return { remote: c.url.startsWith("http") ? new HttpRemote(c.url, c.token, c.fingerprint) : new DirectoryRemote(c.url), name: spec };
   }
-  if (/^https?:\/\//.test(spec)) return { remote: new HttpRemote(spec, process.env.UCM_TOKEN) };
+  if (/^https?:\/\//.test(spec)) return { remote: new HttpRemote(spec, process.env.UCM_TOKEN, process.env.UCM_FINGERPRINT) };
   return { remote: new DirectoryRemote(spec) };
 }
 
@@ -323,13 +363,39 @@ export interface ServeOptions {
   port: number;
   token: string;
   allowRun: boolean;
+  tls?: { cert: string; key: string };
+}
+
+const isLoopback = (host: string) => host === "localhost" || host === "::1" || host.startsWith("127.");
+
+/**
+ * The certificate and key for `ucm serve --tls`: given files, or a self-signed pair created once with openssl
+ * and kept in `.ucm/tls/`. Clients pin it by fingerprint.
+ */
+export function tlsMaterial(cb: Codebase, cert?: string, key?: string): { cert: string; key: string } {
+  if (cert || key) {
+    if (!cert || !key) throw new Error("--tls-cert and --tls-key go together");
+    return { cert: fs.readFileSync(cert, "utf8"), key: fs.readFileSync(key, "utf8") };
+  }
+  const dir = path.join(cb.lay.ucmDir, "tls");
+  const [c, k] = [path.join(dir, "cert.pem"), path.join(dir, "key.pem")];
+  if (!fs.existsSync(c) || !fs.existsSync(k)) {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const r = spawnSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", k, "-out", c, "-days", "825", "-subj", "/CN=ucm serve"], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`could not create a certificate with openssl (${r.error?.message ?? r.stderr.trim()}); pass --tls-cert and --tls-key`);
+    fs.chmodSync(k, 0o600);
+  }
+  return { cert: fs.readFileSync(c, "utf8"), key: fs.readFileSync(k, "utf8") };
 }
 
 /**
  * Serve this codebase to other ucm instances. Clients can store definitions, move branch names and — unless
  * `allowRun` is false — run code here, so the server requires a bearer token and listens on localhost by default.
  */
-export function serve(cb: Codebase, opts: ServeOptions): http.Server {
+export function serve(cb: Codebase, opts: ServeOptions, insecure = false): http.Server {
+  if (!isLoopback(opts.host) && !opts.tls && !insecure) {
+    throw new Error(`serving on ${opts.host} without TLS would send the token in clear text: add --tls (or --insecure on a network you trust)`);
+  }
   const peer = new Peer(cb, opts.allowRun);
   const expected = Buffer.from(`Bearer ${opts.token}`);
   const authorized = (req: http.IncomingMessage) => {
@@ -338,7 +404,7 @@ export function serve(cb: Codebase, opts: ServeOptions): http.Server {
   };
   const LIMIT = 64 * 1024 * 1024;
 
-  const server = http.createServer(async (req, res) => {
+  const handler = async (req: http.IncomingMessage, res: http.ServerResponse) => {
     const reply = (status: number, body: unknown) => {
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(body));
@@ -395,15 +461,20 @@ export function serve(cb: Codebase, opts: ServeOptions): http.Server {
     } catch (e) {
       if (!res.headersSent) reply(e instanceof ConflictError ? 409 : 400, { error: (e as Error).message });
     }
-  });
+  };
+  const server = opts.tls ? https.createServer({ cert: opts.tls.cert, key: opts.tls.key }, handler) : http.createServer(handler);
+  const fingerprint = opts.tls && new X509Certificate(opts.tls.cert).fingerprint256;
+  const scheme = opts.tls ? "https" : "http";
   server.listen(opts.port, opts.host, () => {
     const { port } = server.address() as { port: number };
     console.log(`${bold("ucm serve")} ${cb.lay.root}`);
-    console.log(`  url    http://${opts.host}:${port}`);
+    console.log(`  url    ${scheme}://${opts.host}:${port}`);
+    if (fingerprint) console.log(`  cert   sha256 ${fingerprint}`);
     console.log(`  token  ${opts.token}`);
     console.log(`  run    ${opts.allowRun ? yellow("enabled: clients with the token can execute code here") : "disabled"}`);
-    if (opts.host !== "127.0.0.1" && opts.host !== "localhost") console.log(red("  warning: listening beyond localhost"));
-    console.log(dim(`\n  on another machine: ucm remote add <name> http://<this-host>:${port} --token ${opts.token}`));
+    if (!isLoopback(opts.host)) console.log(opts.tls ? yellow("  listening beyond localhost") : red("  warning: listening beyond localhost without TLS"));
+    const pin = fingerprint ? ` --fingerprint ${fingerprint}` : "";
+    console.log(dim(`\n  on another machine: ucm remote add <name> ${scheme}://<this-host>:${port} --token ${opts.token}${pin}`));
   });
   return server;
 }

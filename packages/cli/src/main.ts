@@ -8,12 +8,12 @@ import { mergeBranch } from "./merge.ts";
 import { isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
 import { diffNamespaces, printDiff, rewind, stateOf } from "./diff.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
-import { addRemote, listRemotes, newToken, pull, push, runOn, serve } from "./sync.ts";
+import { addRemote, listRemotes, newToken, pull, push, runOn, serve, tlsMaterial } from "./sync.ts";
 
 
 class UsageError extends Error {}
 
-const VALUE_FLAGS = new Set(["into", "file", "on", "as", "port", "host", "token"]);
+const VALUE_FLAGS = new Set(["into", "file", "on", "as", "port", "host", "token", "fingerprint", "tls-cert", "tls-key"]);
 
 function parseArgs(argv: string[]) {
   const positional: string[] = [];
@@ -503,12 +503,13 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
   ucm branch [name] / switch <name>
   ucm merge <branch>             three-way merge into this branch; dependents follow the other side's updates
 
-  ucm remote [add <name> <url|dir> [--token t] | rm <name>]
+  ucm remote [add <name> <url|dir> [--token t] [--fingerprint sha256] | rm <name>]
   ucm push [remote] [--as branch] [--force]   send definitions + this branch's names (refuses if the remote moved)
   ucm pull [remote] [branch]     fetch into <remote>/<branch>; fast-forward this branch if it hasn't changed
   ucm run <name> [args] --on <remote|url|dir>   send what the remote lacks, run there, stream output back
-  ucm serve [--port 7737] [--host 127.0.0.1] [--token t] [--no-run]
-                                 serve this codebase; clients with the token can push, pull and run code
+  ucm serve [--port 7737] [--host 127.0.0.1] [--token t] [--no-run] [--tls [--tls-cert f --tls-key f]] [--insecure]
+                                 serve this codebase; clients with the token can push, pull and run code.
+                                 --tls without files makes a self-signed certificate; clients pin its fingerprint
 `;
 
 export async function main(argv: string[]): Promise<number> {
@@ -606,7 +607,7 @@ square(12);
       const [sub, name, url] = args;
       if (sub === "add") {
         if (!name || !url) throw new UsageError("usage: ucm remote add <name> <url|path> [--token t]");
-        addRemote(cb, name, url, typeof flags.token === "string" ? flags.token : undefined);
+        addRemote(cb, name, url, typeof flags.token === "string" ? flags.token : undefined, typeof flags.fingerprint === "string" ? flags.fingerprint : undefined);
         console.log(`added remote ${name}`);
       } else if (sub === "rm") {
         if (!name) throw new UsageError("usage: ucm remote rm <name>");
@@ -628,7 +629,11 @@ square(12);
     case "serve": {
       const token = typeof flags.token === "string" ? flags.token : (process.env.UCM_TOKEN ?? newToken());
       const port = Number(typeof flags.port === "string" ? flags.port : 7737);
-      serve(cb, { host: typeof flags.host === "string" ? flags.host : "127.0.0.1", port, token, allowRun: !flags["no-run"] });
+      const str = (k: string) => (typeof flags[k] === "string" ? (flags[k] as string) : undefined);
+      const tls = flags.tls || str("tls-cert") ? tlsMaterial(cb, str("tls-cert"), str("tls-key")) : undefined;
+      const host = str("host") ?? "127.0.0.1";
+      // --insecure acknowledges clear-text tokens beyond localhost
+      serve(cb, { host, port, token, allowRun: !flags["no-run"], tls }, !!flags.insecure);
       return -1; // keep running
     }
     case "edit":

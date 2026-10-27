@@ -52,7 +52,7 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
 | `ucm push` / `ucm pull [remote] [branch]` | sync by hash: only components the other side lacks are sent. `pull` mirrors into `origin/main`. It fast-forwards your branch if you haven't changed it, and merges otherwise. `push` refuses if the remote moved since your last sync |
 | `ucm merge <branch>` | three-way merge of names, against the other branch as of the last merge, sync or fork. A name changed on one side takes that side; changed differently on both sides, it becomes a conflict (`ucm todo`, `ucm resolve`). A definition only re-hashed because a dependency moved doesn't count as a change. Each one-sided update is a patch, so the other side's code is re-derived against it; what no longer typechecks goes to `todo` |
 | `ucm run <name> [args] --on <remote>` | send the definition's missing closure, run it there, and stream stdout/stderr back |
-| `ucm serve [--port] [--host] [--token] [--no-run]` | serve this codebase over HTTP. It listens on localhost and requires a token. Clients can run code unless `--no-run` |
+| `ucm serve [--port] [--host] [--token] [--no-run] [--tls]` | serve this codebase over HTTP(S). It requires a token, and clients can run code unless `--no-run`. `--tls` uses `--tls-cert`/`--tls-key`, or a self-signed certificate it creates, and prints the certificate's fingerprint. Clients pin it with `ucm remote add … --fingerprint`, and the token is only written after the pin checks out. Serving beyond localhost without TLS is refused unless `--insecure` |
 | `ucm history`, `reset <id>`, `branch`, `switch` | reflog, undo, and branches of the namespace |
 
 ## How it works
