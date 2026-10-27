@@ -32,6 +32,31 @@ function globalsIn(ir: IR, out = new Set<string>()): Set<string> {
   return out;
 }
 
+/**
+ * Whether a definition is module-level mutable state: a `const` holding a fresh mutable object (`new Map()`,
+ * `[]`, `{}`), as opposed to a function, a primitive, an `as const` value or anything frozen or computed.
+ */
+function isMutableState(ir: IR): boolean {
+  if (!Array.isArray(ir) || ir[1] !== "Const") return false;
+  const decl = ir.find((x) => Array.isArray(x) && x[0] === "VariableDeclaration") as IR[] | undefined;
+  let init = (decl?.find((x) => Array.isArray(x) && x[0] === "initializer") as IR[] | undefined)?.[1] as IR[] | undefined;
+  while (init && (init[0] === "AsExpression" || init[0] === "SatisfiesExpression" || init[0] === "NonNullExpression")) {
+    const type = init.find((x) => Array.isArray(x) && x[0] === "type") as IR[] | undefined;
+    if (init[0] === "AsExpression" && JSON.stringify(type) === JSON.stringify(["type", ["TypeReference", ["typeName", ["G", "const"]]]])) return false;
+    init = (init.find((x) => Array.isArray(x) && x[0] === "expression") as IR[] | undefined)?.[1] as IR[] | undefined;
+  }
+  return !!init && ["NewExpression", "ArrayLiteralExpression", "ObjectLiteralExpression"].includes(init[0] as string);
+}
+
+export interface AppState {
+  /** module-level mutable values used only by server code: one copy, shared by every client */
+  server: string[];
+  /** used only by browser code: each tab has its own copy */
+  browser: string[];
+  /** used by both: the server and every tab silently get separate copies */
+  both: string[];
+}
+
 export interface AppPlan {
   /** definitions shipped to the browser */
   browser: Set<string>;
@@ -40,6 +65,7 @@ export interface AppPlan {
   /** components the browser receives as stubs instead of code */
   stubbed: Set<string>;
   errors: string[];
+  state: AppState;
 }
 
 export class Placement {
@@ -185,7 +211,7 @@ export class Placement {
 
   /** What a browser app rooted at `entry` ships, which server functions it calls, and what's wrong with it. */
   planApp(entry: string): AppPlan {
-    const plan: AppPlan = { browser: new Set(), endpoints: new Set(), stubbed: new Set(), errors: [] };
+    const plan: AppPlan = { browser: new Set(), endpoints: new Set(), stubbed: new Set(), errors: [], state: { server: [], browser: [], both: [] } };
     const visit = (h: string, chain: string[]) => {
       if (plan.browser.has(h) || plan.endpoints.has(h)) return;
       const via = [...chain, this.name(h)].join(" → ");
@@ -215,6 +241,14 @@ export class Placement {
       return plan;
     }
     visit(entry, []);
+    // where module-level state lives follows from which side's code uses it
+    const serverSide = new Set([...plan.endpoints].flatMap((h) => this.closure(h)));
+    for (const h of new Set([...plan.browser, ...serverSide])) {
+      const rec = this.cb.store.getDef(h);
+      if (!rec || rec.kind !== "term" || !isMutableState(JSON.parse(rec.ir) as IR)) continue;
+      const [b, s] = [plan.browser.has(h), serverSide.has(h)];
+      (b && s ? plan.state.both : b ? plan.state.browser : plan.state.server).push(h);
+    }
     // members of one component ship together, so a component can't be half browser, half stub
     for (const c of plan.stubbed) {
       const local = this.cb.store.componentMembers(c).filter((m) => plan.browser.has(m.hash));

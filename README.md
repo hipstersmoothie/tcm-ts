@@ -186,13 +186,25 @@ what's wrong, before the function runs.
 - **There is no version skew.** Earlier builds stay served, and their server functions stay callable. A tab
   opened before a deploy keeps loading its own assets and calling the exact code it was built against, until
   it reloads. `prod.test.ts` deploys v2 and checks the v1 tab still works, then rolls back.
+- **`ucm apps` lists builds; `ucm apps prune --keep N` removes old ones.** It keeps the current build plus the
+  N newest others; `ucm start --keep N` does this after every deploy. A tab still on a pruned build gets
+  `410 Gone` from its next server call, and the browser runtime reloads the page onto the current version.
+- **Pushing is deploying.** `ucm push prod` to a server running `ucm start` sends only the definitions it
+  lacks. The server verifies them by re-hashing, then its `ucm start` sees the name move, builds and switches.
+  There's no deploy script and no restart.
+
+**Module-level state is placed by who uses it.** That follows from inference, not annotation, and every app
+report shows it:
+- **Server state:** `const visits = new Map()` used only by server functions has one copy, shared by every
+  client.
+- **Browser state:** used only by browser code, each tab has its own copy.
+- **Used by both sides:** the server and every tab silently get separate copies, so ucm warns.
+
+Only fresh mutable objects count (`new …`, `[]`, `{}`); `as const`, frozen and computed values don't.
 
 **Not yet:**
 - **Server-only npm packages are found by a heuristic:** no browser build, and an entry that imports Node
   builtins.
-- **Module-level state follows its code.** State touched only by code that runs anywhere (`const cache = new
-  Map()`) lives in each browser tab, as in any single-page app. It isn't shared server state unless the code
-  using it needs the server.
 
 ## Self-hosting
 

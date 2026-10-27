@@ -95,4 +95,93 @@ export async function main() { document.querySelector("#app")!.textContent = awa
   const before = /^\s*(\d+)\s.*app\.greeting.*update scratch\.ts/m.exec(ucm("history", "50"))![1]!;
   ucm("reset", String(Number(before) - 1));
   await waitFor(async () => (await loadTab(url)).asset === v1.asset);
+
+  // pruning: keep only the current build; a tab still on the removed v2 build is told to reload (410)
+  const apps = ucm("apps");
+  assert.equal(apps.trim().split("\n").length, 2, "both builds are listed");
+  assert.match(apps, new RegExp(`\\* app\\.main\\s+#${v1.asset.split("/")[2]!.slice(0, 8)}`), "the rolled-back-to build is current");
+  assert.match(ucm("apps", "prune", "--keep", "0"), /removed 1 build/);
+  await waitFor(async () => (await call(url, v2.endpoint, ["ada"])).status === 410);
+  assert.equal((await get(new URL(v2.asset, url))).status, 404);
+  assert.equal((await call(url, v1.endpoint, ["ada"])).status, 200, "the current build is untouched");
+});
+
+test("the browser runtime reloads a page whose build was retired", async () => {
+  const { browserRuntime } = await import("../src/web.ts");
+  let reloads = 0;
+  const g = globalThis as Record<string, unknown>;
+  const saved = { fetch: g.fetch, location: g.location };
+  g.location = { reload: () => reloads++ };
+  g.fetch = async () => new Response(JSON.stringify({ name: "OutdatedError", message: "gone" }), { status: 410 });
+  try {
+    const mod = (await import("data:text/javascript," + encodeURIComponent(browserRuntime()))) as { remote: (h: string, n: string, c: boolean) => () => Promise<unknown> };
+    const call = mod.remote("a".repeat(52), "greeting", true)();
+    const settled = await Promise.race([call.then(() => "resolved", () => "rejected"), new Promise((r) => setTimeout(() => r("pending"), 100))]);
+    assert.equal(reloads, 1, "the page reloads itself onto the current build");
+    assert.equal(settled, "pending", "and the stale call never resolves with stale data");
+  } finally {
+    Object.assign(g, saved);
+    delete g.__ucmReloading;
+  }
+});
+
+test("module-level state is placed by who uses it, and split state is flagged", () => {
+  scratch(`// ucm: namespace st
+import { hostname } from "node:os";
+export const visits = new Map<string, number>();
+export const recent: string[] = [];
+export const shared = { hits: 0 };
+export const frozen = { a: 1 } as const;
+export async function whoami(name: string): Promise<string> { visits.set(name, 1); shared.hits++; return hostname() + String(frozen.a); }
+export async function app() { recent.push("x"); shared.hits++; document.title = await whoami("ada"); }
+`);
+  ucm("add");
+  const out = ucm("build", "st.app");
+  assert.match(out, /state\s+st\.visits on the server, shared by every client/);
+  assert.match(out, /state\s+st\.recent in the browser, one copy per tab/);
+  assert.match(out, /warning\s+st\.shared is used by both browser and server code/);
+  assert.doesNotMatch(out, /st\.frozen/, "an `as const` value isn't mutable state");
+});
+
+test("ucm push deploys: a running `ucm start` on the other side builds and switches", async () => {
+  const server = fs.mkdtempSync(path.join(os.tmpdir(), "ucm deploy-server "));
+  const laptop = fs.mkdtempSync(path.join(os.tmpdir(), "ucm deploy-laptop "));
+  const at = (cwd: string, ...args: string[]) => {
+    const r = spawnSync(process.execPath, [BIN, ...args], { cwd, encoding: "utf8", env });
+    if (r.status !== 0) throw new Error(`ucm ${args.join(" ")} in ${cwd}: ${r.stdout}${r.stderr}`);
+    return r.stdout;
+  };
+  at(server, "init");
+  at(laptop, "init");
+  const app = (version: string) =>
+    fs.writeFileSync(
+      path.join(laptop, "scratch.ts"),
+      `// ucm: namespace web
+import { hostname } from "node:os";
+export async function hello(): Promise<string> { return "${version} " + hostname(); }
+export async function main() { document.body.textContent = await hello(); }
+`,
+    );
+  app("v1");
+  at(laptop, "add");
+  at(laptop, "remote", "add", "prod", server);
+  assert.match(at(laptop, "push", "prod"), /pushed prod\/main/, "a fresh server's empty branch can be pushed to");
+
+  const child = spawn(process.execPath, [BIN, "start", "web.main", "--port", "0"], { cwd: server, env });
+  children.push(child);
+  let out = "";
+  child.stdout.setEncoding("utf8").on("data", (d: string) => (out += d));
+  child.stderr.setEncoding("utf8").on("data", (d: string) => (out += d));
+  await waitFor(() => /url\s+http:\/\/\S+/.test(out));
+  const url = /url\s+(http:\/\/\S+)/.exec(out)![1]!;
+  const v1 = await loadTab(url);
+  assert.match((await call(url, v1.endpoint, [])).body, /^"v1 /);
+
+  app("v2");
+  at(laptop, "update");
+  assert.match(at(laptop, "push", "prod"), /sent \d+ definition/);
+  await waitFor(() => /deployed web\.main/.test(out));
+  const v2 = await loadTab(url);
+  assert.match((await call(url, v2.endpoint, [])).body, /^"v2 /);
+  assert.match((await call(url, v1.endpoint, [])).body, /^"v1 /, "tabs opened before the push keep working");
 });

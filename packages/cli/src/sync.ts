@@ -301,7 +301,8 @@ export async function push(cb: Codebase, spec: string, remoteBranch: string | un
   const sent = await sendClosure(cb, remote, names.map((n) => n.hash));
   const theirs = await remote.branch(branch);
   const lastSynced = cb.store.getSetting(syncKey(name, branch));
-  if (theirs && theirs.stateHash !== mine && theirs.stateHash !== lastSynced && !force) {
+  // an empty remote branch (a fresh server) has nothing a push could overwrite
+  if (theirs && theirs.names.length && theirs.stateHash !== mine && theirs.stateHash !== lastSynced && !force) {
     throw new Error(`${name}/${branch} has changes you don't have: \`ucm pull ${name}\` first (or --force to overwrite them)`);
   }
   if (theirs?.stateHash !== mine) await remote.setBranch(branch, names, theirs?.stateHash ?? null, `push from ${os.hostname()}:${cb.lay.root}`);

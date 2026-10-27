@@ -128,7 +128,8 @@ export async function main() {
   assert.match(ucm("view", "app.render"), /runs anywhere/);
 
   const { url, output } = await startDev("app.main");
-  assert.match(output(), /server\s+2 function\(s\) the browser calls by hash: app\.(visit|lineCount)/);
+  // the report is written in several pieces after the url line: wait for it rather than racing it
+  await waitFor(() => /server\s+2 function\(s\) the browser calls by hash: app\.(visit|lineCount)/.test(output()));
 
   // what the browser receives: the browser half, and stubs in place of the server half
   const modules = await crawl(url);

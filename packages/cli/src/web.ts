@@ -40,6 +40,12 @@ export function remote(hash, name, callable) {
     } catch (e) {
       throw new Error(name + ": the server is unreachable (" + e.message + ")");
     }
+    // this page's build was retired: reload to get the current version
+    if (res.status === 410 && !globalThis.__ucmReloading) {
+      globalThis.__ucmReloading = true;
+      location.reload();
+      return new Promise(() => {});
+    }
     const body = decode(await res.text());
     if (!res.ok) {
       const err = new Error(body && body.message ? body.message : res.statusText);
@@ -52,6 +58,11 @@ export function remote(hash, name, callable) {
   return fn;
 }
 `;
+
+/** The browser runtime with the codec inlined, as a standalone module (for tests and inspection). */
+export function browserRuntime(): string {
+  return runtimeSource.replace(/^import \{ encode, decode \} from .*$/m, codecSource().replaceAll("export ", ""));
+}
 
 const escapeHtml = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
 
@@ -117,7 +128,7 @@ function ucmPlugin(cb: Codebase, current: () => AppPlan): Plugin {
 type Middleware = (req: http.IncomingMessage, res: http.ServerResponse, next: () => void) => void;
 
 /** Answers `POST /__ucm/rpc/<hash>` for hashes `isEndpoint` accepts, by importing and calling the real function. */
-function rpcHandler(cb: Codebase, isEndpoint: (hash: string) => boolean): Middleware {
+function rpcHandler(cb: Codebase, isEndpoint: (hash: string) => boolean, retired: (hash: string) => boolean = () => false): Middleware {
   return async (req, res, next) => {
     const m = /^\/__ucm\/rpc\/([a-z2-7]{52})$/.exec((req.url ?? "").split("?")[0]!);
     if (!m) return next();
@@ -141,7 +152,11 @@ function rpcHandler(cb: Codebase, isEndpoint: (hash: string) => boolean): Middle
     const origin = req.headers.origin;
     if (origin && new URL(origin).host !== req.headers.host) return send(403, { name: "RemoteError", message: "cross-origin call refused" });
     if (req.method !== "POST") return send(405, { name: "RemoteError", message: "use POST" });
-    if (!isEndpoint(hash)) return send(403, { name: "RemoteError", message: `${shortHash(hash)} isn't a server function this app calls` });
+    if (!isEndpoint(hash)) {
+      // a page from a pruned build: 410 tells the browser runtime to reload itself onto the current build
+      if (retired(hash)) return send(410, { name: "OutdatedError", message: "this page's build is no longer served; reload for the current version" });
+      return send(403, { name: "RemoteError", message: `${shortHash(hash)} isn't a server function this app calls` });
+    }
     let text = "";
     for await (const chunk of req) {
       text += chunk;
@@ -178,6 +193,12 @@ function reportPlan(cb: Codebase, appName: string, plan: AppPlan) {
   console.log(`  browser  ${plan.browser.size} definition(s)`);
   const endpoints = [...plan.endpoints].map((h) => `${cb.displayRef(`#${h}`)} ${dim(shortHash(h))}`);
   console.log(`  server   ${endpoints.length ? `${endpoints.length} function(s) the browser calls by hash: ${endpoints.join(", ")}` : dim("nothing (the app runs entirely in the browser)")}`);
+  const names = (hs: string[]) => hs.map((h) => cb.displayRef(`#${h}`)).join(", ");
+  if (plan.state.server.length) console.log(`  state    ${names(plan.state.server)} ${dim("on the server, shared by every client")}`);
+  if (plan.state.browser.length) console.log(`  state    ${names(plan.state.browser)} ${dim("in the browser, one copy per tab")}`);
+  for (const h of plan.state.both) {
+    console.log(yellow(`  warning  ${cb.displayRef(`#${h}`)} is used by both browser and server code, so the server and each tab have separate copies`));
+  }
 }
 
 /**
@@ -320,6 +341,45 @@ export interface StartOptions {
   port: number;
   host: string;
   tls?: { cert: string; key: string };
+  /** after each deploy, keep only this many earlier builds of the app */
+  keep?: number;
+}
+
+/** Builds on disk, newest first. */
+export function listBuilds(cb: Codebase): BuildManifest[] {
+  if (!fs.existsSync(appsDir(cb))) return [];
+  return fs
+    .readdirSync(appsDir(cb))
+    .filter((h) => fs.existsSync(manifestFile(cb, h)))
+    .map((h) => JSON.parse(fs.readFileSync(manifestFile(cb, h), "utf8")) as BuildManifest)
+    .sort((a, b) => b.builtAt.localeCompare(a.builtAt));
+}
+
+/**
+ * Delete old builds: per app, keep the build its name points to now plus the newest `keep` others. Tabs still
+ * on a deleted build reload themselves onto the current one at their next server call.
+ */
+export function pruneBuilds(cb: Codebase, keep: number, quiet = false): BuildManifest[] {
+  const current = new Set<string>();
+  const byApp = new Map<string, BuildManifest[]>();
+  for (const b of listBuilds(cb)) {
+    byApp.set(b.app, [...(byApp.get(b.app) ?? []), b]);
+    try {
+      current.add(cb.lookupOne(b.app, "value"));
+    } catch {
+      // the app's name is gone: nothing of it is current
+    }
+  }
+  const removed: BuildManifest[] = [];
+  for (const builds of byApp.values()) {
+    const others = builds.filter((b) => !current.has(b.hash));
+    for (const b of others.slice(keep)) {
+      fs.rmSync(path.join(appsDir(cb), b.hash), { recursive: true, force: true });
+      removed.push(b);
+    }
+  }
+  if (!quiet) console.log(removed.length ? `removed ${removed.length} build(s): ${removed.map((b) => `${b.app} ${shortHash(b.hash)}`).join(", ")}` : dim("nothing to prune"));
+  return removed;
 }
 
 /**
@@ -328,16 +388,27 @@ export interface StartOptions {
  */
 export async function start(cb: Codebase, appName: string, opts: StartOptions): Promise<{ url: string; close: () => Promise<void> }> {
   let current = await build(cb, appName);
-  // every retained build's endpoints stay callable: old clients call the hashes they were built against
-  const endpoints = new Set<string>();
+  // every retained build's endpoints stay callable: old clients call the hashes they were built against.
+  // Re-read whenever the set of builds changes (a deploy here, or `ucm apps prune` in another shell).
+  let endpoints = new Set<string>();
+  const ever = new Set<string>();
+  let buildsSeen = "";
   const loadEndpoints = () => {
-    for (const h of fs.existsSync(appsDir(cb)) ? fs.readdirSync(appsDir(cb)) : []) {
-      if (!fs.existsSync(manifestFile(cb, h))) continue;
-      for (const e of (JSON.parse(fs.readFileSync(manifestFile(cb, h), "utf8")) as BuildManifest).endpoints) endpoints.add(e);
-    }
+    const builds = listBuilds(cb);
+    const key = builds.map((b) => b.hash).join(",");
+    if (key === buildsSeen) return;
+    buildsSeen = key;
+    endpoints = new Set(builds.flatMap((b) => b.endpoints));
+    for (const e of endpoints) ever.add(e);
   };
   loadEndpoints();
-  const rpc = rpcHandler(cb, (h) => endpoints.has(h));
+  const rescan = setInterval(loadEndpoints, 1000);
+  const rpc = rpcHandler(
+    cb,
+    (h) => endpoints.has(h),
+    // was an endpoint of a build this server has served, or is code in the codebase: an old page, not an attack
+    (h) => ever.has(h) || cb.store.hasDef(h),
+  );
 
   const serveFile = (res: http.ServerResponse, file: string, immutable: boolean) => {
     res.statusCode = 200;
@@ -379,12 +450,15 @@ export async function start(cb: Codebase, appName: string, opts: StartOptions): 
     if (next.hash === current.hash) return;
     const before = current.hash;
     current = next;
+    if (opts.keep !== undefined) pruneBuilds(cb, opts.keep, true);
     loadEndpoints();
     console.log(`${yellow("deployed")} ${appName} ${dim(`${shortHash(before)} → ${shortHash(next.hash)}`)}; earlier builds keep working`);
+    reportPlan(cb, appName, planApp(cb, appName).plan);
   });
   return {
     url,
     close: async () => {
+      clearInterval(rescan);
       stop();
       await new Promise((r) => server.close(r));
     },
