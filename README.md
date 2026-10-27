@@ -9,8 +9,12 @@ Requires Node ≥ 22.18 (tested on 24.15). The only dependency is `typescript@6`
 and typechecking.
 
 ```sh
-pnpm install
-alias ucm="node $PWD/packages/cli/bin/ucm.js"   # or: npm link
+# from a checkout: build the npm package and install it globally
+pnpm install && pnpm build
+npm install -g "$(cd dist/package && npm pack --silent)"   # binaries: ucm and ucm-ts
+
+# or, while hacking on ucm itself, run the TypeScript source directly
+alias ucm="node $PWD/packages/cli/bin/ucm.js"
 
 mkdir demo && cd demo
 ucm init          # .ucm/codebase.sqlite, package.json "#codebase" imports, tsconfig, scratch.ts
@@ -112,6 +116,12 @@ project's choice. A few options are forced, with a warning when the project sets
 - `allowImportingTsExtensions` and `noEmit`.
 
 `ucm import <dir>` uses the tsconfig nearest that directory. Options never affect hashes, only what typechecks.
+
+**Packaging:** Node won't strip types from files under `node_modules`, so `pnpm build` (`scripts/build.ts`)
+transpiles the workspace into one plain-JavaScript package, `ucm-ts`, in `dist/package`. Code ucm
+generates (`.ucm/cache`) stays TypeScript, because it lives in your project. `pnpm test:package` packs and
+installs that package, then runs the whole test suite against the installed copy. The binary is also
+available as `ucm-ts`, since Unison's own CLI is called `ucm` too.
 
 Tests: `pnpm test` runs the hashing invariants, the frozen golden hashes and an end-to-end CLI scenario.
 `pnpm typecheck` checks the repo.
