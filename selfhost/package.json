@@ -1,0 +1,9 @@
+{
+  "name": "selfhost",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#codebase": "./.ucm/codebase/index.ts",
+    "#codebase/*": "./.ucm/codebase/*.ts"
+  }
+}
