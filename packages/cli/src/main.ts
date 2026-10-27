@@ -3,6 +3,7 @@ import path from "node:path";
 import { shortHash, type DefRecord } from "@ucm/core";
 import { evaluateWatches, render, run } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
+import { migrate } from "./migrate.ts";
 import { diffNamespaces, printDiff, rewind, stateOf } from "./diff.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
 import { addRemote, listRemotes, newToken, pull, push, runOn, serve } from "./sync.ts";
@@ -453,6 +454,7 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
   ucm import <dir> [--into ns] [--update] [--verbose]
                                  add an existing project: one namespace per file (src/ and index dropped)
   ucm verify                     re-render and re-hash every live definition; must be the identity
+  ucm migrate                    rebuild a codebase written with an older hash format (keeps a backup)
   ucm view <name|#hash>...       show definitions with current names
   ucm ls [namespace]             list names
   ucm find <query>               search names and signatures (\`:query\` for signatures only)
@@ -513,6 +515,9 @@ square(12);
     console.log(`initialized codebase in ${cb.lay.ucmDir}\nnext: run \`ucm\` and edit scratch.ts`);
     return 0;
   }
+
+  // migrate opens codebases the version guard would refuse
+  if (cmd === "migrate") return migrate(Codebase.findRoot(cwd)) ? 0 : 1;
 
   const cb = Codebase.find(cwd);
   switch (cmd) {

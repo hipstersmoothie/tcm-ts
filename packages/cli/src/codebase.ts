@@ -18,7 +18,7 @@ import {
 
 type SaltFor = NonNullable<AnalyzeHost["saltFor"]>;
 import { Store } from "@ucm/store";
-import { layout, materialize, render, writeShim, type DefSource, type Layout } from "@ucm/loader";
+import { ensureExternals, layout, materialize, render, writeShim, type DefSource, type Layout } from "@ucm/loader";
 
 /** A dotted codebase name: `lib.util.sort`. */
 export const IDENT_PATH = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
@@ -36,14 +36,19 @@ export class Codebase {
       this.store.close();
       throw new Error(
         `${root} was written with hash format v${versions.join(", v")}; this ucm uses v${IR_VERSION}. ` +
-          `Hashes from different formats can't be mixed: re-import the code into a fresh codebase.`,
+          `Run \`ucm migrate\` to rebuild it (the old codebase is kept as a backup).`,
       );
     }
   }
 
   static find(cwd: string): Codebase {
+    return new Codebase(Codebase.findRoot(cwd));
+  }
+
+  /** The nearest directory at or above `cwd` holding a codebase. */
+  static findRoot(cwd: string): string {
     for (let dir = cwd; ; dir = path.dirname(dir)) {
-      if (fs.existsSync(path.join(dir, ".ucm", "codebase.sqlite"))) return new Codebase(dir);
+      if (fs.existsSync(path.join(dir, ".ucm", "codebase.sqlite"))) return dir;
       if (path.dirname(dir) === dir) throw new Error("no ucm codebase here; run `ucm init` first");
     }
   }
@@ -348,6 +353,7 @@ export class Codebase {
       const src = this.source();
       const deps = members.flatMap((m) => m.spans.filter((s) => s.hash && !memberSet.has(s.hash)).map((s) => resolve(s.hash!)));
       materialize(deps, src, lay);
+      ensureExternals(lay, members.flatMap((m) => m.spans.flatMap((s) => (s.ext ? [s.ext] : []))));
       const rendered = render(members, src, lay, { style: "internal", remap: resolve });
       const tmp = path.join(lay.cacheDir, `_update_${c}.ts`);
       fs.writeFileSync(tmp, rendered.text);

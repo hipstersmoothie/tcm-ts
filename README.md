@@ -39,6 +39,7 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
 | `ucm` / `ucm check [file]` | report each definition as `new` / `identical` / `update` / `alias` / `conflict`, then evaluate watch expressions |
 | `ucm add` / `ucm update` | save. `update` re-points names and re-hashes every dependent; dependents that stop typechecking keep their old hash and go to `todo` |
 | `ucm import <dir> [--into ns]` | add an existing project. Each file becomes a namespace (`core/src/analyze.ts` → `core.analyze`); imports between files, barrels and workspace packages resolve to hashes; test files are skipped |
+| `ucm migrate` | rebuild a codebase written with an older hash format. Every stored definition is re-rendered against its migrated dependencies and re-hashed; names, history, branches, patches, todo and remotes carry over; the old `.ucm` is kept as a backup |
 | `ucm verify` | re-render every live definition from the store and re-hash it. This must be the identity |
 | `ucm view`, `ls`, `find`, `deps`, `dependents`, `docs` | browse. Code is rendered with the *current* names |
 | `ucm run <name> [args]` | run a definition. Functions are called with the args, and the result is awaited and printed |
@@ -133,8 +134,6 @@ The design and milestones are in the plan. Still open:
 - The watcher uses `createProgram` with `oldProgram` reuse, not a LanguageService.
 - No namespace **merge**: a diverged `pull` leaves your branch alone and mirrors the remote into
   `origin/<branch>` for review.
-- No `ucm migrate`. ucm refuses to open a codebase written with another hash format; re-import the code
-  instead. That's fine while codebases are demos, but the next format change needs a real migration.
 - To share one definition under two names, use `ucm alias`. Adding the same code twice creates two.
 - TypeScript 7 (the Go compiler) has a different API and isn't supported.
 - Behaviour of transitive npm dependencies is not part of a hash; only the direct `name@version` is.
