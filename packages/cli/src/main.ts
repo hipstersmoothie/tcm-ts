@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { shortHash, type DefRecord } from "@ucm/core";
+import { isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from "@ucm/core";
 import { evaluateWatches, render, run } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { migrate } from "./migrate.ts";
@@ -50,17 +50,21 @@ const joinName = (...parts: string[]) => parts.filter(Boolean).join(".");
 
 function classify(cb: Codebase, defs: DefRecord[], ns: string): Row[] {
   const planned = defs.map((def) => ({ def, path: def.targetPath ?? joinName(ns, def.nameHint) }));
-  const seen = new Set<string>();
-  for (const p of planned) {
-    if (seen.has(p.path)) throw new UsageError(`two definitions in this file are bound to ${p.path}`);
-    seen.add(p.path);
-  }
+  checkDistinct(planned, (p) => `two definitions in this file are bound to ${p.path}`);
   return classifyPaths(cb, planned);
+}
+
+/** No two planned definitions may claim the same path in the same space (a type and a value may share one). */
+function checkDistinct<P extends { def: DefRecord; path: string }>(planned: P[], message: (p: P) => string) {
+  planned.forEach((p, i) => {
+    if (planned.some((q, j) => j < i && q.path === p.path && sameSpace(q.def.kind, p.def.kind))) throw new UsageError(message(p));
+  });
 }
 
 function classifyPaths(cb: Codebase, planned: { def: DefRecord; path: string }[]): Row[] {
   return planned.map(({ def, path: p }) => {
-    const hs = cb.store.hashesAt(p);
+    // only definitions in the same space compete: `type User` and `const User` live side by side
+    const hs = cb.store.hashesAt(p, def.kind);
     if (hs.length === 1 && hs[0] === def.hash) return { def, path: p, status: "identical" };
     if (hs.length > 1) return { def, path: p, status: "conflict", note: `${hs.length} definitions` };
     if (hs.length === 1) return { def, path: p, status: "update", note: `was ${shortHash(hs[0]!)}` };
@@ -146,12 +150,13 @@ function apply(cb: Codebase, rows: Row[], mode: "add" | "update", command: strin
           skipped.push(r);
           continue;
         }
-        for (const old of cb.store.hashesAt(r.path)) {
+        const olds = cb.store.hashesAt(r.path, r.def.kind);
+        for (const old of olds) {
           patches.set(old, r.def.hash);
           cb.store.addPatch(old, r.def.hash);
           cb.store.clearTodo(old);
         }
-        cb.store.updateName(r.path, r.def.hash, r.def.kind, command);
+        cb.store.replaceNames(r.path, olds, r.def.hash, r.def.kind, command);
       }
     }
   });
@@ -204,12 +209,7 @@ function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: 
     return false;
   }
   const planned = a.defs.map((def) => ({ def, path: joinName(into, namespaceForFile(root, def.file), def.nameHint) }));
-  const seen = new Map<string, string>();
-  for (const p of planned) {
-    const other = seen.get(p.path);
-    if (other) throw new UsageError(`${p.path} is defined in both ${other} and ${p.def.file}`);
-    seen.set(p.path, p.def.file);
-  }
+  checkDistinct(planned, (p) => `${p.path} is defined in more than one file (one of them is ${p.def.file})`);
   return apply(cb, classifyPaths(cb, planned), mode, `import ${dir}`, !verbose);
 }
 
@@ -245,12 +245,13 @@ function ls(cb: Codebase, ns = "") {
   const rows = cb.store.names().filter((n) => !ns || n.path === ns || n.path.startsWith(ns + "."));
   if (!rows.length) return console.log(dim(ns ? `nothing under ${ns}` : "the codebase is empty"));
   const width = Math.max(...rows.map((r) => r.path.length));
-  const counts = new Map<string, number>();
-  for (const r of rows) counts.set(r.path, (counts.get(r.path) ?? 0) + 1);
+  const kindsAt = new Map<string, DefKind[]>();
+  for (const r of rows) kindsAt.set(r.path, [...(kindsAt.get(r.path) ?? []), r.kind]);
   for (const r of rows) {
     const rec = cb.store.getDef(r.hash)!;
     const sig = rec.kind === "type" ? rec.signature : `: ${rec.signature}`;
-    const conflict = (counts.get(r.path) ?? 0) > 1 ? red(" (conflicted)") : "";
+    // conflicted only with definitions in its own space: a type isn't part of a clash between two values
+    const conflict = kindsAt.get(r.path)!.filter((k) => sameSpace(k, r.kind)).length > 1 ? red(" (conflicted)") : "";
     console.log(`${r.path.padEnd(width)}  ${dim(shortHash(r.hash))}  ${dim(sig)}${conflict}`);
   }
 }
@@ -280,10 +281,11 @@ function dependents(cb: Codebase, target: string) {
 
 function todo(cb: Codebase) {
   let n = 0;
-  const counts = new Map<string, string[]>();
-  for (const r of cb.store.names()) counts.set(r.path, [...(counts.get(r.path) ?? []), r.hash]);
-  for (const [p, hs] of counts) {
-    if (hs.length < 2) continue;
+  const counts = new Map<string, { hash: string; kind: DefKind }[]>();
+  for (const r of cb.store.names()) counts.set(r.path, [...(counts.get(r.path) ?? []), r]);
+  for (const [p, rows] of counts) {
+    if (!isConflicted(rows.map((r) => r.kind))) continue;
+    const hs = rows.map((r) => r.hash);
     n++;
     console.log(`${red("conflict")} ${bold(p)}: ${hs.map((h) => shortHash(h)).join(", ")}  ${dim(`ucm resolve ${p} ${shortHash(hs[0]!)}`)}`);
   }
@@ -303,8 +305,10 @@ function edit(cb: Codebase, targets: string[], file: string, force: boolean) {
   }
   const pathOf = new Map<string, string | undefined>();
   for (const t of targets) {
-    const h = cb.lookupOne(t);
-    if (!pathOf.has(h)) pathOf.set(h, t.startsWith("#") ? cb.store.pathsOf(h)[0] : t);
+    // a name holding a type and a value edits both
+    const hs = t.startsWith("#") ? [cb.lookupOne(t)] : cb.lookup(t);
+    if (!hs.length) throw new UsageError(`'${t}' not found`);
+    for (const h of hs) if (!pathOf.has(h)) pathOf.set(h, t.startsWith("#") ? cb.store.pathsOf(h)[0] : t);
   }
   const nsOf = (p: string) => (p.includes(".") ? p.slice(0, p.lastIndexOf(".")) : "");
   const nss = new Set([...pathOf.values()].filter((p) => p !== undefined).map(nsOf));
@@ -375,7 +379,7 @@ function rm(cb: Codebase, name: string, force: boolean) {
 
 function resolveConflict(cb: Codebase, name: string, keep: string) {
   const k = cb.lookupOne(keep);
-  const hs = cb.store.hashesAt(name);
+  const hs = cb.store.hashesAt(name, cb.store.getDef(k)!.kind);
   if (!hs.includes(k)) throw new UsageError(`${keep} is not one of the definitions named ${name}`);
   cb.store.transaction(() => {
     for (const h of hs) if (h !== k) {
@@ -593,7 +597,7 @@ square(12);
       return 0;
     case "run": {
       need(1, "run <name> [args...] [--on <remote>]");
-      const h = cb.lookupOne(args[0]!);
+      const h = cb.lookupOne(args[0]!, "value");
       if (cb.store.getDef(h)!.kind === "type") throw new UsageError(`${args[0]} is a type`);
       if (typeof flags.on === "string") return runOn(cb, flags.on, h, args.slice(1));
       return run(h, args.slice(1), cb.source(), cb.lay);

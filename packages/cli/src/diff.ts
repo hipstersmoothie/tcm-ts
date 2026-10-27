@@ -1,15 +1,22 @@
-import { shortHash, type IR } from "@ucm/core";
+import { shortHash, type DefKind, type IR } from "@ucm/core";
 import type { LogEntry, NameRow } from "@ucm/store";
 import { render } from "@ucm/loader";
 import type { Codebase } from "./codebase.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
 
-/** A namespace at some point: name → the hashes it points to (more than one means conflicted). */
+/**
+ * A namespace at some point: name → the hashes it points to (more than one means conflicted). Types are keyed
+ * `path (type)`, so a type and a value sharing a path are compared, diffed and merged independently.
+ */
 export type NameState = Map<string, Set<string>>;
+
+const TYPE_SUFFIX = " (type)";
+export const stateKey = (path: string, kind: DefKind) => (kind === "type" ? path + TYPE_SUFFIX : path);
+export const keyPath = (key: string) => (key.endsWith(TYPE_SUFFIX) ? key.slice(0, -TYPE_SUFFIX.length) : key);
 
 export function stateOf(rows: NameRow[]): NameState {
   const s: NameState = new Map();
-  for (const r of rows) s.set(r.path, (s.get(r.path) ?? new Set()).add(r.hash));
+  for (const r of rows) s.set(stateKey(r.path, r.kind), (s.get(stateKey(r.path, r.kind)) ?? new Set()).add(r.hash));
   return s;
 }
 
@@ -22,11 +29,12 @@ export function rewind(now: NameState, entries: LogEntry[]): NameState {
     if (s.get(p)?.size === 0) s.delete(p);
   };
   for (const e of entries) {
-    if (e.op === "add") remove(e.path, e.newHash!);
-    else if (e.op === "delete") add(e.path, e.oldHash!);
+    const k = stateKey(e.path, e.kind);
+    if (e.op === "add") remove(k, e.newHash!);
+    else if (e.op === "delete") add(k, e.oldHash!);
     else {
-      remove(e.path, e.newHash!);
-      if (e.oldHash) add(e.path, e.oldHash);
+      remove(k, e.newHash!);
+      if (e.oldHash) add(k, e.oldHash);
     }
   }
   return s;
@@ -126,7 +134,7 @@ export function isEmpty(d: NamespaceDiff): boolean {
 
 function namesIn(state: NameState): (hash: string) => string | undefined {
   const byHash = new Map<string, string>();
-  for (const [p, hs] of [...state].sort(([a], [b]) => a.localeCompare(b))) for (const h of hs) if (!byHash.has(h)) byHash.set(h, p);
+  for (const [k, hs] of [...state].sort(([a], [b]) => a.localeCompare(b))) for (const h of hs) if (!byHash.has(h)) byHash.set(h, keyPath(k));
   return (h) => byHash.get(h);
 }
 

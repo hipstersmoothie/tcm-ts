@@ -11,8 +11,11 @@ import { depRef, type DefRecord, type Dep, type Span } from "./types.ts";
 export interface AnalyzeHost {
   /** absolute path of `.ucm/cache`; relative imports into it address definitions by hash */
   cacheDir: string;
-  /** resolve a dotted codebase name (from `#codebase/...` imports) to a definition hash; throw if unknown */
-  resolveName(name: string): string;
+  /**
+   * Resolve a dotted codebase name (from `#codebase/...` imports) to a definition hash; throw if unknown.
+   * `meaning` picks between a type and a value sharing the name.
+   */
+  resolveName(name: string, meaning: "type" | "value"): string;
   ignoreDiagnostics?: number[];
   oldProgram?: ts.Program;
   /**
@@ -116,9 +119,12 @@ function findPackage(name: string, fromDir: string): { name: string; version: st
 }
 
 function importClassifier(file: string, host: AnalyzeHost) {
-  const cache = new Map<ts.Node, Resolved>();
-  return (d: ts.ImportSpecifier | ts.ImportClause | ts.NamespaceImport): Resolved => {
-    const hit = cache.get(d);
+  const cache = new Map<string, Resolved>();
+  const ids = new Map<ts.Node, number>();
+  return (d: ts.ImportSpecifier | ts.ImportClause | ts.NamespaceImport, meaning: "type" | "value"): Resolved => {
+    if (!ids.has(d)) ids.set(d, ids.size);
+    const key = `${ids.get(d)} ${meaning}`;
+    const hit = cache.get(key);
     if (hit) return hit;
     const decl = ts.isImportSpecifier(d) ? d.parent.parent.parent : ts.isImportClause(d) ? d.parent : d.parent.parent;
     const spec = (decl.moduleSpecifier as ts.StringLiteral).text;
@@ -130,7 +136,7 @@ function importClassifier(file: string, host: AnalyzeHost) {
       }
       const ns = spec.slice("#codebase".length).replace(/^\//, "").replaceAll("/", ".");
       try {
-        r = { kind: "hash", hash: host.resolveName(ns ? `${ns}.${exportName}` : exportName) };
+        r = { kind: "hash", hash: host.resolveName(ns ? `${ns}.${exportName}` : exportName, meaning) };
       } catch (e) {
         throw new UcmError((e as Error).message, d);
       }
@@ -151,7 +157,7 @@ function importClassifier(file: string, host: AnalyzeHost) {
       if (!pkg) throw new UcmError(`cannot find package '${pkgName}' in node_modules`, d);
       r = { kind: "ext", ext: { module: `npm:${pkg.name}@${pkg.version}`, subpath, export: exportName } };
     }
-    cache.set(d, r);
+    cache.set(key, r);
     return r;
   };
 }
@@ -252,7 +258,8 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
     checker,
     declToDef,
     projectFiles: new Set(sfs),
-    classifyImport: (d) => classifiers.get(d.getSourceFile())!(d),
+    classifyImport: (d, meaning) => classifiers.get(d.getSourceFile())!(d, meaning),
+    kindOf: (def) => sites[def]!.kind,
     warn: (message, node) => warnings.push(new UcmError(message, node).message),
   };
 

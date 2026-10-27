@@ -124,21 +124,25 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
   const watches: DefSite[] = [];
   const imports: ts.ImportDeclaration[] = [];
   const warnings: string[] = [];
+  /** keyed by `<space> <name>`, space being "type" or "value" */
   const byName = new Map<string, DefSite>();
 
   let targetPath: string | undefined;
   const push = (fields: Omit<DefSite, "id" | "isWatch" | "sf" | "targetPath">) => {
     const site = { ...fields, targetPath };
-    const existing = byName.get(site.name);
-    if (existing) {
-      throw new UcmError(
-        `'${site.name}' is declared more than once. A name binds one definition (declaration merging and same-named type/value pairs are not supported).`,
-        site.nodes[0],
-      );
+    // one name may bind a type and a value (`const User = z.object(…)` + `type User = …`); a class is both
+    const space = site.kind === "type" ? "type" : site.kind === "class" ? "both" : "value";
+    for (const s of space === "both" ? ["type", "value"] : [space]) {
+      if (byName.has(`${s} ${site.name}`)) {
+        throw new UcmError(
+          `'${site.name}' is declared more than once. A name binds one definition, or one type plus one value (declaration merging is not supported).`,
+          site.nodes[0],
+        );
+      }
     }
     const def: DefSite = { ...site, sf, id: firstId + defs.length, isWatch: false };
     defs.push(def);
-    byName.set(site.name, def);
+    for (const s of space === "both" ? ["type", "value"] : [space]) byName.set(`${s} ${site.name}`, def);
   };
 
   const statements = sf.statements;

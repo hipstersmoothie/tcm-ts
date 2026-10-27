@@ -11,6 +11,7 @@ import {
   type AnalyzeHost,
   type DefRecord,
   type ProjectAnalysis,
+  isConflicted,
   saltOf,
   scratchNamespace,
   shortHash,
@@ -109,8 +110,8 @@ export class Codebase {
       ignoreDiagnostics,
       oldProgram,
       saltFor,
-      resolveName: (name) => {
-        const hs = this.store.hashesAt(name);
+      resolveName: (name, meaning) => {
+        const hs = this.store.hashesAt(name, meaning === "type" ? "type" : "term");
         if (hs.length === 0) throw new Error(`'${name}' is not in the codebase`);
         if (hs.length > 1) throw new Error(`'${name}' is conflicted (${hs.length} definitions); resolve it first (\`ucm todo\`)`);
         return hs[0]!;
@@ -269,10 +270,18 @@ export class Codebase {
     return this.store.hashesAt(target);
   }
 
-  lookupOne(target: string): string {
-    const hs = this.lookup(target);
+  /** Resolve to exactly one hash. A name holding a type and a value resolves to the `prefer`red one. */
+  lookupOne(target: string, prefer?: "type" | "value"): string {
+    let hs = this.lookup(target);
     if (hs.length === 0) throw new Error(`'${target}' not found`);
-    if (hs.length > 1) throw new Error(`'${target}' is ambiguous (${hs.length} definitions)`);
+    if (hs.length > 1 && prefer) {
+      const kinds = hs.map((h) => this.store.getDef(h)!.kind);
+      if (!isConflicted(kinds)) hs = hs.filter((_, i) => (kinds[i] === "type") === (prefer === "type"));
+    }
+    if (hs.length > 1) {
+      const which = hs.map((h) => `${shortHash(h)} (${this.store.getDef(h)!.kind})`).join(", ");
+      throw new Error(`'${target}' names ${hs.length} definitions: ${which}; use a #hash`);
+    }
     return hs[0]!;
   }
 

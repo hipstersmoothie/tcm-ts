@@ -1,7 +1,7 @@
 import ts from "typescript";
 import type { IR } from "./hash.ts";
 import { isAnonymousFunction, UcmError, type DefSite } from "./extract.ts";
-import type { ExtRef, RefPos } from "./types.ts";
+import type { DefKind, ExtRef, RefPos } from "./types.ts";
 
 /**
  * Stable names for syntax kinds. `ts.SyntaxKind` numbers shift between TypeScript releases, names don't.
@@ -67,13 +67,16 @@ export interface SiteResult {
   edges: Map<number, boolean>;
 }
 
+export type Meaning = "type" | "value";
+
 export interface CanonContext {
   checker: ts.TypeChecker;
+  kindOf(def: number): DefKind;
   /** files being analyzed together; references between them resolve to definitions */
   projectFiles: Set<ts.SourceFile>;
   warn(message: string, node: ts.Node): void;
   declToDef: Map<ts.Node, number>;
-  classifyImport(decl: ts.ImportSpecifier | ts.ImportClause | ts.NamespaceImport): Resolved;
+  classifyImport(decl: ts.ImportSpecifier | ts.ImportClause | ts.NamespaceImport, meaning: Meaning): Resolved;
 }
 
 const IDENT_NAME = /^[A-Za-z_$][\w$]*$/;
@@ -141,6 +144,17 @@ function isTypePosition(id: ts.Node): boolean {
   return false;
 }
 
+/**
+ * Which meaning of a name an identifier uses. Usually that's its position, except that `typeof x` names a
+ * value even though it sits in a type.
+ */
+function meaningAt(id: ts.Node): Meaning {
+  for (let n: ts.Node = id; n.parent && (ts.isQualifiedName(n.parent) || ts.isTypeQueryNode(n.parent)); n = n.parent) {
+    if (ts.isTypeQueryNode(n.parent)) return "value";
+  }
+  return isTypePosition(id) ? "type" : "value";
+}
+
 /** A reference is deferred when it is only evaluated later (inside a function body or instance field initializer). */
 function isDeferred(id: ts.Node, roots: readonly ts.Node[]): boolean {
   let n: ts.Node = id;
@@ -175,6 +189,14 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
   const reserved = new Set<string>();
   const edges = new Map<number, boolean>();
 
+  /** The definition a symbol denotes here. A type and a value sharing a name are one merged symbol. */
+  const pickDef = (decls: readonly ts.Declaration[], at: ts.Node): number | undefined => {
+    const defs = [...new Set(decls.map((d) => ctx.declToDef.get(d)).filter((d) => d !== undefined))];
+    if (defs.length <= 1) return defs[0];
+    const wantType = meaningAt(at) === "type";
+    return defs.find((d) => (ctx.kindOf(d) === "type") === wantType) ?? defs[0];
+  };
+
   const classifySymbol = (sym: ts.Symbol | undefined, at: ts.Node, text: string): Resolved => {
     if (!sym) return { kind: "raw", name: text };
     const decls = sym.declarations ?? [];
@@ -186,10 +208,8 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
       const target = checker.getAliasedSymbol(sym);
       const td = target.declarations?.[0];
       if (td && ctx.projectFiles.has(td.getSourceFile())) {
-        for (const d of target.declarations!) {
-          const def = ctx.declToDef.get(d);
-          if (def !== undefined) return { kind: "def", def };
-        }
+        const def = pickDef(target.declarations!, at);
+        if (def !== undefined) return { kind: "def", def };
         throw new UcmError(
           ts.isSourceFile(td)
             ? `'${text}' is a namespace import of a project module; import the definitions you use by name`
@@ -197,13 +217,11 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
           at,
         );
       }
-      return ctx.classifyImport(d0);
+      return ctx.classifyImport(d0, meaningAt(at));
     }
     if (ctx.projectFiles.has(dsf)) {
-      for (const d of decls) {
-        const def = ctx.declToDef.get(d);
-        if (def !== undefined) return { kind: "def", def };
-      }
+      const def = pickDef(decls, at);
+      if (def !== undefined) return { kind: "def", def };
       if (dsf === sf && site.nodes.some((n) => d0.pos >= n.pos && d0.end <= n.end)) return { kind: "local", symbol: sym };
       throw new UcmError(`cannot resolve '${text}'`, at);
     }

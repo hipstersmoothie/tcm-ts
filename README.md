@@ -58,6 +58,9 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
 ## How it works
 
 - **Definitions** are top-level `function`s (overloads included), `const`s, `class`es, `type`s and `interface`s.
+  A type and a value can share a name, like TypeScript's own type and value spaces (`const User = z.object(…)`
+  with `type User = z.infer<typeof User>`). Each half is its own definition, updated, diffed and merged
+  independently. The `#codebase` shim exports both under the one name.
   Classes hash as one unit. Top-level `let`/`var`, enums, namespaces, decorators and `declare` are rejected
   with a reason.
 - **Hashing** (`packages/core/src/canonicalize.ts`): every definition is lowered to an S-expression IR built
@@ -123,9 +126,6 @@ half-initialized.
 The design and milestones are in the plan. Still open:
 
 - Top-level destructuring (`const { a, b } = …`) is rejected rather than stored as a multi-member component.
-- A type and a value cannot share a name (`const User = z.object(…)` with `type User = …`). TypeScript
-  won't merge a type re-export and a value re-export in the `#codebase` shim. Supporting it means generating
-  merged declarations with forwarded type parameters.
 - `import.meta` is location-dependent: it is evaluated inside `.ucm/cache`, so ucm warns about it.
   ucm-ts's own `createRequire(import.meta.url)` still finds `@types/node`, because the cache sits inside
   the repo.

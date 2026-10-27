@@ -53,6 +53,19 @@ export interface DefRecord {
   doc?: string;
 }
 
+/**
+ * Names live in two spaces, like TypeScript's: a type and a value can share a path without conflicting.
+ * A class is both.
+ */
+export function sameSpace(a: DefKind, b: DefKind): boolean {
+  return a === "class" || b === "class" || (a === "type") === (b === "type");
+}
+
+/** Whether definitions sharing one path clash (any two in the same space). */
+export function isConflicted(kinds: DefKind[]): boolean {
+  return kinds.some((a, i) => kinds.some((b, j) => j > i && sameSpace(a, b)));
+}
+
 export function extRefString(e: ExtRef): string {
   return `${e.module}${e.subpath ? "/" + e.subpath : ""}#${e.export}`;
 }

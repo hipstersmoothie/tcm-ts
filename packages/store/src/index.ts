@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import type { DefKind, DefRecord, Dep, InitKind, RefPos, Span } from "@ucm/core";
+import { sameSpace, type DefKind, type DefRecord, type Dep, type InitKind, type RefPos, type Span } from "@ucm/core";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS components (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, ir_version INTEGER NOT NULL, created_at INTEGER NOT NULL);
@@ -282,8 +282,18 @@ export class Store {
     return !!this.db.prepare("SELECT 1 FROM branches WHERE name = ?").get(name);
   }
 
-  hashesAt(path: string): string[] {
-    return (this.db.prepare("SELECT hash FROM names WHERE branch_id = ? AND path = ? ORDER BY hash").all(this.branch().id, path) as { hash: string }[]).map((r) => r.hash);
+  /** Hashes named `path`; with `kind`, only those in the same space (a type and a value can share a path). */
+  hashesAt(path: string, kind?: DefKind): string[] {
+    const rows = this.db.prepare("SELECT hash, kind FROM names WHERE branch_id = ? AND path = ? ORDER BY hash").all(this.branch().id, path) as { hash: string; kind: DefKind }[];
+    return rows.filter((r) => kind === undefined || sameSpace(r.kind, kind)).map((r) => r.hash);
+  }
+
+  /** Point `path` at `newHash` instead of `oldHashes`, leaving other hashes on it (the other space) alone. */
+  replaceNames(path: string, oldHashes: string[], newHash: string, kind: DefKind, command: string) {
+    const b = this.branch().id;
+    for (const o of oldHashes) this.db.prepare("DELETE FROM names WHERE branch_id = ? AND path = ? AND hash = ?").run(b, path, o);
+    this.db.prepare("INSERT OR IGNORE INTO names (branch_id, path, hash, kind) VALUES (?, ?, ?, ?)").run(b, path, newHash, kind);
+    for (const o of oldHashes.length ? oldHashes : [null]) this.log("update", path, o, newHash, kind, command);
   }
 
   pathsOf(hash: string): string[] {

@@ -153,6 +153,48 @@ export const testUnrelated = () => assert.ok(offset > 0);
   assert.match(after, /2 passed, 1 failed \(1 cached\)/);
 });
 
+test("a type and a value can share a name", () => {
+  scratch(`// ucm: namespace model
+export const User = {
+  parse(input: unknown): User {
+    const o = input as { name?: unknown };
+    if (typeof o.name !== "string") throw new TypeError("not a user");
+    return { name: o.name };
+  },
+};
+export type User = { name: string };
+export type Box<T extends string = "x"> = { tag: T };
+export const Box = <T extends string>(tag: T): Box<T> => ({ tag });
+`);
+  ucm("add");
+  assert.doesNotMatch(ucm("ls", "model"), /conflicted/);
+  scratch(`import { User, Box } from "#codebase/model";
+export const greet = (u: User) => "hi " + u.name;
+export const useBoth = () => greet(User.parse({ name: "ada" })) + " " + (Box("y") satisfies Box<"y">).tag;
+`);
+  ucm("add");
+  assert.equal(ucm("run", "useBoth").trim(), "hi ada y");
+
+  // updating the type leaves the value alone, and dependents follow the type
+  scratch(`// ucm: namespace model\nexport type User = { name: string; admin?: boolean };\n`);
+  const upd = ucm("update");
+  assert.match(upd, /~ update\s+model\.User type/);
+  assert.match(upd, /~ updated\s+greet/);
+  const d = ucm("diff");
+  assert.match(d, /edited\s+~ model\.User \(type\)/);
+  // the value's code didn't change, but its `parse(): User` refers to the type, so it was re-hashed
+  const [edited, propagated] = d.split("updated because a dependency changed");
+  assert.doesNotMatch(edited!, /~ model\.User\s+#/);
+  assert.match(propagated!, /~ model\.User\s+#.*via model\.User/);
+
+  // a second value at model.User is a conflict in the value space only
+  scratch(`export const User = 42;\n`);
+  ucm("add", "--into", "model2");
+  ucm("alias", "model2.User", "model.User");
+  assert.match(ucm("todo"), /conflict model\.User/);
+  assert.match(ucm("ls", "model.User"), /model\.User\s+#\w+\s+type(?! \(conflicted)/, "the type isn't part of the conflict");
+});
+
 test("rejects non-erasable and mutable top-level syntax", () => {
   scratch(`enum Color { Red }\n`);
   assert.throws(() => ucm("check"), /enums are not supported/);

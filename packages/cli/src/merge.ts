@@ -1,7 +1,7 @@
 import type { NameRow } from "@ucm/store";
 import { shortHash } from "@ucm/core";
 import type { Codebase } from "./codebase.ts";
-import { diffNamespaces, printDiff, rewind, stateOf, type NameState } from "./diff.ts";
+import { diffNamespaces, keyPath, printDiff, rewind, stateOf, type NameState } from "./diff.ts";
 import { bold, dim, green, red, yellow } from "./style.ts";
 
 const same = (a: Set<string> | undefined, b: Set<string> | undefined) =>
@@ -93,7 +93,7 @@ export function mergeBranch(cb: Codebase, theirs: string, command = `merge ${the
   };
   const result = mergeStates(base, before, theirsNow, propagated);
 
-  const rows: NameRow[] = [...result.merged].flatMap(([path, hs]) => [...hs].map((hash) => ({ path, hash, kind: cb.store.getDef(hash)!.kind })));
+  const rows: NameRow[] = [...result.merged].flatMap(([key, hs]) => [...hs].map((hash) => ({ path: keyPath(key), hash, kind: cb.store.getDef(hash)!.kind })));
   cb.store.setBranchNames(ours, rows, command);
   for (const [o, n] of result.patches) cb.store.addPatch(o, n);
   recordMergeBase(cb, ours, theirs);
@@ -107,7 +107,7 @@ export function mergeBranch(cb: Codebase, theirs: string, command = `merge ${the
   if (updated.length) console.log(dim(`\n  re-derived against the merged definitions: ${updated.join(", ")}`));
   for (const p of result.keptOverDelete) console.log(`${yellow("  kept")} ${bold(p)} ${dim("(deleted on one side, changed on the other)")}`);
   for (const p of result.conflicts) {
-    const hs = cb.store.hashesAt(p);
+    const hs = [...(after.get(p) ?? [])];
     if (hs.length < 2) continue;
     console.log(`${red("  conflict")} ${bold(p)}: ${hs.map((h) => shortHash(h)).join(" vs ")}  ${dim(`ucm resolve ${p} ${shortHash(hs[0]!)}`)}`);
   }
