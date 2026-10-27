@@ -63,18 +63,37 @@ async function get(url: string | URL, init?: RequestInit): Promise<Response> {
   }
 }
 
-/** Every module a browser would load for the app, following imports from the entry. */
-async function crawl(url: string): Promise<Map<string, string>> {
+/**
+ * Every module a browser would load for the app, following imports from the entry. While Vite's dependency
+ * optimizer is still scanning it can answer with a non-200 (a real browser recovers via Vite's client), so a
+ * crawl that meets one starts over.
+ */
+async function crawl(url: string, attempts = 6): Promise<Map<string, string>> {
   const seen = new Map<string, string>();
   const queue = [new URL("/entry.ts", url).href];
   while (queue.length) {
     const u = queue.pop()!;
     if (seen.has(u)) continue;
-    const text = await (await get(u)).text();
+    const res = await get(u);
+    if (res.status !== 200) {
+      if (attempts <= 1) throw new Error(`${u}: ${res.status}`);
+      await new Promise((r) => setTimeout(r, 500));
+      return crawl(url, attempts - 1);
+    }
+    const text = await res.text();
     seen.set(u, text);
     for (const m of text.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)["']([^"']+)["']/g)) if (/^[./]/.test(m[1]!)) queue.push(new URL(m[1]!, u).href);
   }
   return seen;
+}
+
+/** The page after its scripts ran, from headless Chrome; retried, since a loaded machine can cut a snapshot short. */
+function renderedPage(url: string, expect: RegExp): string {
+  let dom = "";
+  for (let i = 0; i < 3 && !expect.test(dom); i++) {
+    dom = spawnSync(CHROME!, ["--headless=new", "--disable-gpu", "--no-first-run", "--virtual-time-budget=8000", "--dump-dom", url], { encoding: "utf8" }).stdout;
+  }
+  return dom;
 }
 
 const waitFor = async (cond: () => boolean, ms = 8000) => {
@@ -127,9 +146,9 @@ export async function main() {
   assert.equal((await rpc(url, hashOf("app.render"), [1, 2])).status, 403, "browser code is not an endpoint");
 
   if (CHROME) {
-    const dom = spawnSync(CHROME, ["--headless=new", "--disable-gpu", "--no-first-run", "--virtual-time-budget=8000", "--dump-dom", url], { encoding: "utf8" }).stdout;
     // the visit count depends on how often the headless page reloads; that it came from the server is what matters
-    assert.match(dom, /<div id="app">lines \d+, visit \d+<\/div>/, "the app ran in a real browser and called the server");
+    const expect = /<div id="app">lines \d+, visit \d+<\/div>/;
+    assert.match(renderedPage(url, expect), expect, "the app ran in a real browser and called the server");
   }
 
   // an update in another process reloads the app
@@ -143,8 +162,8 @@ export async function main() {
   assert.ok(entry.includes(updated), "the entry now imports the updated app");
   assert.match(output(), /reloaded app\.main/);
   if (CHROME) {
-    const dom = spawnSync(CHROME, ["--headless=new", "--disable-gpu", "--no-first-run", "--virtual-time-budget=8000", "--dump-dom", url], { encoding: "utf8" }).stdout;
-    assert.match(dom, /<div id="app">\d+ lines \(visit \d+\)<\/div>/, "the reloaded app renders with the updated code");
+    const expect = /<div id="app">\d+ lines \(visit \d+\)<\/div>/;
+    assert.match(renderedPage(url, expect), expect, "the reloaded app renders with the updated code");
   }
 
   // a synchronous server function can't be called across the network; the error names it

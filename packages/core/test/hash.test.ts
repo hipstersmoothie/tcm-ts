@@ -183,3 +183,23 @@ test("dynamic import() of a package is a pinned external dependency", () => {
   assert.deepEqual(d!.deps.map((x) => x.ref), ["node:path#*"]);
   assert.match(d!.ir, /"DynImport","node:path"/);
 });
+
+test("parameter schemas check arguments arriving from the network", async () => {
+  const { checkArgs } = (await import(process.env.UCM_CORE ? path.resolve(process.env.UCM_CORE) : "../src/index.ts")) as typeof Core & { checkArgs?: typeof import("../src/schema.ts").checkArgs };
+  const [def] = analyze(`
+    type Tree = { v: number; kids: Tree[] };
+    export async function save(name: string, opts: { limit?: number; tags: string[] }, when: Date, mode: "a" | "b", tree: Tree, ...extra: number[]) {}
+  `).defs.filter((d) => d.nameHint === "save");
+  const p = def!.params!;
+  assert.deepEqual(p.params.map((x) => x.name), ["name", "opts", "when", "mode", "tree", "extra"]);
+  if (!checkArgs) return; // the self-hosted build's entry exposes only the analyzer
+  const tree = { v: 1, kids: [{ v: 2, kids: [] }] };
+  const ok = ["ada", { tags: ["x"] }, new Date(0), "a", tree, 1, 2];
+  assert.equal(checkArgs(p, ok), undefined);
+  assert.match(checkArgs(p, [42, ...ok.slice(1)])!, /argument `name` should be a string, got number 42/);
+  assert.match(checkArgs(p, ["ada", { tags: ["x"], isAdmin: true }, ...ok.slice(2)])!, /`opts`\.isAdmin isn't a field it accepts/);
+  assert.match(checkArgs(p, ["ada", {}, ...ok.slice(2)])!, /`opts`\.tags is missing/);
+  assert.match(checkArgs(p, ["ada", { tags: ["x"] }, new Date(0), "c", tree])!, /mode` should be "a" \| "b"/);
+  assert.match(checkArgs(p, ["ada", { tags: ["x"] }, new Date(0), "a", { v: 1, kids: [{ v: "deep", kids: [] }] }])!, /tree`\.kids\[0\]\.v should be a number/);
+  assert.match(checkArgs(p, [...ok.slice(0, 5), 1, "two"])!, /extra`\[1\] should be a number/);
+});

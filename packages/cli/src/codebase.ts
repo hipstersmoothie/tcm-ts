@@ -229,6 +229,18 @@ export class Codebase {
     }
   }
 
+  /**
+   * Make sure these definitions have parameter schemas (definitions stored before schemas existed get them by
+   * re-analysis, which also re-checks that their source still hashes to them).
+   */
+  ensureParams(hashes: Iterable<string>) {
+    const src = this.source();
+    const missing = [...hashes].filter((h) => !src.get(h)?.params && src.get(h)?.kind === "term");
+    if (!missing.length) return;
+    const r = this.rehash(src, new Set(missing.map((h) => src.get(h)!.componentHash)));
+    for (const [h, d] of r.defs) if (d.params && d.hash === h) this.store.setMetadata(h, "params", JSON.stringify(d.params));
+  }
+
   /** Components needed to run or name `hashes`: their own plus everything they reference. */
   closureComponents(hashes: Iterable<string>): Set<string> {
     const comps = new Set<string>();

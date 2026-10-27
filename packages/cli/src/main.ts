@@ -4,7 +4,7 @@ import { isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from
 import { evaluateWatches, render, run } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { migrate } from "./migrate.ts";
-import { dev } from "./dev.ts";
+import { build, dev, start } from "./web.ts";
 import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
 import { isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
@@ -511,6 +511,10 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
   ucm history [n] / reset <id>   name changes on this branch / undo back to an entry
   ucm branch [name] / switch <name>
   ucm dev <app> [--port 5173]    serve a browser app from the codebase; what needs the server runs there, called by hash
+  ucm build <app> [--force]      production build into .ucm/apps/<hash>/ (immutable; reused if it exists)
+  ucm start <app> [--port 8080] [--host] [--tls]
+                                 serve the app in production; follows its name (deploy and rollback = moving the
+                                 name) and keeps earlier builds' assets and server functions working for open tabs
   ucm merge <branch>             three-way merge into this branch; dependents follow the other side's updates
 
   ucm remote [add <name> <url|dir> [--token t] [--fingerprint sha256] | rm <name>]
@@ -579,6 +583,17 @@ square(12);
       need(1, "dev <app> [--port 5173]");
       await dev(cb, args[0]!, Number(typeof flags.port === "string" ? flags.port : 5173));
       return -1; // keep serving
+    case "build":
+      need(1, "build <app> [--force]");
+      await build(cb, args[0]!, { force: !!flags.force });
+      return 0;
+    case "start": {
+      need(1, "start <app> [--port 8080] [--host 127.0.0.1] [--tls [--tls-cert f --tls-key f]]");
+      const str = (k: string) => (typeof flags[k] === "string" ? (flags[k] as string) : undefined);
+      const tls = flags.tls || str("tls-cert") ? tlsMaterial(cb, str("tls-cert"), str("tls-key")) : undefined;
+      await start(cb, args[0]!, { port: Number(str("port") ?? 8080), host: str("host") ?? "127.0.0.1", tls });
+      return -1; // keep serving
+    }
     case "test": {
       const ns = args[0] ?? "";
       const names = cb.store.names().filter((n) => n.kind !== "type" && isTestPath(n.path) && (!ns || n.path === ns || n.path.startsWith(ns + ".")));

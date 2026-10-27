@@ -133,6 +133,7 @@ export class Store {
         for (const s of r.spans) if (s.ext) ext.run(`${s.ext.module}${s.ext.subpath ? "/" + s.ext.subpath : ""}#${s.ext.export}`, s.ext.module, s.ext.subpath, s.ext.export);
         sig.run(r.hash, r.signature, tsVersion);
         if (r.doc) meta.run(r.hash, "doc", r.doc);
+        if (r.params) meta.run(r.hash, "params", JSON.stringify(r.params));
       }
     });
   }
@@ -142,6 +143,10 @@ export class Store {
     return (this.db.prepare("SELECT DISTINCT ir_version AS v FROM components").all() as { v: number }[]).map((r) => r.v);
   }
 
+  setMetadata(hash: string, key: string, value: string) {
+    this.db.prepare("INSERT OR REPLACE INTO metadata (hash, key, value) VALUES (?, ?, ?)").run(hash, key, value);
+  }
+
   hasDef(hash: string): boolean {
     return !!this.db.prepare("SELECT 1 FROM definitions WHERE hash = ?").get(hash);
   }
@@ -149,10 +154,11 @@ export class Store {
   getDef(hash: string): DefRecord | undefined {
     const row = this.db
       .prepare(
-        `SELECT d.*, c.size, s.display, m.value AS doc FROM definitions d
+        `SELECT d.*, c.size, s.display, m.value AS doc, p.value AS params FROM definitions d
          JOIN components c ON c.hash = d.component_hash
          LEFT JOIN signatures s ON s.hash = d.hash
          LEFT JOIN metadata m ON m.hash = d.hash AND m.key = 'doc'
+         LEFT JOIN metadata p ON p.hash = d.hash AND p.key = 'params'
          WHERE d.hash = ?`,
       )
       .get(hash) as Row | undefined;
@@ -186,6 +192,7 @@ export class Store {
       deps,
       signature: (row.display as string | null) ?? "?",
       doc: (row.doc as string | null) ?? undefined,
+      params: row.params ? JSON.parse(row.params as string) : undefined,
     };
   }
 

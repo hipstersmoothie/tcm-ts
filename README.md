@@ -44,6 +44,7 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
 | `ucm add` / `ucm update` | save. `update` re-points names and re-hashes every dependent; dependents that stop typechecking keep their old hash and go to `todo` |
 | `ucm import <dir> [--into ns]` | add an existing project. Each file becomes a namespace (`core/src/analyze.ts` → `core.analyze`); imports between files, barrels and workspace packages resolve to hashes; test files are skipped |
 | `ucm migrate` | rebuild a codebase written with an older hash format. Every stored definition is re-rendered against its migrated dependencies and re-hashed; names, history, branches, patches, todo and remotes carry over; the old `.ucm` is kept as a backup |
+| `ucm dev <app>` / `ucm build <app>` / `ucm start <app>` | browser apps with server functions called by hash (see below): develop with hot reload, build immutably, serve in production, where moving the app's name deploys or rolls back |
 | `ucm test [namespace] [--fresh]` | run tests: definitions named `test…` (or under a `tests` namespace) that pass by returning without throwing. A test's hash covers everything it calls, so results are cached by hash and Node version, and only tests whose code or dependencies changed re-run. The watcher runs tests from the scratch file inline. Tests that read the filesystem, clock or network can go stale in the cache; use `--fresh` |
 | `ucm verify` | re-render every live definition from the store and re-hash it. This must be the identity |
 | `ucm view`, `ls`, `find`, `deps`, `dependents`, `docs` | browse. Code is rendered with the *current* names |
@@ -170,10 +171,23 @@ fetch calls and no API layer.
 - **Testable in one process:** in `ucm test` everything runs locally, the counterpart of Unison's local
   `Remote` handler.
 
+**Arguments are checked against the parameter types.** A server function the browser can call is a public
+endpoint, and TypeScript types are gone at runtime. So ucm derives a runtime schema from each server function's
+parameters (objects, arrays, tuples, unions, literals, dates, maps, sets, recursive types). Calls with wrong
+types, missing fields, unexpected extra fields, or too many arguments are refused with a 400 that says
+what's wrong, before the function runs.
+
+**Production: deploy and roll back by moving a name.**
+- `ucm build <app>` writes an immutable, content-addressed build to `.ucm/apps/<app hash>/`. Its assets are
+  served under `/_app/<hash>/`.
+- `ucm start <app>` serves the build the app's name points to now. When the name moves (`ucm update`, `mv`,
+  `reset`, `pull`), it builds the new version if needed and switches to it, so deploying and rolling back are
+  both moving a name, like Unison's service names pointing at service hashes.
+- **There is no version skew.** Earlier builds stay served, and their server functions stay callable. A tab
+  opened before a deploy keeps loading its own assets and calling the exact code it was built against, until
+  it reloads. `prod.test.ts` deploys v2 and checks the v1 tab still works, then rolls back.
+
 **Not yet:**
-- **Production builds.** `ucm dev` is development only, so `ucm build` plus a production server comes next.
-- **Server functions take only plain data.** Arguments aren't validated against their TypeScript types at
-  runtime, so treat them as untrusted input.
 - **Server-only npm packages are found by a heuristic:** no browser build, and an entry that imports Node
   builtins.
 - **Module-level state follows its code.** State touched only by code that runs anywhere (`const cache = new

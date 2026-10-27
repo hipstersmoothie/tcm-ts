@@ -1,3 +1,5 @@
+import type { ParamsSchema } from "./schema.ts";
+
 export type DefKind = "term" | "type" | "class";
 export type InitKind = "hoisted" | "strict";
 export type RefPos = "value" | "type";
@@ -53,6 +55,8 @@ export interface DefRecord {
   deps: Dep[];
   signature: string;
   doc?: string;
+  /** runtime schema of a function's parameters (metadata, not hashed): checks arguments arriving from browsers */
+  params?: ParamsSchema;
 }
 
 /**

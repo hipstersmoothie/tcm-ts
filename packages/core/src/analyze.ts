@@ -7,6 +7,7 @@ import { extract, UcmError, type DefSite, type ExtractMode, type Piece } from ".
 import { canonicalizeSite, type CanonContext, type Resolved, type SiteResult } from "./canonicalize.ts";
 import { createProgram, fileDiagnostics, type Diagnostic } from "./program.ts";
 import { depRef, type DefRecord, type Dep, type ExtRef, type Span } from "./types.ts";
+import { paramsSchema, type ParamsSchema } from "./schema.ts";
 
 export interface AnalyzeHost {
   /** absolute path of `.ucm/cache`; relative imports into it address definitions by hash */
@@ -241,6 +242,12 @@ function buildSource(pieces: Piece[], sf: ts.SourceFile) {
   return { text, map };
 }
 
+function paramsOf(site: DefSite, checker: ts.TypeChecker): ParamsSchema | undefined {
+  if (site.kind !== "term" || site.isWatch || !site.nameNode) return undefined;
+  const sym = checker.getSymbolAtLocation(site.nameNode);
+  return sym ? paramsSchema(checker, checker.getTypeOfSymbolAtLocation(sym, site.nameNode)) : undefined;
+}
+
 function signatureOf(site: DefSite, checker: ts.TypeChecker): string {
   if (site.kind === "type") return site.tag === "Interface" ? "interface" : "type";
   const flags = ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope;
@@ -359,6 +366,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
       targetPath: site.targetPath,
       deps: [...deps.values()],
       signature: signatureOf(site, checker),
+      params: paramsOf(site, checker),
       doc: site.doc,
       file: site.sf.fileName,
     };
