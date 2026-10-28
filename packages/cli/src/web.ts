@@ -190,7 +190,11 @@ function ucmPlugin(cb: Codebase, current: () => AppPlan): Plugin {
 type Middleware = (req: http.IncomingMessage, res: http.ServerResponse, next: () => void) => void;
 
 /** Answers `POST /__ucm/rpc/<hash>` for hashes `isEndpoint` accepts, by importing and calling the real function. */
+type Fn = (...args: unknown[]) => unknown;
+
 interface ServerApiHost {
+  startWorker: (opts: { dataDir: string; load: (hash: string) => Promise<Fn>; log: (line: string) => void }) => () => void;
+  setSchedules: (opts: { dataDir: string; jobs: { name: string; spec: string; fn: Fn; hash: string }[]; log?: (line: string) => void }) => void;
   HttpError: new (status: number, message: string) => Error & { status: number; retryAfter?: number };
   withCall: <T>(
     call: { method: string; url: string; headers: Record<string, string | string[] | undefined>; ip: string | undefined; signal: AbortSignal },
@@ -425,6 +429,51 @@ function printRoutes(cb: Codebase, routes: HttpRoutes, url: string) {
   }
 }
 
+/**
+ * Background work for an app: a worker for the durable job queue (functions loaded by hash, so a job runs the
+ * code that enqueued it), and the recurring jobs (`every(...)` values) found in the app's namespace.
+ */
+async function startBackground(cb: Codebase, appName: string) {
+  const api = await serverApiHost(cb)();
+  const data = dataDir(cb);
+  // `<hash>` is a function; `<hash>#fn` is the function inside the recurring job (schedule) with that hash
+  const load = async (ref: string): Promise<Fn> => {
+    const [hash, part] = ref.split("#") as [string, string | undefined];
+    const rec = cb.store.getDef(hash);
+    if (!rec) throw new Error(`no definition ${shortHash(hash)} in this codebase`);
+    materialize([hash], cb.source(), cb.lay);
+    const v = ((await import(pathToFileURL(path.join(cb.lay.cacheDir, `${rec.componentHash}.ts`)).href)) as Record<string, unknown>)[exportId(hash)];
+    const fn = part === "fn" ? (v as { fn?: unknown } | undefined)?.fn : v;
+    if (typeof fn !== "function") throw new Error(`${cb.displayRef(`#${hash}`)} isn't a function`);
+    return fn as Fn;
+  };
+  const stopWorker = api.startWorker({ dataDir: data, load, log: (line) => console.log(`  ${dim("→")} ${line}`) });
+  const ns = appName.includes(".") ? appName.slice(0, appName.lastIndexOf(".")) : "";
+  let described = "";
+  const refresh = async (quiet = false) => {
+    // found from the code itself: definitions in the app's namespace whose value is made by `every(...)`
+    const candidates = cb.store
+      .names()
+      .filter((n) => n.kind === "term" && (!ns || n.path.startsWith(ns + ".")))
+      .filter((n) => cb.store.getDef(n.hash)!.spans.some((s) => s.ext?.module === "ucm:server" && s.ext.export === "every"));
+    const jobs: { name: string; spec: string; fn: Fn; hash: string }[] = [];
+    for (const n of candidates) {
+      const rec = cb.store.getDef(n.hash)!;
+      materialize([n.hash], cb.source(), cb.lay);
+      const v = ((await import(pathToFileURL(path.join(cb.lay.cacheDir, `${rec.componentHash}.ts`)).href)) as Record<string, unknown>)[exportId(n.hash)] as
+        | { [k: symbol]: unknown; spec: string; fn: Fn }
+        | undefined;
+      if (v && v[Symbol.for("ucm.job")]) jobs.push({ name: n.path, spec: v.spec, fn: v.fn, hash: n.hash });
+    }
+    api.setSchedules({ dataDir: data, jobs, log: (line) => console.log(red(`  ${line}`)) });
+    const now = jobs.map((j) => `${j.name} (${j.spec})`).join(", ");
+    if (!quiet && now !== described) console.log(`  jobs     ${jobs.length ? `recurring: ${now}` : dim("no recurring jobs; enqueue() from server functions runs here too")}`);
+    described = now;
+  };
+  await refresh();
+  return { refresh, stop: stopWorker };
+}
+
 function reportPlan(cb: Codebase, appName: string, plan: AppPlan) {
   if (plan.errors.length) {
     console.log(red(`\n  ${appName} can't run in the browser yet:`));
@@ -507,8 +556,9 @@ export async function dev(cb: Codebase, appName: string, port: number, routes?: 
   console.log(`${bold("ucm dev")} ${appName} ${dim(shortHash(state.hash))}\n  url      ${url}`);
   reportPlan(cb, appName, state.plan);
   if (routes) printRoutes(cb, routes, url);
+  const background = await startBackground(cb, appName);
 
-  const stop = watchCodebase(cb, () => {
+  const stop = watchCodebase(cb, async () => {
     const before = state.hash;
     state = planApp(cb, appName);
     writeBuildRoot(cb, root, appName, state);
@@ -516,11 +566,13 @@ export async function dev(cb: Codebase, appName: string, port: number, routes?: 
     server.ws.send({ type: "full-reload" });
     console.log(`\n${yellow("reloaded")} ${appName} ${dim(before === state.hash ? "(names changed)" : `${shortHash(before)} → ${shortHash(state.hash)}`)}`);
     reportPlan(cb, appName, state.plan);
+    await background.refresh();
   });
   return {
     url,
     close: async () => {
       stop();
+      background.stop();
       await server.close();
     },
   };
@@ -700,8 +752,11 @@ export async function start(cb: Codebase, appName: string, opts: StartOptions): 
   console.log(`${bold("ucm start")} ${appName} ${dim(shortHash(current.hash))}\n  url      ${url}`);
   console.log(`  server   ${endpoints.size} callable function hash(es) across ${fs.readdirSync(appsDir(cb)).length} build(s)`);
   if (opts.http) printRoutes(cb, opts.http, url);
+  const background = await startBackground(cb, appName);
 
   const stop = watchCodebase(cb, async () => {
+    // recurring jobs follow names too, even when the app itself didn't change
+    await background.refresh();
     const next = await build(cb, appName, { quiet: true });
     if (next.hash === current.hash) return;
     const before = current.hash;
@@ -716,6 +771,7 @@ export async function start(cb: Codebase, appName: string, opts: StartOptions): 
     close: async () => {
       clearInterval(rescan);
       stop();
+      background.stop();
       await new Promise((r) => server.close(r));
     },
   };

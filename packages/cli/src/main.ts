@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from "@ucm/core";
+import { DatabaseSync } from "node:sqlite";
 import { evaluateWatches, render, run } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { migrate } from "./migrate.ts";
@@ -513,6 +514,8 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
   ucm dev <app> [--port 5173] [--http <namespace>[=/prefix]]
                                  serve a browser app from the codebase; what needs the server runs there, called by hash
   ucm build <app> [--force]      production build into .ucm/apps/<hash>/ (immutable; reused if it exists)
+  ucm jobs [n] | retry <id> | cancel <id>
+                                 background jobs: enqueue() / every() from #ucm/server, run by ucm start / ucm dev
   ucm apps [prune [--keep 3]]    list builds (* = current); prune keeps the current build plus the newest N others
                                  (tabs on a pruned build reload themselves onto the current one)
   ucm start <app> [--port 8080] [--host] [--tls] [--keep N] [--http <namespace>[=/prefix]]
@@ -586,6 +589,39 @@ square(12);
       need(1, "dev <app> [--port 5173]");
       await dev(cb, args[0]!, Number(typeof flags.port === "string" ? flags.port : 5173), typeof flags.http === "string" ? parseHttpFlag(flags.http) : undefined);
       return -1; // keep serving
+    case "jobs": {
+      const file = path.join(cb.lay.ucmDir, "data", "jobs.sqlite");
+      if (!fs.existsSync(file)) return (console.log(dim("no jobs yet (enqueue() from a server function, or every() for recurring ones)")), 0);
+      const db = new DatabaseSync(file);
+      try {
+        const find = (prefix: string) => {
+          const rows = db.prepare("SELECT id FROM jobs WHERE id LIKE ?").all(`${prefix}%`) as { id: string }[];
+          if (rows.length !== 1) throw new UsageError(rows.length ? `'${prefix}' matches ${rows.length} jobs` : `no job '${prefix}'`);
+          return rows[0]!.id;
+        };
+        if (args[0] === "retry") {
+          need(2, "jobs retry <id>");
+          db.prepare("UPDATE jobs SET status = 'queued', run_at = ?, attempts = 0, last_error = NULL, finished = NULL WHERE id = ?").run(Date.now(), find(args[1]!));
+          return (console.log("queued again"), 0);
+        }
+        if (args[0] === "cancel") {
+          need(2, "jobs cancel <id>");
+          const r = db.prepare("UPDATE jobs SET status = 'cancelled', finished = ? WHERE id = ? AND status = 'queued'").run(Date.now(), find(args[1]!));
+          return (console.log(r.changes ? "cancelled" : dim("not queued (already running or finished)")), 0);
+        }
+        const rows = db.prepare("SELECT * FROM jobs ORDER BY created DESC LIMIT ?").all(Number(args[0] ?? 30)) as Record<string, string | number | null>[];
+        const colour: Record<string, (s: string) => string> = { done: green, failed: red, queued: yellow, running: cyan, cancelled: dim };
+        for (const r of rows) {
+          const when = new Date(Number(r.status === "queued" ? r.run_at : (r.finished ?? r.run_at))).toISOString().replace("T", " ").slice(0, 19);
+          // a finished job's last error is history; a failed or retrying one's is the news
+          const err = r.last_error && r.status !== "done" ? dim(`  ${String(r.last_error).split("\n")[0]}`) : "";
+          console.log(`${dim(String(r.id).slice(0, 8))}  ${(colour[String(r.status)] ?? dim)(String(r.status).padEnd(9))} ${String(r.fn_name).padEnd(24)} ${dim(`${r.attempts}/${r.max_attempts}  ${when}`)}${err}`);
+        }
+        return 0;
+      } finally {
+        db.close();
+      }
+    }
     case "apps": {
       if (args[0] === "prune") {
         pruneBuilds(cb, Number(typeof flags.keep === "string" ? flags.keep : 3));

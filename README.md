@@ -217,6 +217,24 @@ export async function me(): Promise<string> {
   - names resolve on each request, so `ucm mv` moves a URL without a restart;
   - these routes are for other callers, so they skip the CSRF checks. Check signatures (e.g. a webhook secret)
     in the handler.
+- **Background jobs.** `enqueue(sendWelcome, user.id)` from a server function returns at once; the work runs
+  in the background.
+  - **Durable.** Jobs live in `.ucm/data/jobs.sqlite` and survive restarts. A worker inside `ucm start` and
+    `ucm dev` runs them, with 5 attempts and exponential backoff by default, and records the last error.
+    `enqueueAfter(seconds, fn, …)` delays one.
+  - **Queued by hash, like Unison shipping a computation.** A job records the exact code version that enqueued
+    it, so a deploy between enqueue and run doesn't change what it does. The function must be a codebase
+    definition, and its arguments plain data.
+  - **Safe with several servers.** A claim is one atomic update with a lease, so several `ucm start` processes
+    can share the queue, and a crashed worker's job is picked up again when its lease expires.
+- **Scheduled jobs.** `export const nightly = every("0 3 * * *", cleanup)` uses five cron fields in UTC, or an
+  interval like `every("15m", sync)`.
+  - **Found statically.** `ucm start` and `ucm dev` find these in the app's namespace from the code itself, with
+    no registration, and moving a name reschedules them.
+  - **Each slot runs once,** however many servers share the codebase.
+  - **New schedules don't fire on their first deploy.** After downtime, an interval schedule catches up once.
+- **Managing jobs.** `ucm jobs` lists the queue; `ucm jobs retry <id>` and `ucm jobs cancel <id>` act on one.
+  In tests, `runJobs()` drains the queue inline.
 - **CSRF.** Server functions read cookies, so calls must be same-origin, must not be cross-site
   (`Sec-Fetch-Site`), and must send JSON, which rules out plain HTML form posts.
 

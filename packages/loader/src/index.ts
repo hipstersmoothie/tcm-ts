@@ -202,6 +202,13 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
     for (const m of members) {
       lines.push(`export ${m.kind === "type" ? "type " : ""}{ ${memberNames.get(m.hash)} as ${exportId(m.hash)} };`);
     }
+    // functions carry their hash at runtime, so code can name them durably (e.g. a background job records which
+    // exact function version to run)
+    for (const m of members) {
+      if (m.kind !== "term") continue;
+      const local = memberNames.get(m.hash)!;
+      lines.push(`if (typeof ${local} === "function") Object.defineProperty(${local}, Symbol.for("ucm.hash"), { value: ${JSON.stringify(m.hash)} });`);
+    }
   }
   return { text: lines.join("\n").trimEnd() + "\n", memberNames };
 }

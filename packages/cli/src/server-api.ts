@@ -17,8 +17,15 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { codecSource, decode, encode } from "./codec.ts";
 
-export function createServerApi(deps: { AsyncLocalStorage: typeof AsyncLocalStorage; randomBytes: typeof randomBytes; DatabaseSync: typeof DatabaseSync }) {
+export function createServerApi(deps: {
+  AsyncLocalStorage: typeof AsyncLocalStorage;
+  randomBytes: typeof randomBytes;
+  DatabaseSync: typeof DatabaseSync;
+  encode: typeof encode;
+  decode: typeof decode;
+}) {
   interface ServerRequest {
     method: string;
     url: string;
@@ -35,7 +42,8 @@ export function createServerApi(deps: { AsyncLocalStorage: typeof AsyncLocalStor
     sameSite?: "Strict" | "Lax" | "None";
   }
   interface CallContext {
-    request: ServerRequest;
+    /** absent in a background job */
+    request?: ServerRequest;
     setCookies: string[];
     secure: boolean;
     /** where app data (sessions) lives; in memory when absent (tests) */
@@ -63,11 +71,16 @@ export function createServerApi(deps: { AsyncLocalStorage: typeof AsyncLocalStor
     }
   }
 
-  const request = (): ServerRequest => context("request()").request;
-  const cookie = (name: string): string | undefined => context("cookie()").request.cookies[name];
+  const inRequest = (what: string): CallContext & { request: ServerRequest } => {
+    const c = context(what);
+    if (!c.request) throw new Error(`${what} needs a request, and background jobs don't have one`);
+    return c as CallContext & { request: ServerRequest };
+  };
+  const request = (): ServerRequest => inRequest("request()").request;
+  const cookie = (name: string): string | undefined => inRequest("cookie()").request.cookies[name];
 
   const setCookie = (name: string, value: string, opts: CookieOptions = {}) => {
-    const c = context("setCookie()");
+    const c = inRequest("setCookie()");
     if (!/^[\w!#$%&'*+.^`|~-]+$/.test(name)) throw new Error(`invalid cookie name '${name}'`);
     const parts = [`${name}=${encodeURIComponent(value)}`, `Path=${opts.path ?? "/"}`, `SameSite=${opts.sameSite ?? "Lax"}`];
     if (opts.maxAge !== undefined) parts.push(`Max-Age=${Math.floor(opts.maxAge)}`);
@@ -90,7 +103,7 @@ export function createServerApi(deps: { AsyncLocalStorage: typeof AsyncLocalStor
     return db;
   };
   const sessionRow = (c: CallContext) => {
-    const id = c.request.cookies[SESSION_COOKIE];
+    const id = c.request?.cookies[SESSION_COOKIE];
     if (!id) return undefined;
     const row = store(c).prepare("SELECT data, expires FROM sessions WHERE id = ?").get(id) as { data: string; expires: number } | undefined;
     if (!row || row.expires <= Date.now()) return undefined;
@@ -98,7 +111,7 @@ export function createServerApi(deps: { AsyncLocalStorage: typeof AsyncLocalStor
   };
   const session = (): Record<string, unknown> => sessionRow(context("session()"))?.data ?? {};
   const setSession = (data: Record<string, unknown>, maxAge = 30 * 24 * 3600) => {
-    const c = context("setSession()");
+    const c = inRequest("setSession()");
     const db = store(c);
     // a fresh id every time (e.g. at login), so an id planted before login is worthless after it
     const old = sessionRow(c);
@@ -110,7 +123,7 @@ export function createServerApi(deps: { AsyncLocalStorage: typeof AsyncLocalStor
     setCookie(SESSION_COOKIE, id, { maxAge });
   };
   const clearSession = () => {
-    const c = context("clearSession()");
+    const c = inRequest("clearSession()");
     const old = sessionRow(c);
     if (old) store(c).prepare("DELETE FROM sessions WHERE id = ?").run(old.id);
     delete c.request.cookies[SESSION_COOKIE];
@@ -157,6 +170,212 @@ export function createServerApi(deps: { AsyncLocalStorage: typeof AsyncLocalStor
     return out;
   };
 
+  // ---- background jobs and schedules ------------------------------------------------------------------------
+  // Jobs live in .ucm/data/jobs.sqlite and name their function by hash, so a job runs the exact code version that
+  // enqueued it, even across deploys. A claim is one atomic UPDATE with a lease, so several processes can work
+  // the same queue; a scheduled slot is claimed by a unique key, so it runs once however many servers there are.
+  const HASH_MARK = Symbol.for("ucm.hash");
+  const JOB_MARK = Symbol.for("ucm.job");
+  type Fn = (...args: unknown[]) => unknown;
+  interface JobRow {
+    id: string;
+    fn_hash: string;
+    fn_name: string;
+    args: string;
+    run_at: number;
+    attempts: number;
+    max_attempts: number;
+    status: string;
+  }
+  let hostDataDir: string | undefined;
+  const memoryFns = new Map<string, Fn>();
+  const jobDbs = new Map<string, InstanceType<typeof DatabaseSync>>();
+  const jobsDb = (dataDir: string | undefined) => {
+    const file = dataDir ? `${dataDir}/jobs.sqlite` : ":memory:";
+    let db = jobDbs.get(file);
+    if (!db) {
+      db = new deps.DatabaseSync(file);
+      db.exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;
+        CREATE TABLE IF NOT EXISTS jobs (
+          id TEXT PRIMARY KEY, fn_hash TEXT NOT NULL, fn_name TEXT NOT NULL, args TEXT NOT NULL,
+          run_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
+          status TEXT NOT NULL, lease_until INTEGER, last_error TEXT, created INTEGER NOT NULL, finished INTEGER,
+          slot TEXT UNIQUE
+        );
+        CREATE INDEX IF NOT EXISTS jobs_due ON jobs (status, run_at);
+        CREATE TABLE IF NOT EXISTS schedules (name TEXT PRIMARY KEY, first_seen INTEGER NOT NULL);`);
+      jobDbs.set(file, db);
+    }
+    return db;
+  };
+  const dataDirNow = () => storage.getStore()?.dataDir ?? hostDataDir;
+
+  const enqueueAt = (runAt: number, fn: Fn, args: unknown[], opts: { attempts?: number; slot?: string; name?: string; hash?: string } = {}): string => {
+    if (typeof fn !== "function") throw new TypeError("enqueue() needs a function");
+    const dataDir = dataDirNow();
+    const hash = opts.hash ?? (fn as unknown as Record<symbol, string | undefined>)[HASH_MARK];
+    if (dataDir && !hash) throw new Error(`enqueue() needs a codebase function (a top-level definition, so it can be found by hash), not an inline one`);
+    const id = deps.randomBytes(12).toString("base64url");
+    const r = jobsDb(dataDir)
+      .prepare("INSERT OR IGNORE INTO jobs (id, fn_hash, fn_name, args, run_at, max_attempts, status, created, slot) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)")
+      .run(id, hash ?? "", opts.name ?? (fn.name || "anonymous"), deps.encode(args, `arguments to ${fn.name || "the job"}`), runAt, opts.attempts ?? 5, Date.now(), opts.slot ?? null);
+    if (!r.changes) return "";
+    if (!dataDir) memoryFns.set(id, fn);
+    return id;
+  };
+  /** Run `fn(...args)` in the background, soon; returns the job's id. Arguments must be plain data. */
+  const enqueue = (fn: Fn, ...args: unknown[]) => enqueueAt(Date.now(), fn, args);
+  /** Run `fn(...args)` in the background after `seconds`. */
+  const enqueueAfter = (seconds: number, fn: Fn, ...args: unknown[]) => enqueueAt(Date.now() + seconds * 1000, fn, args);
+
+  // schedules: "30s" / "15m" / "2h" / "1d" intervals, or five-field cron ("0 3 * * *", UTC)
+  const INTERVAL = /^(\d+)(s|m|h|d)$/;
+  const UNITS: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+  const cronField = (spec: string, min: number, max: number): Set<number> => {
+    const out = new Set<number>();
+    for (const part of spec.split(",")) {
+      const [range, stepText] = part.split("/") as [string, string | undefined];
+      const step = stepText === undefined ? 1 : Number(stepText);
+      const [lo, hi] = range === "*" ? [min, max] : range.includes("-") ? range.split("-").map(Number) : [Number(range), stepText === undefined ? Number(range) : max];
+      if (![lo, hi, step].every((n) => Number.isInteger(n)) || lo! < min || hi! > max || step < 1) throw new Error(`bad cron field '${spec}'`);
+      for (let v = lo!; v <= hi!; v += step) out.add(v);
+    }
+    return out;
+  };
+  const parseSchedule = (spec: string) => {
+    const m = INTERVAL.exec(spec);
+    if (m) return { every: Number(m[1]) * UNITS[m[2]!]! };
+    const f = spec.trim().split(/\s+/);
+    if (f.length !== 5) throw new Error(`schedule '${spec}': use an interval like "15m" or five cron fields like "0 3 * * *"`);
+    return { cron: [cronField(f[0]!, 0, 59), cronField(f[1]!, 0, 23), cronField(f[2]!, 1, 31), cronField(f[3]!, 1, 12), cronField(f[4]!, 0, 6)] };
+  };
+  /** The scheduled slot at or before `now`, if one is due (intervals always; cron only in the minute it names). */
+  const dueSlot = (spec: ReturnType<typeof parseSchedule>, now: number): number | undefined => {
+    if (spec.every) return Math.floor(now / spec.every) * spec.every;
+    const d = new Date(Math.floor(now / 60_000) * 60_000);
+    const [mi, h, dom, mo, dow] = spec.cron!;
+    return mi!.has(d.getUTCMinutes()) && h!.has(d.getUTCHours()) && dom!.has(d.getUTCDate()) && mo!.has(d.getUTCMonth() + 1) && dow!.has(d.getUTCDay()) ? d.getTime() : undefined;
+  };
+  /** A recurring job: export it from the app's namespace and `ucm start` / `ucm dev` run it on schedule. */
+  const every = (spec: string, fn: Fn) => {
+    parseSchedule(spec);
+    if (typeof fn !== "function") throw new TypeError("every() needs a function");
+    return { [JOB_MARK]: true, spec, fn };
+  };
+
+  const backoff = (attempt: number) => Math.min(3600, 2 ** attempt) * 1000;
+  const finish = (db: InstanceType<typeof DatabaseSync>, row: JobRow, error: unknown) => {
+    if (error === undefined) {
+      db.prepare("UPDATE jobs SET status = 'done', finished = ?, lease_until = NULL WHERE id = ?").run(Date.now(), row.id);
+      return "done";
+    }
+    const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+    if (row.attempts >= row.max_attempts) {
+      db.prepare("UPDATE jobs SET status = 'failed', finished = ?, last_error = ?, lease_until = NULL WHERE id = ?").run(Date.now(), message, row.id);
+      return "failed";
+    }
+    db.prepare("UPDATE jobs SET status = 'queued', run_at = ?, last_error = ?, lease_until = NULL WHERE id = ?").run(Date.now() + backoff(row.attempts), message, row.id);
+    return "retrying";
+  };
+  const runJob = async (fn: Fn, row: JobRow, dataDir: string | undefined) => {
+    const ctx: CallContext = { setCookies: [], secure: false, dataDir };
+    try {
+      await storage.run(ctx, async () => fn(...(deps.decode(row.args) as unknown[])));
+      return undefined;
+    } catch (e) {
+      return e ?? new Error("the job threw undefined");
+    }
+  };
+
+  /** For tests: run the queued jobs that are due (all of them with `{ all: true }`), inline. */
+  const runJobs = async (opts: { all?: boolean } = {}): Promise<{ done: number; failed: number }> => {
+    const db = jobsDb(dataDirNow());
+    let done = 0;
+    let failed = 0;
+    for (;;) {
+      const row = db.prepare("SELECT * FROM jobs WHERE status = 'queued' AND run_at <= ? ORDER BY run_at LIMIT 1").get(opts.all ? Number.MAX_SAFE_INTEGER : Date.now()) as JobRow | undefined;
+      if (!row) return { done, failed };
+      db.prepare("UPDATE jobs SET attempts = attempts + 1, status = 'running' WHERE id = ?").run(row.id);
+      row.attempts++;
+      const fn = memoryFns.get(row.id);
+      const outcome = fn ? finish(db, row, await runJob(fn, row, dataDirNow())) : finish(db, { ...row, attempts: row.max_attempts }, new Error("no function for this job in memory"));
+      if (outcome === "done") done++;
+      else if (outcome === "failed") failed++;
+    }
+  };
+
+  /** For the host: work the queue in .ucm/data, `concurrency` jobs at a time, loading functions by hash. */
+  const startWorker = (opts: { dataDir: string; load: (hash: string) => Promise<Fn>; log: (line: string) => void; concurrency?: number }) => {
+    hostDataDir = opts.dataDir;
+    const db = jobsDb(opts.dataDir);
+    const claim = db.prepare(
+      `UPDATE jobs SET status = 'running', attempts = attempts + 1, lease_until = ?
+       WHERE id = (SELECT id FROM jobs WHERE (status = 'queued' AND run_at <= ?) OR (status = 'running' AND lease_until < ?) ORDER BY run_at LIMIT 1)
+       RETURNING *`,
+    );
+    let running = 0;
+    let stopped = false;
+    const tick = () => {
+      while (!stopped && running < (opts.concurrency ?? 4)) {
+        const now = Date.now();
+        const row = claim.get(now + 10 * 60_000, now, now) as JobRow | undefined;
+        if (!row) return;
+        running++;
+        const started = performance.now();
+        (async () => {
+          let error: unknown;
+          try {
+            error = await runJob(await opts.load(row.fn_hash), row, opts.dataDir);
+          } catch (e) {
+            error = e;
+          }
+          const outcome = finish(db, row, error);
+          const ms = Math.round(performance.now() - started);
+          opts.log(`job ${row.fn_name} ${outcome}${outcome === "done" ? "" : ` (attempt ${row.attempts}/${row.max_attempts}: ${String((error as Error)?.message ?? error).split("\n")[0]})`} ${ms}ms`);
+        })().finally(() => {
+          running--;
+          tick();
+        });
+      }
+    };
+    const timer = setInterval(tick, 250);
+    tick();
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  };
+
+  /**
+   * For the host: the recurring jobs found in the app's namespace; replaces the previous set. `hash` is the schedule
+   * definition's: its function may be inline, so a run records "the fn of schedule <hash>" (pinned all the same).
+   */
+  let scheduleTimer: ReturnType<typeof setInterval> | undefined;
+  const setSchedules = (opts: { dataDir: string; jobs: { name: string; spec: string; fn: Fn; hash: string }[]; log?: (line: string) => void }) => {
+    hostDataDir = opts.dataDir;
+    const db = jobsDb(opts.dataDir);
+    const jobs = opts.jobs.map((j) => ({ ...j, parsed: parseSchedule(j.spec) }));
+    for (const j of jobs) db.prepare("INSERT OR IGNORE INTO schedules (name, first_seen) VALUES (?, ?)").run(j.name, Date.now());
+    const tick = () => {
+      const now = Date.now();
+      for (const j of jobs) {
+        // one broken schedule must never take the server down
+        try {
+          const slot = dueSlot(j.parsed, now);
+          const first = (db.prepare("SELECT first_seen FROM schedules WHERE name = ?").get(j.name) as { first_seen: number }).first_seen;
+          // only slots since the schedule first appeared: a new schedule doesn't fire at once, a restart catches up
+          if (slot === undefined || slot < first) continue;
+          enqueueAt(slot, j.fn, [], { slot: `${j.name}@${slot}`, name: j.name, hash: `${j.hash}#fn` });
+        } catch (e) {
+          opts.log?.(`schedule ${j.name}: ${(e as Error).message}`);
+        }
+      }
+    };
+    if (scheduleTimer) clearInterval(scheduleTimer);
+    scheduleTimer = setInterval(tick, 1000);
+    tick();
+  };
+
   /** For the host: the Set-Cookie headers the current call has produced so far (a stream sends them up front). */
   const pendingCookies = (): string[] => storage.getStore()?.setCookies ?? [];
 
@@ -197,7 +416,10 @@ export function createServerApi(deps: { AsyncLocalStorage: typeof AsyncLocalStor
     return { value: r.value, setCookies: r.setCookies };
   };
 
-  return { HttpError, request, cookie, setCookie, deleteCookie, session, setSession, clearSession, revokeSessions, rateLimit, withCall, withRequest, pendingCookies };
+  return {
+    HttpError, request, cookie, setCookie, deleteCookie, session, setSession, clearSession, revokeSessions, rateLimit,
+    enqueue, enqueueAfter, every, runJobs, withCall, withRequest, pendingCookies, startWorker, setSchedules,
+  };
 }
 
 /** Types of `#ucm/server`, for editors and the checker (the runtime is generated from createServerApi above). */
@@ -245,6 +467,25 @@ export declare function clearSession(): void;
 export declare function revokeSessions(match: (data: Record<string, unknown>) => boolean): number;
 /** Allow \`max\` calls per \`per\` seconds for \`key\` (e.g. "login:" + request().ip); beyond that, throws a 429. */
 export declare function rateLimit(key: string, opts: { max: number; per: number }): void;
+/**
+ * Run \`fn(...args)\` in the background, soon, with retries (5 attempts, exponential backoff); returns the job id.
+ * \`fn\` must be a codebase function: the job records its hash, so it runs the code version that enqueued it.
+ * Arguments must be plain data.
+ */
+export declare function enqueue<A extends unknown[]>(fn: (...args: A) => unknown, ...args: A): string;
+/** Like enqueue, after \`seconds\`. */
+export declare function enqueueAfter<A extends unknown[]>(seconds: number, fn: (...args: A) => unknown, ...args: A): string;
+export interface RecurringJob {
+  readonly spec: string;
+  readonly fn: () => unknown;
+}
+/**
+ * A recurring job: \`export const nightly = every("0 3 * * *", cleanup)\` (five cron fields, UTC) or an interval
+ * like \`every("15m", sync)\`. ucm start / ucm dev run the jobs in the app's namespace, once per slot.
+ */
+export declare function every(spec: string, fn: () => unknown): RecurringJob;
+/** For tests: run the queued jobs that are due (all of them with \`{ all: true }\`), inline. */
+export declare function runJobs(opts?: { all?: boolean }): Promise<{ done: number; failed: number }>;
 /** Run \`fn\` as if answering a request, for tests of server functions: no network (sessions kept in memory). */
 export declare function withRequest<T>(
   init: { method?: string; url?: string; headers?: Record<string, string>; cookies?: Record<string, string>; ip?: string },
@@ -258,8 +499,12 @@ export function serverApiFiles(): { js: string; dts: string } {
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-const api = (${createServerApi})({ AsyncLocalStorage, randomBytes, DatabaseSync });
-export const { HttpError, request, cookie, setCookie, deleteCookie, session, setSession, clearSession, revokeSessions, rateLimit, withCall, withRequest, pendingCookies } = api;
+${codecSource().replaceAll("export ", "")}
+const api = (${createServerApi})({ AsyncLocalStorage, randomBytes, DatabaseSync, encode, decode });
+export const {
+  HttpError, request, cookie, setCookie, deleteCookie, session, setSession, clearSession, revokeSessions, rateLimit,
+  enqueue, enqueueAfter, every, runJobs, withCall, withRequest, pendingCookies, startWorker, setSchedules,
+} = api;
 `;
   return { js, dts: DECLARATIONS };
 }
