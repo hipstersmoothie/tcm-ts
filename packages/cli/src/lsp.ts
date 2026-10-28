@@ -18,6 +18,8 @@ import { Placement } from "./placement.ts";
 import { evaluateCached, isTestPath, runCached } from "./tests.ts";
 import { searchByType } from "./search.ts";
 import { decode } from "./codec.ts";
+import { renderDoc } from "./docs.ts";
+import { definitionPage, docSummary, find } from "./pages.ts";
 
 /** What the language server needs from the CLI (passed in, so this module doesn't import the CLI's entry). */
 export interface LspTools {
@@ -262,7 +264,9 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     }
     const users = c.store.dependents(hash).filter((d) => c.store.pathsOf(d).length).length;
     lines.push(`${users} named dependent${users === 1 ? "" : "s"}${names.length > 1 ? ` · also named ${names.slice(1).join(", ")}` : ""}`);
-    if (rec.doc) lines.push("", rec.doc);
+    // the doc as it renders: current names, embeds; examples are shown (they're evaluated on the page)
+    const doc = renderDoc(c, rec, { evaluate: false });
+    if (doc) lines.push("", doc.markdown);
     return lines.join("\n");
   };
 
@@ -436,7 +440,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         return `// ${c.store.pathsOf(r.hash).join(", ") || "(unnamed)"} ${shortHash(r.hash)}${runs}`;
       })
       .join("\n") + "\n";
-    const r = render(recs, c.source(), c.lay, { style: "scratch" });
+    const r = render(recs, c.source(), c.lay, { style: "scratch", exportDeclarations: true });
     const shift = header.length;
     return {
       text: header + r.text,
@@ -929,6 +933,34 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
               })
             : { total: 0, fields: [], rows: [] },
         });
+        return;
+      // pages, as in Unison's codebase UI
+      case "ucm/page": {
+        const target = p?.hash ? String(p.hash) : p?.uri ? hashesOf(String(p.uri))[0] : p?.path ? cb?.lookup(String(p.path))[0] : undefined;
+        const page = cb && target ? definitionPage(cb, target, new Placement(cb), { viewUri }) : undefined;
+        send(page ? { id: m.id, result: page } : { id: m.id, error: { code: -32602, message: "no such definition" } });
+        return;
+      }
+      case "ucm/namespace": {
+        if (!cb) return send({ id: m.id, result: null });
+        const ns = String(p?.namespace ?? "");
+        const t = tree(ns);
+        // a namespace's front page is its README definition's doc, as in Unison
+        const readme = t.definitions.find((d) => d.name === "README");
+        const rec = readme && cb.store.getDef(readme.hash);
+        send({
+          id: m.id,
+          result: {
+            namespace: ns,
+            readme: rec ? renderDoc(cb, rec, { evaluate: true, link: (h) => `ucm-page:${h}` })?.markdown : undefined,
+            namespaces: t.namespaces,
+            definitions: t.definitions.filter((d) => d !== readme).map((d) => ({ ...d, summary: docSummary(cb!.store.getDef(d.hash)!) })),
+          },
+        });
+        return;
+      }
+      case "ucm/find":
+        send({ id: m.id, result: cb ? find(cb, String(p?.query ?? ""), viewUri) : [] });
         return;
       case "ucm/apps":
         send({ id: m.id, result: cb ? apps() : [] });

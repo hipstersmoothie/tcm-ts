@@ -6,10 +6,11 @@ import { hashFromExportId, hashIR, serializeIR, type IR } from "./hash.ts";
 import { extract, UcmError, type DefSite, type ExtractMode, type Piece } from "./extract.ts";
 import { canonicalizeSite, type CanonContext, type Resolved, type SiteResult } from "./canonicalize.ts";
 import { checkProfile, compilerOptions, createProgram, fileDiagnostics, type Compile, type Diagnostic } from "./program.ts";
-import { depRef, type DefRecord, type Dep, type ExtRef, type Span } from "./types.ts";
+import { depRef, type DefRecord, type Dep, type DocRef, type ExtRef, type Span } from "./types.ts";
 import { paramsSchema, typeSchema, type ParamsSchema, type TableSchema } from "./schema.ts";
 import { createHash } from "node:crypto";
 import { cacheRefOf, shapeBuilder, type TypeShape } from "./shape.ts";
+import { docExamples, docTags, exampleNames } from "./docs.ts";
 
 export interface AnalyzeHost {
   /** absolute path of `.ucm/cache`; relative imports into it address definitions by hash */
@@ -457,7 +458,64 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
     const sym = checker.getSymbolAtLocation(site.nameNode);
     return sym ? shapes.typeShape(checker.getTypeOfSymbolAtLocation(sym, site.nameNode)) : undefined;
   };
-  const defs = sites.map((s) => ({ ...toRecord(s, ok[s.id]!, hashOf.get(s.id)!, placed.get(s.id)!), shape: shapeOf(s) }));
+  // a doc's links, embeds and examples name definitions: resolve them now, by hash, so the doc follows renames
+  // and updates instead of going stale (Unison's docs are code for the same reason)
+  const symbolHash = (sym: ts.Symbol): string | undefined => {
+    const s = sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym;
+    const d = s.declarations?.[0];
+    const id = d && declToDef.get(d);
+    return id !== undefined ? hashOf.get(id) : cacheRef(s);
+  };
+  const docRefsOf = (site: DefSite): DocRef[] | undefined => {
+    if (!site.doc || site.isWatch) return undefined;
+    const tags = docTags(site.doc);
+    const examples = docExamples(site.doc);
+    if (!tags.length && !examples.length) return undefined;
+    const scope = new Map<string, ts.Symbol>();
+    const flags = ts.SymbolFlags.Value | ts.SymbolFlags.Type | ts.SymbolFlags.Alias | ts.SymbolFlags.Namespace;
+    for (const s of checker.getSymbolsInScope(site.nodes[0]!, flags)) if (!scope.has(s.name)) scope.set(s.name, s);
+    const resolve = (name: string, type: boolean): string | undefined => {
+      const sym = name.includes(".") ? undefined : scope.get(name);
+      const h = sym && symbolHash(sym);
+      if (h) return h;
+      for (const meaning of type ? (["type", "value"] as const) : (["value", "type"] as const)) {
+        try {
+          return host.resolveName(name, meaning);
+        } catch {
+          // not a codebase path either
+        }
+      }
+      // `lib.square` for a definition being added alongside, which has no codebase path yet
+      const last = name.slice(name.lastIndexOf(".") + 1);
+      const sibling = name.includes(".") ? scope.get(last) : undefined;
+      return sibling ? symbolHash(sibling) : undefined;
+    };
+    const refs: DocRef[] = [];
+    for (const t of tags) {
+      const h = resolve(t.name, false);
+      if (h) refs.push({ start: t.nameStart, end: t.nameEnd, hash: h });
+      else warnings.push(`the doc of ${site.name} refers to '${t.name}', which isn't in scope or in the codebase (${site.sf.fileName})`);
+    }
+    for (const ex of examples) {
+      for (const n of exampleNames(ex.code)) {
+        // names an example uses that are definitions, or imports from outside the codebase; globals (Math,
+        // console) and the like stay as written
+        const sym = scope.get(n.name);
+        const h = sym ? symbolHash(sym) : undefined;
+        const at = { start: ex.start + n.start, end: ex.start + n.end };
+        if (h) refs.push({ ...at, hash: h });
+        else {
+          const decl = sym?.flags && sym.flags & ts.SymbolFlags.Alias ? sym.declarations?.[0] : undefined;
+          if (decl && (ts.isImportSpecifier(decl) || ts.isImportClause(decl) || ts.isNamespaceImport(decl))) {
+            const r = ctx.classifyImport(decl, n.type ? "type" : "value");
+            if (r.kind === "ext") refs.push({ ...at, ext: r.ext });
+          }
+        }
+      }
+    }
+    return refs.sort((a, b) => a.start - b.start);
+  };
+  const defs = sites.map((s) => ({ ...toRecord(s, ok[s.id]!, hashOf.get(s.id)!, placed.get(s.id)!), shape: shapeOf(s), docRefs: docRefsOf(s) }));
 
   const watches = watchSites.map((s) => {
     const r = canonicalizeSite(s, ctx);

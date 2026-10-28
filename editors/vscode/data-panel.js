@@ -6,7 +6,7 @@ const panels = new Map();
 const PAGE = 100;
 
 /** Open (or reveal) the viewer for a table. `request` sends a request to the language server. */
-function showTable(table, request, openUri) {
+function showTable(table, request, openUri, icon) {
   const existing = panels.get(table);
   if (existing) {
     existing.panel.reveal();
@@ -15,7 +15,7 @@ function showTable(table, request, openUri) {
   const panel = vscode.window.createWebviewPanel("ucm.table", `${table} (table)`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
   const state = { table, panel, query: { offset: 0, limit: PAGE, search: "", sort: undefined } };
   panels.set(table, state);
-  panel.iconPath = new vscode.ThemeIcon("database");
+  if (icon) panel.iconPath = icon;
   panel.onDidDispose(() => panels.delete(table));
 
   const load = async () => {

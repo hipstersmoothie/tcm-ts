@@ -49,7 +49,7 @@ export const main = (...args: string[]) => \`\${sumSquares(args.map(Number))} \$
   // across namespaces, including a function renamed by `mv` (it keeps its runtime name `square`)
   ucm("edit", "lib.sumSquares", "math.sq", "--file", "cross.ts");
   const cross = fs.readFileSync(path.join(dir, "cross.ts"), "utf8");
-  assert.match(cross, /\/\/ ucm: path math\.sq\nconst square =/);
+  assert.match(cross, /\/\/ ucm: path math\.sq\nexport const square =/);
   assert.match(ucm("check", "cross.ts"), /= identical\s+lib\.sumSquares[\s\S]*= identical\s+math\.sq/);
 
   // a compatible update propagates to dependents

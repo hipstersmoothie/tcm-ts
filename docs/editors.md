@@ -62,9 +62,36 @@ For clients that want to show more, the server answers:
 | `ucm/rows` | a page of a table's rows for a viewer: searched, sorted by a field and paged in SQLite; the row type's fields (columns), and each row's cells, full value, and whether it's of an older row type |
 | `ucm/source` | a `ucm:` document's text: a definition, `ucm:/.data/<table>.txt`, or `ucm:/.data/<table>/<id>.txt` |
 | `ucm/findByType` | type search, as `ucm find ':…'` |
+| `ucm/page` | a definition's page: rendered doc (links as `ucm-page:<hash>`), highlighted source with references as links, placement, uses and used-by |
+| `ucm/namespace` | a namespace's page: its README rendered, and its definitions by role with doc summaries |
+| `ucm/find` | the finder: names, doc words and types |
 
 It sends `ucm/changed` when the codebase changes and `ucm/dataChanged` when the data store does, here or from a
 terminal or a running app. `ucm.dataMigrate <table>` is a command, like `ucm.add`.
+
+## Pages
+
+As in Unison's codebase UI, definitions and namespaces have pages. Each opens in its own editor tab, named after
+it (opening one that's already open focuses its tab), and links in a page open more. Open pages refresh when the
+codebase changes.
+
+- **A definition's page:** its names, hash, kind and badges (where it runs, endpoint, test result), why it runs
+  where it does, its [doc](documentation.md) rendered (links, embeds, examples with their values), its source
+  highlighted with every reference a link, and lists of what it **uses**, what it's **used by**, and the packages
+  it imports. Buttons: Source (the `ucm:` document), Edit, Usages, Run, Rename, Copy (the hash).
+- **A namespace's page:** its `README` definition's doc, if it has one, then what's in it, grouped by role (apps,
+  types, data, jobs, server, browser, shared, tests), each with the first paragraph of its doc, and its
+  sub-namespaces.
+
+Clicking a definition in the Codebase view opens its page (**Open source** in its menu opens the text document);
+a namespace's **Open page** button (the book) opens the namespace's.
+
+## Finding things
+
+**ucm: Find** (Cmd/Ctrl+Alt+U, or the search icon on the Codebase view) is one search box for everything: names
+(the letters in order, best matches first), words in docs, and types. Anything that looks like a type,
+`(xs: T[]) => T`, or starts with `:`, is a [type search](search.md). Results show signatures and doc summaries,
+and open as pages.
 
 ## VS Code
 

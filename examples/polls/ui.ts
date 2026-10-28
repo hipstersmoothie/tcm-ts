@@ -1,8 +1,12 @@
 // ucm: namespace polls
 // The browser side: it uses the DOM, so it runs in the browser. Calls to server functions look like local calls;
 // `for await` over watchResults streams live tallies from the server.
-import { chart, createPoll, leader, listPolls, vote, watchResults } from "#codebase/polls";
+import { chart, createPoll, leader, listPolls, samplePoll, sampleVotes, tally, vote, watchResults, type Poll } from "#codebase/polls";
 
+/**
+ * Make an element: `el("button", { onclick }, "Vote")`. Props are assigned to the element; children are appended.
+ * A tiny stand-in for a UI framework, so the example stays dependency-free.
+ */
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, unknown> = {}, ...children: (Node | string)[]): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
   Object.assign(e, props);
@@ -10,7 +14,10 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string,
   return e;
 }
 
-/** One poll: a button per option, and a chart that updates live. */
+/**
+ * One poll on the page: a button per option (calling {@link vote} on the server), and a {@link chart} that
+ * updates live from {@link watchResults}, with who's ahead ({@link leader}).
+ */
 async function showPoll(root: HTMLElement, poll: { id: string; question: string; options: string[]; open: boolean }) {
   const live = el("pre");
   const status = el("p");
@@ -34,6 +41,10 @@ async function showPoll(root: HTMLElement, poll: { id: string; question: string;
   status.textContent = poll.open ? status.textContent : "closed";
 }
 
+/**
+ * The app: a form to start a poll ({@link createPoll}) and every recent poll ({@link listPolls}), each shown by
+ * {@link showPoll}. Run it with **▶ Start** in the editor's Apps view, or `ucm dev polls.main`.
+ */
 export async function main() {
   const root = el("main");
   document.body.append(root);
@@ -48,3 +59,31 @@ export async function main() {
   root.append(el("h1", {}, "Polls"), question, options, create);
   for (const poll of await listPolls()) void showPoll(root, poll);
 }
+
+/**
+ * # Polls
+ *
+ * A live polling app: start a poll, vote, and watch the results move. Nothing in it says what runs where; ucm
+ * works that out from what each definition uses.
+ *
+ * | part | runs | what |
+ * |---|---|---|
+ * | {@link tally}, {@link leader}, {@link chart} | anywhere | the model: plain functions over a {@link Poll} |
+ * | {@link vote}, {@link createPoll}, {@link listPolls} | server | called from the browser by hash |
+ * | {@link watchResults} | server | streams a fresh tally every second (`for await` in the browser) |
+ * | {@link polls.announce} | server | a background job, enqueued when a poll is created, run when it closes |
+ * | {@link polls.nightly} | server | a recurring job that forgets old polls |
+ * | {@link main} | browser | the page |
+ *
+ * Polls and votes live in typed tables ({@link polls.polls}, {@link polls.votes}): one vote per browser and poll,
+ * so voting again changes your vote.
+ *
+ * Here's the model at work on the sample data:
+ *
+ * ```ts
+ * chart(tally(samplePoll, sampleVotes))
+ * ```
+ *
+ * Run it with **▶ Start** in the Apps view, or `ucm dev polls.main`.
+ */
+export type README = never;

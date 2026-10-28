@@ -511,7 +511,14 @@ export class Codebase {
         continue;
       }
       const oldByName = new Map([...rendered.memberNames].map(([h, n]) => [n, h]));
-      this.putDefs(a.defs);
+      // a re-derived definition keeps its doc (rendered code has no comments); the doc's references are by hash
+      // and follow patches when rendered
+      this.putDefs(
+        a.defs.map((d) => {
+          const was = src.get(oldByName.get(d.nameHint) ?? "");
+          return was?.doc ? { ...d, doc: was.doc, ...(was.docRefs ? { docRefs: was.docRefs } : {}) } : d;
+        }),
+      );
       store.transaction(() => {
         for (const d of a.defs) {
           const old = oldByName.get(d.nameHint);

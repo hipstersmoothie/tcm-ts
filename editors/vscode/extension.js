@@ -6,6 +6,7 @@ const { spawn } = require("node:child_process");
 const vscode = require("vscode");
 const { LanguageClient } = require("vscode-languageclient/node");
 const { showTable, refreshTables } = require("./data-panel.js");
+const { Pages } = require("./pages-panel.js");
 
 let client;
 
@@ -60,7 +61,7 @@ function definitionItem(e, label = e.name) {
   if (e.doc) tip.appendMarkdown(`\n\n${e.doc}`);
   item.tooltip = tip;
   item.contextValue = e.role === "app" ? "definition.app" : "definition";
-  item.command = { command: "vscode.open", title: "Open", arguments: [vscode.Uri.parse(e.uri)] };
+  item.command = { command: "ucm.openPage", title: "Open page", arguments: [{ hash: e.hash }] };
   return item;
 }
 
@@ -186,6 +187,22 @@ async function activate(context) {
   /** apps started from here: path → { proc, url, output } */
   const running = new Map();
   const tree = new CodebaseTree(running);
+  const icon = vscode.Uri.joinPath(context.extensionUri, "media", "ucm.svg");
+  const pages = new Pages(
+    (method, params) => client.sendRequest(method, params),
+    {
+      source: (p) => vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(p.uri)),
+      edit: (p) => vscode.commands.executeCommand("ucm.editDefinition", p.names[0]),
+      usages: (p) => vscode.commands.executeCommand("ucm.findUsages", p.uri),
+      run: (p) => vscode.commands.executeCommand("ucm.runDefinition", p.names[0]),
+      rename: (p) => vscode.commands.executeCommand("ucm.rename", p.names[0]),
+      copy: async (p) => {
+        await vscode.env.clipboard.writeText(`#${p.hash}`);
+        vscode.window.setStatusBarMessage(`copied #${p.hash.slice(0, 8)}`, 2000);
+      },
+    },
+    icon,
+  );
   const views = new vscode.EventEmitter();
   const apps = new AppsTree(running);
   const data = new DataTree();
@@ -300,12 +317,66 @@ async function activate(context) {
     }),
     vscode.commands.registerCommand("ucm.showAppLog", (x) => running.get(appOf(x))?.output.show()),
     vscode.commands.registerCommand("ucm.showTable", (t) =>
-      t?.table && showTable(t.table, (method, params) => client.sendRequest(method, params), (uri) => vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(uri))),
+      t?.table && showTable(t.table, (method, params) => client.sendRequest(method, params), (uri) => vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(uri)), icon),
     ),
     // definitions as documents: ucm:/lib/square.ts is lib.square, rendered with current names
     vscode.workspace.registerTextDocumentContentProvider("ucm", {
       onDidChange: views.event,
       provideTextDocumentContent: async (uri) => (await client.sendRequest("ucm/source", { uri: uri.toString() })).text,
+    }),
+    // pages: a definition (from a tree item, a hash, or a name) or a namespace
+    vscode.commands.registerCommand("ucm.openPage", async (x) => {
+      if (x?.hash) return pages.open({ hash: x.hash });
+      if (x?.kind === "namespace" || typeof x?.namespace === "string") return pages.open({ namespace: x.path ?? x.namespace });
+      const name = typeof x === "string" ? x : await vscode.window.showInputBox({ prompt: "Open which definition?", placeHolder: "lib.square" });
+      if (!name) return;
+      try {
+        const page = await client.sendRequest("ucm/page", { path: name });
+        await pages.open({ hash: page.hash });
+      } catch (e) {
+        vscode.window.showErrorMessage(e.message);
+      }
+    }),
+    vscode.commands.registerCommand("ucm.openNamespacePage", (item) => pages.open({ namespace: item?.path ?? "" })),
+    // one search box: names, docs, and types (anything that looks like one, or starts with ":")
+    vscode.commands.registerCommand("ucm.find", () => {
+      const pick = vscode.window.createQuickPick();
+      pick.placeholder = "Find a definition: a name, words from its docs, or a type like (xs: T[]) => T";
+      pick.matchOnDescription = true;
+      pick.matchOnDetail = true;
+      let timer;
+      let seq = 0;
+      pick.onDidChangeValue((q) => {
+        clearTimeout(timer);
+        timer = setTimeout(async () => {
+          const mine = ++seq;
+          pick.busy = true;
+          try {
+            const items = await client.sendRequest("ucm/find", { query: q });
+            if (mine !== seq) return;
+            pick.items = items.map((i) =>
+              i.match === "error"
+                ? { label: "$(error) " + i.detail, alwaysShow: true }
+                : {
+                    label: `${i.kind === "type" ? "$(symbol-interface)" : "$(symbol-function)"} ${i.path}`,
+                    description: short(i.signature ?? "", 70),
+                    detail: i.detail,
+                    alwaysShow: true,
+                    hash: i.hash,
+                  },
+            );
+          } finally {
+            if (mine === seq) pick.busy = false;
+          }
+        }, 120);
+      });
+      pick.onDidAccept(() => {
+        const chosen = pick.selectedItems[0];
+        if (chosen?.hash) pages.open({ hash: chosen.hash });
+        pick.hide();
+      });
+      pick.onDidHide(() => pick.dispose());
+      pick.show();
     }),
     vscode.commands.registerCommand("ucm.refresh", () => {
       tree.refresh();
@@ -365,6 +436,7 @@ async function activate(context) {
     apps.refresh();
     data.refresh();
     refreshTables();
+    pages.refresh();
     for (const d of vscode.workspace.textDocuments) if (d.uri.scheme === "ucm") views.fire(d.uri);
   });
   // rows changed (a running app wrote some, or a migration): refresh the data views and open row documents

@@ -2,7 +2,7 @@
   "name": "ucm-ts",
   "displayName": "ucm-ts",
   "description": "The ucm-ts codebase in VS Code: a namespace sidebar, definitions as documents, usages, type search, and Unison-style status, watch values and save commands for scratch files",
-  "version": "0.5.0",
+  "version": "0.7.0",
   "publisher": "ucm-ts",
   "license": "MIT",
   "private": true,
@@ -81,7 +81,7 @@
       },
       {
         "command": "ucm.openDefinition",
-        "title": "Open",
+        "title": "Open source",
         "category": "ucm"
       },
       {
@@ -159,14 +159,32 @@
         "title": "Go to definition",
         "category": "ucm",
         "icon": "$(go-to-file)"
+      },
+      {
+        "command": "ucm.openPage",
+        "title": "Open page",
+        "category": "ucm",
+        "icon": "$(book)"
+      },
+      {
+        "command": "ucm.openNamespacePage",
+        "title": "Open namespace page",
+        "category": "ucm",
+        "icon": "$(book)"
+      },
+      {
+        "command": "ucm.find",
+        "title": "Find",
+        "category": "ucm",
+        "icon": "$(search)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "ucm.findByType",
+          "command": "ucm.find",
           "when": "view == ucm.codebase",
-          "group": "navigation@1"
+          "group": "navigation@0"
         },
         {
           "command": "ucm.refresh",
@@ -284,6 +302,16 @@
           "command": "ucm.stopApp",
           "when": "view == ucm.codebase && viewItem == definition.app.running",
           "group": "inline@1"
+        },
+        {
+          "command": "ucm.openNamespacePage",
+          "when": "view == ucm.codebase && viewItem == namespace",
+          "group": "inline@0"
+        },
+        {
+          "command": "ucm.openNamespacePage",
+          "when": "view == ucm.codebase && viewItem == namespace",
+          "group": "1_open@0"
         }
       ],
       "commandPalette": [
@@ -335,6 +363,13 @@
       {
         "name": "ucm-ts-plugin",
         "enableForWorkspaceTypeScriptVersions": true
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "ucm.find",
+        "key": "ctrl+alt+u",
+        "mac": "cmd+alt+u"
       }
     ]
   },

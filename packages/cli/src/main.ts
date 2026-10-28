@@ -9,6 +9,7 @@ import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { migrate } from "./migrate.ts";
 import { serveLsp } from "./lsp.ts";
 import { searchByType } from "./search.ts";
+import { checkDocExamples, renderDoc } from "./docs.ts";
 import { build, dev, listBuilds, migrateTable, parseHttpFlag, pruneBuilds, start } from "./web.ts";
 import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
@@ -180,6 +181,9 @@ function apply(cb: Codebase, rows: Row[], mode: "add" | "update", command: strin
     if (failed.length) console.log(red(`\n  ${failed.length} dependent definition(s) no longer typecheck; see \`ucm todo\``));
   }
   cb.refreshShim();
+  // examples in docs are code too: the ones just saved, and the ones naming anything just replaced, must still
+  // typecheck (an import's library docs are prose for readers, so they're left alone)
+  if (!quiet) for (const p of checkDocExamples(cb, rows.map((r) => r.def.hash))) console.log(yellow(`  ! ${p}`));
   return skipped.length === 0;
 }
 
@@ -319,7 +323,7 @@ function view(cb: Codebase, targets: string[]) {
     for (const h of cb.lookup(t).length ? cb.lookup(t) : [cb.lookupOne(t)]) {
       const rec = cb.store.getDef(h)!;
       console.log(header(cb, h));
-      process.stdout.write(render([rec], cb.source(), cb.lay, { style: "scratch" }).text);
+      process.stdout.write(render([rec], cb.source(), cb.lay, { style: "scratch", exportDeclarations: true }).text);
       console.log();
     }
   }
@@ -405,6 +409,8 @@ function edit(cb: Codebase, targets: string[], file: string, force: boolean) {
   const recs = [...pathOf.keys()].map((h) => cb.store.getDef(h)!);
   const text = render(recs, cb.source(), cb.lay, {
     style: "scratch",
+    // as you'd write it in a scratch file (export doesn't change a definition's hash)
+    exportDeclarations: true,
     // references to replaced definitions point at their replacements, so a todo item is edited against the new code
     remap: (h) => cb.store.patched(h),
     // a definition whose path isn't `<namespace>.<declared name>` (other namespace, or renamed while keeping
@@ -852,7 +858,7 @@ square(12);
     case "docs": {
       need(1, "docs <name>");
       const rec = cb.store.getDef(cb.lookupOne(args[0]!))!;
-      console.log(rec.doc ?? dim("no documentation"));
+      console.log(renderDoc(cb, rec, { evaluate: true })?.markdown ?? dim("no documentation"));
       return 0;
     }
     case "history":

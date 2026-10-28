@@ -314,3 +314,64 @@ export const testFormat = () => {
   assert.equal(after[0].older, 0);
   assert.equal((await c.request("ucm/rows", { table: "items", offset: 0, limit: 10 })).rows.find((r: any) => r.id === "p1").summary, "{ name: 'pear', price: 0 }");
 });
+
+test("pages: a definition's rendered doc and linked source, a namespace's README, and the finder", async () => {
+  const dir4 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ucm lsp4 ")));
+  const ucm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: dir4, env, encoding: "utf8" });
+  ucm("init");
+  fs.writeFileSync(
+    path.join(dir4, "scratch.ts"),
+    `// ucm: namespace geo
+/** A point on the plane. */
+export type Point = { x: number; y: number };
+/**
+ * Distance between two {@link Point}s.
+ *
+ * \`\`\`ts
+ * dist({ x: 0, y: 0 }, { x: 3, y: 4 })
+ * \`\`\`
+ */
+export const dist = (a: Point, b: Point): number => Math.hypot(a.x - b.x, a.y - b.y);
+/** Around the outside: the sum of each side's {@link dist}. */
+export const perimeter = (ps: Point[]): number => ps.reduce((n, p, i) => n + dist(p, ps[(i + 1) % ps.length]!), 0);
+/**
+ * # Geometry
+ *
+ * Points and distances. Start with {@link dist}.
+ */
+export type README = never;
+`,
+  );
+  assert.equal(ucm("add").status, 0);
+  const dist = spawnSync("sqlite3", [path.join(dir4, ".ucm", "codebase.sqlite"), "select hash from names where path = 'geo.dist'"], { encoding: "utf8" }).stdout.trim();
+  const pointHash = spawnSync("sqlite3", [path.join(dir4, ".ucm", "codebase.sqlite"), "select hash from names where path = 'geo.Point'"], { encoding: "utf8" }).stdout.trim();
+
+  const c = client();
+  await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir4).href, capabilities: {}, clientInfo: { name: "Visual Studio Code" } });
+  c.notify("initialized", {});
+
+  // a definition's page: rendered doc (links by hash, the example evaluated), source with references as links
+  const page = await c.request("ucm/page", { path: "geo.dist" });
+  assert.equal(page.hash, dist);
+  assert.deepEqual(page.names, ["geo.dist"]);
+  assert.match(page.docMarkdown, new RegExp(`Distance between two \\[\`Point\`\\]\\(ucm-page:${pointHash}\\)s\\.`));
+  assert.match(page.docMarkdown, /```text\n⧩ 5\n```/);
+  assert.match(page.sourceHtml, new RegExp(`<a class="ref t" data-hash="${pointHash}">Point</a>`));
+  assert.match(page.sourceHtml, /<span class="k">const<\/span>/);
+  assert.deepEqual(page.uses.map((u: any) => u.name), ["geo.Point"]);
+  assert.deepEqual(page.usedBy.map((u: any) => u.name), ["geo.perimeter"]);
+
+  // a namespace's page: its README rendered, then what's in it by role
+  const ns = await c.request("ucm/namespace", { namespace: "geo" });
+  assert.match(ns.readme, /^# Geometry\n\nPoints and distances\. Start with \[`dist`\]\(ucm-page:/);
+  assert.deepEqual(ns.definitions.map((d: any) => [d.name, d.role]), [["Point", "type"], ["dist", "shared"], ["perimeter", "shared"]]);
+  assert.equal(ns.definitions[0].summary, "A point on the plane.");
+
+  // the finder: names (best first), words in docs, and types
+  const byName = await c.request("ucm/find", { query: "dist" });
+  assert.equal(byName[0].path, "geo.dist");
+  const byDoc = await c.request("ucm/find", { query: "outside" });
+  assert.deepEqual(byDoc.map((i: any) => [i.path, i.match]), [["geo.perimeter", "doc"]]);
+  const byType = await c.request("ucm/find", { query: "(a: Point, b: Point) => number" });
+  assert.deepEqual(byType.map((i: any) => [i.path, i.match]), [["geo.dist", "type"]]);
+});

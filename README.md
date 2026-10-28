@@ -24,9 +24,13 @@ ucm add           # save new definitions from scratch.ts
 - **A content-addressed codebase.** Scratch files are ordinary TypeScript. `ucm add`/`update` store
   definitions by hash; updates re-hash dependents automatically, and what stops typechecking goes to `todo`.
   [Getting started](docs/getting-started.md) · [hashing](docs/hashing.md) · [CLI](docs/cli.md)
-- **Editor integration.** The codebase in a VS Code sidebar, definitions as navigable documents, usages
-  across the codebase, type search; in scratch files, each definition's status with Add/Update actions and watch
-  values inline. `ucm lsp` serves it (also for Neovim and Helix). [Editors](docs/editors.md)
+- **Editor integration.** The codebase in a VS Code sidebar, pages for definitions and namespaces (rendered docs,
+  linked source, uses and used-by), one finder for names, docs and types, apps you can start, a table viewer;
+  in scratch files, each definition's status with Add/Update actions and watch values inline. `ucm lsp` serves
+  it (also for Neovim and Helix). [Editors](docs/editors.md)
+- **Docs that can't go stale.** JSDoc links, embeds and ```` ```ts ```` examples are resolved to hashes: they
+  follow renames and updates, examples are evaluated, and `update` reports the ones that break.
+  [Docs](docs/documentation.md)
 - **Search by type,** as in Unison: `ucm find ':(xs: T[]) => T'` finds matches up to renaming, reordered
   arguments, `async` results, and more general or specific types. [Search](docs/search.md)
 - **Real projects import as they are.** neverthrow, ts-pattern and valibot import, verify and run.

@@ -19,7 +19,7 @@
 | `ucm find <query>` | search names and signature text |
 | `ucm find ':<type>'` | search by type: `':(xs: T[]) => T'`; unknown names are type variables ([search](search.md)) |
 | `ucm deps <name>` / `ucm dependents <name>` | what a definition uses / what uses it |
-| `ucm docs <name>` | show a definition's documentation (its leading JSDoc) |
+| `ucm docs <name>` | show a definition's documentation, rendered: links and embeds with current names, examples evaluated ([docs](documentation.md)) |
 | `ucm run <name> [args...]` | run a definition. Functions are called with the args; the result is awaited and printed |
 | `ucm mv <from> <to>` | rename a definition or namespace (no code changes) |
 | `ucm alias <name> <new>` | add another name for a definition |

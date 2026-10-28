@@ -58,6 +58,8 @@ export interface DefRecord {
   deps: Dep[];
   signature: string;
   doc?: string;
+  /** where `doc` names definitions ({@link …}, {@source …}, names in ```ts examples), by hash (metadata, not hashed) */
+  docRefs?: DocRef[];
   /** runtime schema of a function's parameters (metadata, not hashed): checks arguments arriving from browsers */
   params?: ParamsSchema;
   /** a term's type as structure, codebase types by hash (metadata, not hashed): for searching by type */
@@ -89,4 +91,15 @@ export function extRefString(e: ExtRef): string {
 
 export function depRef(span: Span): string {
   return span.hash ? `#${span.hash}` : extRefString(span.ext!);
+}
+
+/**
+ * A name in a doc, at `start`..`end` of the doc's text: a definition (by hash), or, in an example, something the
+ * definition imports from outside the codebase (a package, a Node builtin, #ucm/server), so the example can too.
+ */
+export interface DocRef {
+  start: number;
+  end: number;
+  hash?: string;
+  ext?: ExtRef;
 }

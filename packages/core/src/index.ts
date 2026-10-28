@@ -1,5 +1,6 @@
 export * from "./types.ts";
 export * from "./hash.ts";
+export { docExamples, docTags, exampleNames, statementStarts, type DocExample, type DocTag } from "./docs.ts";
 export { cacheRefOf, matchShapes, queryShape, shapeBuilder, type QueryImport, type Shape, type ShapeMatch, type TypeShape } from "./shape.ts";
 export { analyzeFile, analyzeProject, saltOf, scratchNamespace, type Analysis, type AnalyzeHost, type ProjectAnalysis, type ProjectDef, type WatchRecord } from "./analyze.ts";
 export { UcmError } from "./extract.ts";

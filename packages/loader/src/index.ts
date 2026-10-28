@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { exportId, extRefString, isConflicted, type DefRecord, type ExtRef } from "@ucm/core";
+import { exportId, extRefString, isConflicted, statementStarts, type DefRecord, type ExtRef } from "@ucm/core";
 
 export interface Layout {
   root: string;
@@ -236,7 +236,7 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
   if (lines.length) lines.push("");
 
   const ordered = opts.style === "scratch" ? members : initOrder(members);
-  const bodyAt = new Map<string, { line: number; insertedAt: number; inserted: number }>();
+  const bodyAt = new Map<string, { line: number; inserts: number[] }>();
   // the bindings of one destructuring statement share its source: emit the statement once
   const emitted = new Set<string>();
   for (const m of ordered) {
@@ -245,11 +245,13 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
     if (opts.style === "scratch" && m.doc) lines.push(`/**\n${m.doc.split("\n").map((l) => ` * ${l}`.trimEnd()).join("\n")}\n */`);
     const note = opts.style === "scratch" ? opts.annotate?.(m.hash, memberNames.get(m.hash)!) : undefined;
     if (note) lines.push(note);
-    // `export` goes after any `// @ts-expect-error` lines, which must stay directly above the declaration
+    // `export` before each statement (every overload of a function needs one), after any comments above it, so
+    // `// @ts-expect-error` lines stay directly above the declaration
     const body = bodies.get(m.hash)!;
-    const directives = /^(?:\/\/[^\n]*\n)*/.exec(body)![0].length;
-    const exported = opts.exportDeclarations ? body.slice(0, directives) + "export " + body.slice(directives) : body;
-    bodyAt.set(m.hash, { line: lines.length, insertedAt: opts.exportDeclarations ? directives : Infinity, inserted: opts.exportDeclarations ? 7 : 0 });
+    const inserts = opts.exportDeclarations ? statementStarts(body) : [];
+    let exported = body;
+    for (const at of [...inserts].reverse()) exported = exported.slice(0, at) + "export " + exported.slice(at);
+    bodyAt.set(m.hash, { line: lines.length, inserts });
     lines.push(exported, "");
   }
   // a definition with no imports must still be a module, or its names would be globals shared with other files
@@ -275,7 +277,7 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
   const starts = new Map<string, number>();
   for (const [hash, b] of bodyAt) {
     const base = lineStart[b.line]!;
-    const at = (o: number) => base + o + (o >= b.insertedAt ? b.inserted : 0);
+    const at = (o: number) => base + o + 7 * b.inserts.filter((i) => i <= o).length;
     starts.set(hash, base);
     for (const r of bodyRefs.get(hash) ?? []) refs.push({ start: at(r.start), end: at(r.end), hash: r.hash, from: hash });
   }
