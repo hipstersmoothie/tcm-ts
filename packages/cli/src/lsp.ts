@@ -12,7 +12,6 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import { cacheRefOf, schemaText, SERVER_API_MODULE, shortHash, type Analysis, type DefRecord, type ProjectDef } from "@tcm/core";
-import { render, type Rendered } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 import { Placement } from "./placement.ts";
 import { evaluateCached, isTestPath, runCached } from "./tests.ts";
@@ -24,6 +23,7 @@ import { packageList, packagePage, packageUsers } from "./package-pages.ts";
 import { upgradeTo, upgradeWithin } from "./upgrade.ts";
 import { lintScratch, type LintIssue } from "./lint.ts";
 import { formatText } from "./fmt.ts";
+import { viewText, type View } from "./views.ts";
 import { testRunKey } from "./vitest.ts";
 
 /** What the language server needs from the CLI (passed in, so this module doesn't import the CLI's entry). */
@@ -457,34 +457,8 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       return [];
     }
   };
-  interface View {
-    text: string;
-    refs: Rendered["refs"];
-    starts: Map<string, number>;
-    hashes: string[];
-  }
-  const view = (uri: string): View | undefined => {
-    const c = cb!;
-    const hashes = hashesOf(uri).filter((h) => c.store.getDef(h));
-    if (!hashes.length) return undefined;
-    const recs = hashes.map((h) => c.store.getDef(h)!);
-    const placement = new Placement(c);
-    const header = recs
-      .map((r) => {
-        const where = r.kind === "term" ? placement.label(r.hash) : "";
-        const runs = where ? ` · ${where}` : "";
-        return `// ${c.store.pathsOf(r.hash).join(", ") || "(unnamed)"} ${shortHash(r.hash)}${runs}`;
-      })
-      .join("\n") + "\n";
-    const r = render(recs, c.source(), c.lay, { style: "scratch", exportDeclarations: true });
-    const shift = header.length;
-    return {
-      text: header + r.text,
-      refs: r.refs.map((x) => ({ ...x, start: x.start + shift, end: x.end + shift })),
-      starts: new Map([...r.starts].map(([h, o]) => [h, o + shift])),
-      hashes,
-    };
-  };
+  // the same text as the definition's file in .tcm/src
+  const view = (uri: string): View | undefined => viewText(cb!, hashesOf(uri).filter((h) => cb!.store.getDef(h)));
   const span = (text: string, start: number, end: number) => {
     const { pos } = lines(text);
     return { start: pos(start), end: pos(end) };

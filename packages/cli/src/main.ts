@@ -694,6 +694,9 @@ const HELP = `${bold("tcm")} — a content-addressed codebase manager for TypeSc
 `;
 
 export async function main(argv: string[]): Promise<number> {
+  // code from the codebase that runs in this process (server functions under tcm dev, say) reports errors at
+  // its definitions, not its generated modules
+  process.setSourceMapsEnabled(true);
   const { positional, flags } = parseArgs(argv);
   const [cmd = "watch", ...args] = positional;
   const cwd = process.cwd();

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { ensureExternals, npmAlias } from "./packages.ts";
+import { inlineSourceMap, lineSourceMap, type LineMapping } from "./sourcemap.ts";
 import { exportId, extRefString, isConflicted, SERVER_API_MODULE, statementStarts, type DefRecord, type ExtRef } from "@tcm/core";
 
 export interface Layout {
@@ -23,6 +24,11 @@ export interface DefSource {
   members(componentHash: string): DefRecord[];
   /** current full name on the branch, if any */
   nameOf(hash: string): string | undefined;
+  /**
+   * Where a definition reads as you'd look at it: a file and the (0-based) line its declaration starts on there.
+   * Generated modules carry a source map to it, so stack traces and debuggers show that file.
+   */
+  viewOf?(hash: string): { file: string; line: number; inserts?: number[] } | undefined;
 }
 
 /**
@@ -58,6 +64,8 @@ export interface Rendered {
   refs: { start: number; end: number; hash: string; from: string }[];
   /** where each member's declaration starts in `text` */
   starts: Map<string, number>;
+  /** where `export ` was inserted in each member's body (offsets in the body, as stored) */
+  inserts: Map<string, number[]>;
 }
 
 const lastSegment = (name: string) => name.slice(name.lastIndexOf(".") + 1);
@@ -295,7 +303,31 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
     starts.set(hash, base);
     for (const r of bodyRefs.get(hash) ?? []) refs.push({ start: at(r.start), end: at(r.end), hash: r.hash, from: hash });
   }
-  return { text: lines.join("\n").trimEnd() + "\n", memberNames, refs, starts };
+  let text = lines.join("\n").trimEnd() + "\n";
+  // a module maps each member's lines to where the member reads as written: its view, or its scratch file
+  if (opts.style === "cache" && src.viewOf) {
+    const mappings: LineMapping[] = [];
+    for (const [hash, b] of bodyAt) {
+      const view = src.viewOf(hash);
+      if (!view) continue;
+      const first = text.slice(0, lineStart[b.line]).split("\n").length - 1;
+      const body = bodies.get(hash)!;
+      const source = path.relative(lay.cacheDir, view.file).split(path.sep).join("/");
+      // where the view puts `export ` in front of a statement: a line's columns shift past it
+      const inserts = (view.inserts ?? []).map((o) => {
+        const before = body.slice(0, o).split("\n");
+        return { line: before.length - 1, col: before.at(-1)!.length };
+      });
+      body.split("\n").forEach((lineText, i) => {
+        const columns: [number, number][] = [[0, 0]];
+        for (const t of lineText.matchAll(/\S+/g)) if (t.index) columns.push([t.index, t.index]);
+        for (const c of columns) c[1] += 7 * inserts.filter((x) => x.line === i && x.col <= c[0]).length;
+        mappings.push({ line: first + i, source, sourceLine: view.line + i, columns });
+      });
+    }
+    if (mappings.length) text += inlineSourceMap(lineSourceMap(moduleFile(members[0]!.componentHash, src), mappings)) + "\n";
+  }
+  return { text, memberNames, refs, starts, inserts: new Map([...bodyAt].map(([h, b]) => [h, b.inserts])) };
 }
 
 function writeIfChanged(file: string, text: string): boolean {
@@ -407,7 +439,8 @@ export function sendRunnerOutputToStderr() {
 /** Node flags for processes tcm spawns; the transform hook, when the cache has one, compiles marked modules. */
 export function nodeArgs(lay: Layout): string[] {
   const hook = path.join(lay.cacheDir, "tcm-transform.js");
-  return ["--disable-warning=ExperimentalWarning", ...(fs.existsSync(hook) ? ["--import", pathToFileURLString(hook)] : [])];
+  // source maps: stack traces point at definitions (.tcm/src) and scratch files, not generated modules
+  return ["--disable-warning=ExperimentalWarning", "--enable-source-maps", ...(fs.existsSync(hook) ? ["--import", pathToFileURLString(hook)] : [])];
 }
 
 function pathToFileURLString(p: string): string {

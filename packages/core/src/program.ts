@@ -109,13 +109,95 @@ export function checkProfile(options: ts.CompilerOptions): CheckProfile {
   return out;
 }
 
-/** The TypeScript runtime tcm uses, for compiling generated modules that use non-erasable syntax. */
-export function transpileForNode(source: string, fileName: string): string {
-  return ts.transpileModule(source, {
-    fileName,
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, preserveConstEnums: true, isolatedModules: true, verbatimModuleSyntax: false, jsx: ts.JsxEmit.ReactJSX },
-  }).outputText;
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/** A source map's mappings, decoded: per generated line, segments of [column, source, line, column] (absolute). */
+function decodeMappings(mappings: string): number[][][] {
+  const state = [0, 0, 0, 0];
+  return mappings.split(";").map((line) => {
+    state[0] = 0;
+    return line
+      .split(",")
+      .filter(Boolean)
+      .map((seg) => {
+        const values: number[] = [];
+        for (let i = 0, shift = 0, v = 0; i < seg.length; i++) {
+          const d = B64.indexOf(seg[i]!);
+          v += (d & 31) << shift;
+          if (d & 32) shift += 5;
+          else {
+            values.push(v & 1 ? -(v >>> 1) : v >>> 1);
+            v = 0;
+            shift = 0;
+          }
+        }
+        for (let k = 0; k < values.length; k++) state[k]! += values[k]!;
+        return state.slice(0, values.length);
+      });
+  });
 }
+
+function encodeMappings(lines: number[][][]): string {
+  const vlq = (n: number) => {
+    let v = n < 0 ? (-n << 1) | 1 : n << 1;
+    let out = "";
+    do {
+      let d = v & 31;
+      v >>>= 5;
+      if (v) d |= 32;
+      out += B64[d];
+    } while (v);
+    return out;
+  };
+  const prev = [0, 0, 0, 0];
+  return lines
+    .map((segs) => {
+      prev[0] = 0;
+      return segs
+        .map((seg) => {
+          const out = seg.map((v, k) => vlq(v - prev[k]!)).join("");
+          seg.forEach((v, k) => (prev[k] = v));
+          return out;
+        })
+        .join(",");
+    })
+    .join(";");
+}
+
+const INLINE_MAP = /\n?\/\/# sourceMappingURL=data:application\/json;(?:charset=utf-8;)?base64,([A-Za-z0-9+/=]+)\s*$/;
+
+/**
+ * The TypeScript runtime tcm uses, for compiling generated modules that use non-erasable syntax (JSX, enums). The
+ * output keeps the module's own source map, composed through the compilation, so it still leads to the
+ * definition (or scratch file) the code came from.
+ */
+export function transpileForNode(source: string, fileName: string): string {
+  const input = INLINE_MAP.exec(source);
+  const out = ts.transpileModule(input ? source.slice(0, input.index) : source, {
+    fileName,
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, preserveConstEnums: true, isolatedModules: true, verbatimModuleSyntax: false, jsx: ts.JsxEmit.ReactJSX,
+      sourceMap: true,
+    },
+  });
+  const code = out.outputText.replace(/\n?\/\/# sourceMappingURL=.*$/, "");
+  if (!input || !out.sourceMapText) return code;
+  const outer = JSON.parse(out.sourceMapText) as { mappings: string };
+  const inner = JSON.parse(Buffer.from(input[1]!, "base64").toString("utf8")) as { sources: string[]; mappings: string };
+  const innerLines = decodeMappings(inner.mappings);
+  // each compiled position → where it was in the module → where that was in the definition
+  const composed = decodeMappings(outer.mappings).map((segs) =>
+    segs.flatMap(([gen, , line, col]) => {
+      const at = (innerLines[line!] ?? []).filter((s) => s[0]! <= col!).at(-1);
+      return at ? [[gen!, at[1]!, at[2]!, at[3]! + (col! - at[0]!)]] : [];
+    }),
+  );
+  const map = JSON.stringify({ version: 3, sources: inner.sources, names: [], mappings: encodeMappings(composed) });
+  return `${code}\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,${Buffer.from(map).toString("base64")}\n`;
+}
+
+/** This module, for processes that load the same compilation through a module hook. */
+export const transpileModuleUrl = import.meta.url;
 
 /** Where that TypeScript lives, for processes that compile on their own (runners spawned by tcm). */
 export function typescriptUrl(): string | undefined {

@@ -11,6 +11,7 @@ myproject/
     codebase.sqlite       the codebase: definitions, names, history, branches, patches, todo
     codebase/             the #codebase modules your scratch files import (generated)
     cache/                every definition as a runnable module, by hash (generated)
+    src/                  every named definition as a read-only file, for debuggers (generated)
     data/                 app data: tables, sessions, jobs (created when an app first runs)
     apps/                 production builds, by hash (tcm build / tcm start)
     web/, build/          working files for tcm dev and tcm build (generated)
