@@ -43,7 +43,7 @@ tcm infers where each component renders from what it uses ([React](../docs/react
 | [`model.ts`](notes/model.ts) | plain functions (`excerpt`, `matches`, `ago`) that run anywhere; tests; sample notes |
 | [`markdown.tsx`](notes/markdown.tsx) | a markdown renderer and its `Markdown` component: plain elements, so it renders on the server inside a note's page and in the browser inside the editor's live preview, from one hash |
 | [`server.ts`](notes/server.ts) | the `notes` table and the server functions that change it, with a test |
-| [`ui.tsx`](notes/ui.tsx) | server components (`NoteList`, `NotePreview`: async, they read the table), browser components (`App`, `NoteEditor`, `SidebarNote`: state and handlers), and the URL as state |
+| [`ui.tsx`](notes/ui.tsx) | server components (`NoteList`, `NotePreview`: async, they read the table), browser components (`App`, `NoteEditor`, `SidebarNote`: state and handlers), the URL as state, and a test of the editor that runs in a browser (it renders a component with state) |
 | [`playground.tsx`](notes/playground.tsx) | the scratch file you start with: watch expressions, including a component rendered to HTML |
 
 `tcm dev notes.App` prints the split: three server components fetched by hash, the browser components they send

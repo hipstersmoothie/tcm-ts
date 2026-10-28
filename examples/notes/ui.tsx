@@ -10,6 +10,8 @@
 //   NoteEditor's live preview.
 import assert from "node:assert/strict";
 import { Suspense, useState, useSyncExternalStore } from "react";
+import { expect } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { addSampleNotes, deleteNote, getNote, listNotes, Markdown, saveNote, type NoteSummary } from "#codebase/notes";
 // for the README's example
 import { excerpt, sampleNotes } from "#codebase/notes";
@@ -277,6 +279,17 @@ export const css = `
 .notes .actions { display: flex; gap: 8px; }
 .notes .preview { border-left: 1px solid #eee; padding-left: 24px; }
 `;
+
+/**
+ * The editor's preview follows what you type. It renders a browser component (it keeps state), so it runs in a
+ * browser: tcm sees that, and runs it in Chrome.
+ */
+export const testEditorPreview = () => {
+  render(<NoteEditor title="Shopping" body="" />);
+  fireEvent.change(screen.getByLabelText("body"), { target: { value: "- **milk**" } });
+  expect(screen.getByText("milk").tagName).toBe("STRONG");
+  expect(screen.getByRole("heading", { name: "Shopping" })).toBeTruthy();
+};
 
 /** A route survives the round trip through the URL. */
 export const testRouteRoundTrip = () => {

@@ -1,6 +1,7 @@
 import type { DefRecord, WatchRecord } from "@tcm/core";
 import type { TestResult } from "@tcm/store";
-import { evaluateWatches, runTests, type DefSource, type WatchResult } from "@tcm/loader";
+import { evaluateWatches, type DefSource, type WatchResult } from "@tcm/loader";
+import { runTestsWithVitest, testRunKey } from "./vitest.ts";
 import type { Codebase } from "./codebase.ts";
 import { bold, dim, green, red } from "./style.ts";
 
@@ -22,15 +23,16 @@ export interface TestOutcome {
  * outside the codebase, like the filesystem, the clock, or the network. `fresh` ignores the cache.
  */
 export function runCached(cb: Codebase, items: { path: string; rec: DefRecord }[], src: DefSource, fresh: boolean): TestOutcome[] {
-  const node = process.version;
+  // results depend on the runtime and the test framework too
+  const key = testRunKey(cb);
   const cached = new Map<string, TestResult>();
   if (!fresh) for (const { rec } of items) {
-    const r = cb.store.testResult(rec.hash, node);
+    const r = cb.store.testResult(rec.hash, key);
     if (r) cached.set(rec.hash, r);
   }
   const toRun = [...new Map(items.filter(({ rec }) => !cached.has(rec.hash)).map(({ rec }) => [rec.hash, rec])).values()];
-  const ran = new Map(runTests(toRun, src, cb.lay).map((r) => [r.hash, r]));
-  for (const r of ran.values()) if (!r.infrastructure) cb.store.putTestResult(r, node);
+  const ran = new Map(runTestsWithVitest(cb, toRun, src).map((r) => [r.hash, r]));
+  for (const r of ran.values()) if (!r.infrastructure) cb.store.putTestResult(r, testRunKey(cb));
   return items.map(({ path, rec }) => ({ path, result: (cached.get(rec.hash) ?? ran.get(rec.hash))!, cached: cached.has(rec.hash) }));
 }
 

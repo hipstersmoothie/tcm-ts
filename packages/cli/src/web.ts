@@ -18,8 +18,8 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import type { Plugin } from "vite";
-import { checkArgs, exportId, SERVER_API_MODULE, shortHash } from "@tcm/core";
-import { ensureExternals, materialize, npmAlias, writeIfChanged } from "@tcm/loader";
+import { checkArgs, exportId, SERVER_API_MODULE, shortHash, type DefRecord } from "@tcm/core";
+import { ensureExternals, materialize, moduleFile, npmAlias, writeIfChanged } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 import { codecSource, decode, encode } from "./codec.ts";
 import { Placement, type AppPlan } from "./placement.ts";
@@ -240,7 +240,18 @@ function writeBuildRoot(cb: Codebase, dir: string, appName: string, s: AppState)
 }
 
 /** Swaps server components for stubs that call them by hash, and provides the browser runtime. */
-function tcmPlugin(cb: Codebase, current: () => AppPlan): Plugin {
+/** Where definitions come from: the store, or the store plus unsaved ones (a browser test's, say). */
+interface Lookup {
+  get(hash: string): DefRecord | undefined;
+  members(componentHash: string): DefRecord[];
+}
+
+const storeLookup = (cb: Codebase): Lookup => ({ get: (h) => cb.store.getDef(h), members: (c) => cb.store.componentMembers(c) });
+
+/** A component's module in the cache, from a lookup (`.tsx` when it uses JSX). */
+const modulePathIn = (cb: Codebase, look: Lookup, componentHash: string) => path.join(cb.lay.cacheDir, moduleFile(componentHash, look));
+
+function tcmPlugin(cb: Codebase, current: () => AppPlan, look: Lookup = storeLookup(cb)): Plugin {
   return {
     name: "tcm",
     // ahead of Vite's own resolver: server components must be swapped for stubs before they are resolved as files
@@ -259,7 +270,7 @@ function tcmPlugin(cb: Codebase, current: () => AppPlan): Plugin {
       if (id === "\0" + CODEC) return codecSource();
       if (id.startsWith(REACT_RUNTIME)) return reactRuntimeSource(id.slice(REACT_RUNTIME.length), RUNTIME, CODEC);
       if (!id.startsWith(STUB)) return null;
-      const members = cb.store.componentMembers(id.slice(STUB.length));
+      const members = look.members(id.slice(STUB.length));
       const plan = current();
       const lines = [`import { remote, remoteStream } from ${JSON.stringify(RUNTIME)};`];
       for (const m of members) {
@@ -267,7 +278,7 @@ function tcmPlugin(cb: Codebase, current: () => AppPlan): Plugin {
           // a server component: the browser components its tree can contain ship with it, referenced by hash
           const refs = [...(plan.refsOf.get(m.hash) ?? [])];
           lines.unshift(`import { serverComponent as serverComponent_${m.hash} } from ${JSON.stringify(REACT_RUNTIME + npmAlias(m.jsx))};`);
-          for (const r of refs) lines.push(`import { ${exportId(r)} } from ${JSON.stringify(cb.modulePath(cb.store.getDef(r)!.componentHash))};`);
+          for (const r of refs) lines.push(`import { ${exportId(r)} } from ${JSON.stringify(modulePathIn(cb, look, look.get(r)!.componentHash))};`);
           lines.push(`export const ${exportId(m.hash)} = serverComponent_${m.hash}(${JSON.stringify(m.hash)}, ${JSON.stringify(m.nameHint)}, { ${refs.map((r) => `${JSON.stringify(r)}: ${exportId(r)}`).join(", ")} });`);
         } else if (plan.streaming.has(m.hash)) lines.push(`export const ${exportId(m.hash)} = remoteStream(${JSON.stringify(m.hash)}, ${JSON.stringify(m.nameHint)});`);
         else lines.push(`export const ${exportId(m.hash)} = remote(${JSON.stringify(m.hash)}, ${JSON.stringify(m.nameHint)}, ${plan.endpoints.has(m.hash)});`);
@@ -384,6 +395,7 @@ function rpcHandler(
   retired: (hash: string) => boolean = () => false,
   opts: RpcOptions = { production: false, secure: false },
   components: ComponentPlan = { isComponent: () => false, isClientRef: () => false },
+  look: Lookup = storeLookup(cb),
 ): Middleware {
   const host = serverApiHost(cb);
   const data = dataDir(cb);
@@ -431,14 +443,14 @@ function rpcHandler(
       return send(400, { name: "RemoteError", message: "malformed arguments" });
     }
     if (!Array.isArray(args)) return send(400, { name: "RemoteError", message: "arguments must be a list" });
-    const rec = cb.store.getDef(hash)!;
+    const rec = look.get(hash)!;
     // arguments come from the network: check them against the function's parameter types before calling it
     // a server component gets its props: none at all if it takes none
     const component = components.isComponent(hash);
     const problem = rec.params && checkArgs(rec.params, component && !rec.params.params.length ? [] : args);
     if (problem) return send(400, { name: "TypeError", message: `${name}: ${problem}` });
     // a hash names immutable code, so Node's module cache can never serve a stale version of it
-    const fn = ((await import(pathToFileURL(cb.modulePath(rec.componentHash)).href)) as Record<string, (...a: unknown[]) => unknown>)[exportId(hash)]!;
+    const fn = ((await import(pathToFileURL(modulePathIn(cb, look, rec.componentHash)).href)) as Record<string, (...a: unknown[]) => unknown>)[exportId(hash)]!;
     const abort = new AbortController();
     res.on("close", () => {
       if (!res.writableFinished) abort.abort(new Error("the client disconnected"));
@@ -487,6 +499,27 @@ function rpcHandler(
     if (err.retryAfter !== undefined) res.setHeader("retry-after", String(err.retryAfter));
     send(err.status, err.body);
   };
+}
+
+/**
+ * Vite plugins for browser tests: like an app's (server code stubbed, called by hash), with the endpoints
+ * answered by the test server itself. `get` sees definitions not stored yet.
+ */
+export function testPlugins(cb: Codebase, tests: string[], get: (h: string) => DefRecord | undefined, members: (c: string) => DefRecord[]): Plugin[] {
+  const placement = new Placement(cb, get);
+  const plan: AppPlan = {
+    browser: new Set(), components: new Set(), clientRefs: new Set(), refsOf: new Map(), endpoints: new Set(), stubbed: new Set(), streaming: new Set(), errors: [], warnings: [],
+    state: { server: [], browser: [], both: [] },
+  };
+  for (const t of tests) {
+    const p = placement.planApp(t);
+    for (const k of ["browser", "components", "clientRefs", "endpoints", "stubbed", "streaming"] as const) for (const h of p[k]) plan[k].add(h);
+    for (const [k, v] of p.refsOf) plan.refsOf.set(k, v);
+  }
+  const look: Lookup = { get, members };
+  const components: ComponentPlan = { isComponent: (h) => plan.components.has(h), isClientRef: (h) => plan.clientRefs.has(h) };
+  const rpc = rpcHandler(cb, (h) => plan.endpoints.has(h), undefined, undefined, components, look);
+  return [tcmPlugin(cb, () => plan, look), { name: "tcm-rpc", configureServer: (s) => void s.middlewares.use(rpc) }];
 }
 
 /** A server component's render as messages: `{ v }` its tree, then `{ s, v }` / `{ s, e }` for each boundary. */

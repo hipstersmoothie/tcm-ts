@@ -72,7 +72,7 @@ test("the notes example: React server components with no directives, in a browse
   const setup = spawnSync(fileURLToPath(new URL("../../../examples/notes/setup.sh", import.meta.url)), [notesDir], { env, encoding: "utf8" });
   const out = (setup.stdout + setup.stderr).replace(/\x1b\[[0-9;]*m/g, "");
   assert.equal(setup.status, 0, out);
-  assert.match(out, /7 passed, 0 failed/);
+  assert.match(out, /8 passed, 0 failed/);
   assert.doesNotMatch(out, /warning/, "the example's docs link only to what exists");
   const tcm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: notesDir, env, encoding: "utf8" }).stdout;
   assert.match(tcm("view", "notes.NoteList"), /renders on the server: it is an async component; the browser fetches its rendered tree by hash/);

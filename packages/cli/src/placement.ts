@@ -18,7 +18,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isBuiltin } from "node:module";
-import { SERVER_API_MODULE, type IR } from "@tcm/core";
+import { SERVER_API_MODULE, type DefRecord, type IR } from "@tcm/core";
 import { installedPeers, npmAlias, parseModule } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 
@@ -31,6 +31,9 @@ const DOM_GLOBALS = new Set([
 const isDomGlobal = (name: string) => DOM_GLOBALS.has(name) || /^(HTML|SVG)\w*Element$/.test(name);
 
 export type Place = "server" | "browser" | "anywhere";
+
+/** Packages tests import from their framework: they don't decide where a test runs. */
+const TEST_FRAMEWORK = /^npm:(vitest|@vitest\/[^@]+)@/;
 
 /** References to a definition other than as a JSX tag: calls, reads, passing it along. */
 function usesOf(rec: { spans: { hash?: string; pos: string; element?: boolean }[] }, self: string): Set<string> {
@@ -134,8 +137,12 @@ export class Placement {
   private browserWhy = new Map<string, string | undefined>();
   private npmServerOnly = new Map<string, boolean>();
 
-  constructor(cb: Codebase) {
+  /** definitions by hash: the store's, or the store plus unsaved ones (a scratch file's tests, say) */
+  private get: (h: string) => DefRecord | undefined;
+
+  constructor(cb: Codebase, get?: (h: string) => DefRecord | undefined) {
     this.cb = cb;
+    this.get = get ?? ((h) => cb.store.getDef(h));
   }
 
   private name(h: string): string {
@@ -143,18 +150,37 @@ export class Placement {
   }
 
   private valueDeps(h: string): string[] {
-    return (this.cb.store.getDef(h)?.deps ?? []).filter((d) => d.pos === "value" && d.ref.startsWith("#")).map((d) => d.ref.slice(1));
+    return (this.get(h)?.deps ?? []).filter((d) => d.pos === "value" && d.ref.startsWith("#")).map((d) => d.ref.slice(1));
   }
 
   /** What `h` uses other than by rendering it as an element: these pull their needs into `h`. */
   private usedBy(h: string): string[] {
-    const rec = this.cb.store.getDef(h);
+    const rec = this.get(h);
     return rec ? [...usesOf(rec, h)] : [];
+  }
+
+  /**
+   * Whether a test runs in a browser: it, or anything it uses or renders, needs one (a component with state, the
+   * DOM). Rendering counts here, unlike for placement: a test that renders a browser component runs it.
+   */
+  testNeedsBrowser(h: string): boolean {
+    const seen = new Set<string>();
+    const stack = [h];
+    while (stack.length) {
+      const x = stack.pop()!;
+      if (seen.has(x)) continue;
+      seen.add(x);
+      if (this.needsBrowser(x)) return true;
+      // stop at what the browser would call across the network: it runs on the server
+      if (x !== h && this.needsServer(x) && this.crossable(x) && !this.isComponent(x)) continue;
+      stack.push(...this.valueDeps(x));
+    }
+    return false;
   }
 
   /** A React component: a function (or class) with JSX in it, named like one (`Counter`). */
   isComponent(h: string): boolean {
-    const rec = this.cb.store.getDef(h);
+    const rec = this.get(h);
     return !!rec && (rec.kind === "term" || rec.kind === "class") && !!rec.jsx && /^[A-Z]/.test(rec.nameHint);
   }
 
@@ -163,7 +189,7 @@ export class Placement {
    * browser by hash (a provider, a code-split component), so the browser needs them.
    */
   isSentObject(h: string): boolean {
-    const rec = this.cb.store.getDef(h);
+    const rec = this.get(h);
     return !!rec && rec.kind === "term" && rec.spans.some((s) => s.ext && /^npm:react@/.test(s.ext.module) && (s.ext.export === "createContext" || s.ext.export === "lazy"));
   }
 
@@ -181,6 +207,8 @@ export class Placement {
    * A heuristic: packages are installed into .tcm/cache/node_modules under their pinned versions.
    */
   private isServerPackage(module: string): boolean {
+    // the test framework runs wherever a test does (Vitest has a Node and a browser side)
+    if (TEST_FRAMEWORK.test(module)) return false;
     if (this.npmServerOnly.has(module)) return this.npmServerOnly.get(module)!;
     let result = false;
     const dir = path.join(this.cb.lay.cacheDir, "node_modules", npmAlias(module));
@@ -205,7 +233,7 @@ export class Placement {
   }
 
   private directServer(h: string): string | undefined {
-    const rec = this.cb.store.getDef(h);
+    const rec = this.get(h);
     if (!rec || rec.kind === "type") return undefined;
     for (const s of rec.spans) {
       if (!s.ext || s.pos !== "value") continue;
@@ -220,7 +248,7 @@ export class Placement {
   }
 
   private directBrowser(h: string): string | undefined {
-    const rec = this.cb.store.getDef(h);
+    const rec = this.get(h);
     if (!rec || rec.kind === "type") return undefined;
     for (const g of globalsIn(JSON.parse(rec.ir) as IR)) if (isDomGlobal(g)) return `uses ${g}`;
     for (const s of rec.spans) if (s.ext && s.pos === "value" && isClientReactApi(s.ext)) return `uses ${s.ext.export}`;
@@ -240,13 +268,13 @@ export class Placement {
    * (they already expect to await each item).
    */
   crossable(h: string): boolean {
-    const rec = this.cb.store.getDef(h);
+    const rec = this.get(h);
     return !!rec && rec.kind === "term" && /^(<[^>]*>)?\(.*\) => (Promise|AsyncGenerator|AsyncIterable|AsyncIterableIterator)<.*>$/s.test(rec.signature);
   }
 
   /** An async generator: streamed to the browser chunk by chunk. */
   streams(h: string): boolean {
-    const rec = this.cb.store.getDef(h);
+    const rec = this.get(h);
     return !!rec && /^(<[^>]*>)?\(.*\) => (AsyncGenerator|AsyncIterable|AsyncIterableIterator)<.*>$/s.test(rec.signature);
   }
 
@@ -349,7 +377,7 @@ export class Placement {
   private checkPackageRanges(plan: AppPlan) {
     const users = new Map<string, Map<string, string[]>>();
     for (const h of plan.browser) {
-      const rec = this.cb.store.getDef(h);
+      const rec = this.get(h);
       if (!rec) continue;
       const modules = [...rec.spans.flatMap((s) => (s.ext?.module.startsWith("npm:") && s.pos === "value" ? [s.ext.module] : [])), ...(rec.jsx?.startsWith("npm:") ? [rec.jsx] : [])];
       for (const m of new Set(modules)) {
@@ -407,7 +435,7 @@ export class Placement {
       if (server && this.isServerComponent(h)) {
         plan.endpoints.add(h);
         plan.components.add(h);
-        plan.stubbed.add(this.cb.store.getDef(h)!.componentHash);
+        plan.stubbed.add(this.get(h)!.componentHash);
         serverTree(h, chain);
         return;
       }
@@ -426,7 +454,7 @@ export class Placement {
         }
         plan.endpoints.add(h);
         if (this.streams(h)) plan.streaming.add(h);
-        plan.stubbed.add(this.cb.store.getDef(h)!.componentHash);
+        plan.stubbed.add(this.get(h)!.componentHash);
         return;
       }
       plan.browser.add(h);
@@ -440,7 +468,7 @@ export class Placement {
     // where module-level state lives follows from which side's code uses it
     const serverSide = new Set([...plan.endpoints].flatMap((h) => this.closure(h)));
     for (const h of new Set([...plan.browser, ...serverSide])) {
-      const rec = this.cb.store.getDef(h);
+      const rec = this.get(h);
       if (!rec || rec.kind !== "term" || !isMutableState(JSON.parse(rec.ir) as IR)) continue;
       const [b, s] = [plan.browser.has(h), serverSide.has(h)];
       (b && s ? plan.state.both : b ? plan.state.browser : plan.state.server).push(h);

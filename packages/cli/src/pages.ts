@@ -4,6 +4,7 @@
 import ts from "typescript";
 import { SERVER_API_MODULE, shortHash, type DefRecord } from "@tcm/core";
 import { render } from "@tcm/loader";
+import { testRunKey } from "./vitest.ts";
 import type { Codebase } from "./codebase.ts";
 import type { Placement } from "./placement.ts";
 import { renderDoc } from "./docs.ts";
@@ -80,7 +81,7 @@ export function definitionPage(cb: Codebase, hash: string, placement: Placement,
   const doc = renderDoc(cb, rec, { evaluate: true, link: (h) => `tcm-page:${h}` });
   const where = rec.kind === "term" ? placement.placeOf(hash) : undefined;
   const isTest = rec.kind !== "type" && names.some(isTestPath);
-  const test = isTest ? cb.store.testResult(hash, process.version) : undefined;
+  const test = isTest ? cb.store.testResult(hash, testRunKey(cb)) : undefined;
   const item = (h: string) => ({ hash: h, name: nameOf(h), kind: cb.store.getDef(h)?.kind, signature: cb.store.getDef(h)?.signature, uri: links.viewUri(h) });
   return {
     hash,

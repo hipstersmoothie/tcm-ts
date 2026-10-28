@@ -16,6 +16,7 @@ import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
 import { evaluateCached, isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
 import { listPackages, upgradeTo, upgradeWithin } from "./upgrade.ts";
+import { vitestChild } from "./vitest.ts";
 import { LINT_CONFIG, lintDefinitions, lintScratch, locate, type LintIssue } from "./lint.ts";
 import { diffNamespaces, printDiff, rewind, stateOf } from "./diff.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
@@ -806,6 +807,10 @@ square(12);
       });
       return -1; // keep serving
     }
+    // the test runner's child process (see vitest.ts)
+    case "internal-vitest":
+      await vitestChild(args[0]!);
+      return 0;
     case "lint": {
       const ns = args[0] ?? "";
       const live = cb.liveHashes();
