@@ -5,7 +5,7 @@ saving, changing, fixing, renaming and undoing.
 
 ## Scratch files
 
-Any `.ts` file at the top of your codebase directory is a scratch file (`ucm init` makes `scratch.ts`). It's
+Any `.ts` or `.tsx` file at the top of your codebase directory is a scratch file (`ucm init` makes `scratch.ts`). It's
 ordinary TypeScript: your editor checks it, and `node scratch.ts` runs it.
 
 - **Namespaces.** `// ucm: namespace lib.util` as the first line puts the file's definitions under `lib.util`.

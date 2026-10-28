@@ -80,6 +80,12 @@ export interface LogEntry {
 
 type Row = Record<string, string | number | null>;
 
+/** The JSX runtime a definition compiles to: part of its IR (and so its hash), read from there. */
+function jsxOf(ir: string): { jsx?: string } {
+  const m = /^\["Def","[^"]*"(?:,\["Salt","[^"]*"\])?,\["Jsx","([^"]+)"\]/.exec(ir);
+  return m ? { jsx: m[1]! } : {};
+}
+
 export class Store {
   readonly db: DatabaseSync;
   private branchCache: { id: number; name: string } | undefined;
@@ -213,6 +219,7 @@ export class Store {
       ...(row.doc_refs ? { docRefs: JSON.parse(row.doc_refs as string) } : {}),
       table: row.table_schema ? JSON.parse(row.table_schema as string) : undefined,
       ...(row.transform ? { transform: true } : {}),
+      ...jsxOf(row.ir as string),
       ...(row.checked ? { checked: JSON.parse(row.checked as string) } : {}),
       ...(row.globals ? { globalNames: JSON.parse(row.globals as string) } : {}),
     };

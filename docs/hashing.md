@@ -30,7 +30,10 @@ never skipped, so two different programs can't collide.
 - Locals become de Bruijn levels, so renaming a local doesn't change the hash.
 - Every identifier is resolved through the type checker. A reference to another definition becomes
   `Ref <hash>`, an npm import becomes `Ext npm:<pkg>@<exact version>`, and a global becomes `G name`.
-- Property names stay structural.
+- Property names stay structural, and so do JSX tags and attributes (`<div className>`); a component tag
+  (`<Counter />`) is a reference like any other.
+- JSX text is normalized as React reads it: indentation and line breaks between tags don't count, spaces within a
+  line do. A definition with JSX also hashes the JSX runtime it compiles to (`npm:react@<version>`).
 - Type annotations are part of the hash.
 - Mutually recursive definitions are hashed as a cycle (Tarjan SCC + Unison-style ordering), including cycles
   that span files.

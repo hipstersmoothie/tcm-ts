@@ -13,7 +13,7 @@
 | `ucm add [file] [--into ns]` | save new definitions from a scratch file (default `scratch.ts`) |
 | `ucm update [file] [--into ns]` | save, re-point changed names, and re-hash every dependent. Dependents that stop typechecking keep their old hash and go to `todo`. Also checks stored table rows against changed row types ([data](data.md)) |
 | `ucm import <dir> [--into ns] [--update] [--exclude a,b] [--verbose]` | add an existing project, one namespace per file ([importing](importing.md)) |
-| `ucm edit <name>... [--file f] [--force]` | write definitions to a scratch file for editing, with references following any updates |
+| `ucm edit <name>... [--file f] [--force]` | write definitions to a scratch file for editing (`scratch.ts`, or `scratch.tsx` for JSX), with references following any updates |
 | `ucm view <name\|#hash>...` | show definitions, rendered with current names, with their placement for app code |
 | `ucm ls [namespace]` | list names |
 | `ucm find <query>` | search names and signature text |
@@ -60,7 +60,7 @@ See [browser apps](apps.md), [production](production.md), [data](data.md) and [j
 
 | Command | |
 |---|---|
-| `ucm dev <app> [--port 5173] [--http <namespace>[=/prefix]]` | serve a browser app from the codebase with hot reload |
+| `ucm dev <app> [--port 5173] [--http <namespace>[=/prefix]]` | serve a browser app from the codebase with hot reload; `<app>` is a function run on load, or a React component rendered into the page |
 | `ucm build <app> [--force]` | immutable production build into `.ucm/apps/<hash>/` (reused if it exists) |
 | `ucm start <app> [--port 8080] [--host] [--tls] [--keep N] [--http <namespace>[=/prefix]]` | serve in production, following the app's name |
 | `ucm apps [prune [--keep 3]]` | list builds (`*` = current); prune keeps the current build plus the newest N others |

@@ -34,7 +34,7 @@ export function cacheRefOf(checker: ts.TypeChecker): (sym: ts.Symbol) => string 
   return (sym) => {
     const decl = sym.declarations?.[0];
     const sf = decl?.getSourceFile();
-    if (!sf || !/[\\/]\.ucm[\\/]cache[\\/][a-z2-7]{52}\.ts$/.test(sf.fileName)) return undefined;
+    if (!sf || !/[\\/]\.ucm[\\/]cache[\\/][a-z2-7]{52}\.tsx?$/.test(sf.fileName)) return undefined;
     let byLocal = exports.get(sf);
     if (!byLocal) {
       byLocal = new Map();

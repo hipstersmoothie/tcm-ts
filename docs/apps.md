@@ -14,7 +14,8 @@ export async function main() {                             // uses document → 
 ```
 
 `ucm dev app.main` serves this through Vite 8. Nothing is annotated: there's no `"use server"`, no routes, no
-fetch calls and no API layer. `ucm update` in another shell hot-reloads the browser. For production, see
+fetch calls and no API layer. React components are placed the same way, server components included
+([React](react.md)). `ucm update` in another shell hot-reloads the browser. For production, see
 [production](production.md).
 
 ## How placement is inferred

@@ -203,3 +203,54 @@ test("parameter schemas check arguments arriving from the network", async () => 
   assert.match(checkArgs(p, ["ada", { tags: ["x"] }, new Date(0), "a", { v: 1, kids: [{ v: "deep", kids: [] }] }])!, /tree`\.kids\[0\]\.v should be a number/);
   assert.match(checkArgs(p, [...ok.slice(0, 5), 1, "two"])!, /extra`\[1\] should be a number/);
 });
+
+/** A minimal React for JSX: the automatic runtime's types, pinned at a version. */
+function fakeReact(root: string) {
+  const dir = path.join(root, "node_modules", "react");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({ name: "react", version: "19.0.0", exports: { ".": { types: "./index.d.ts" }, "./jsx-runtime": { types: "./jsx-runtime.d.ts" } } }),
+  );
+  fs.writeFileSync(path.join(dir, "index.d.ts"), "export declare function useState<T>(v: T): [T, (v: T) => void];\n");
+  fs.writeFileSync(
+    path.join(dir, "jsx-runtime.d.ts"),
+    "export namespace JSX { interface Element { el: true } interface IntrinsicElements { [tag: string]: any } interface ElementChildrenAttribute { children: {} } }\n" +
+      "export declare function jsx(type: any, props: any): JSX.Element;\nexport declare function jsxs(type: any, props: any): JSX.Element;\nexport declare const Fragment: unique symbol;\n",
+  );
+}
+
+function analyzeTsx(source: string): Analysis {
+  const file = path.join(dir, `f${n++}.tsx`);
+  fs.writeFileSync(file, source);
+  const a = analyzeFile(file, { cacheDir: path.join(dir, ".ucm", "cache"), resolveName: (name) => { throw new Error(`unknown ${name}`); } });
+  assert.deepEqual(a.diagnostics.map((d) => d.message), []);
+  assert.deepEqual(a.errors, []);
+  return a;
+}
+
+test("JSX: layout between tags doesn't count, text React keeps does; the runtime is pinned", () => {
+  fakeReact(dir);
+  const h = (src: string) => Object.fromEntries(analyzeTsx(src).defs.map((d) => [d.nameHint, d.hash]));
+  const one = h(`export function Hi({ name }: { name: string }) { return <p className="hi">Hello, {name}!</p>; }`);
+  const multi = h(`export function Hi({ name: who }: { name: string }) {\n  return (\n    <p className="hi">\n      Hello, {who}!\n    </p>\n  );\n}`);
+  assert.equal(one.Hi, multi.Hi, "reformatting and renaming a prop binding keep the hash");
+  assert.notEqual(one.Hi, h(`export function Hi({ name }: { name: string }) { return <p className="hi">Hello,  {name}!</p>; }`).Hi, "spaces within a line are kept by React");
+  assert.notEqual(one.Hi, h(`export function Hi({ name }: { name: string }) { return <div className="hi">Hello, {name}!</div>; }`).Hi, "tags are structural");
+  assert.notEqual(one.Hi, h(`export function Hi({ name }: { name: string }) { return <p id="hi">Hello, {name}!</p>; }`).Hi, "attribute names are structural");
+  const d = analyzeTsx(`export function Hi() { return <br />; }`).defs[0]!;
+  assert.equal(d.jsx, "npm:react@19.0.0");
+  assert.match(d.ir, /\["Jsx","npm:react@19\.0\.0"\]/);
+});
+
+test("JSX: a component tag is a reference by hash, marked as rendered rather than called", () => {
+  fakeReact(dir);
+  const a = analyzeTsx(`export function Item({ t }: { t: string }) { return <li>{t}</li>; }\nexport function List() { return <ul><Item t="a" /><Item t="b"></Item></ul>; }`);
+  const item = a.defs.find((d) => d.nameHint === "Item")!;
+  const list = a.defs.find((d) => d.nameHint === "List")!;
+  const spans = list.spans.filter((s) => s.hash === item.hash);
+  assert.equal(spans.length, 3, "<Item />, <Item> and </Item>");
+  assert.ok(spans.every((s) => s.element));
+  const changed = analyzeTsx(`export function Item({ t }: { t: string }) { return <li>{t}!</li>; }\nexport function List() { return <ul><Item t="a" /><Item t="b"></Item></ul>; }`);
+  assert.notEqual(changed.defs.find((d) => d.nameHint === "List")!.hash, list.hash, "a change to the component reaches what renders it");
+});

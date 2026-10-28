@@ -9,7 +9,9 @@ choice. A few are forced, with a warning when the project sets them otherwise:
 
 - `module`/`moduleResolution` NodeNext, which import classification and `#codebase` rely on;
 - `verbatimModuleSyntax` and `erasableSyntaxOnly`, which Node's type stripping needs;
-- `allowImportingTsExtensions` and `noEmit`.
+- `allowImportingTsExtensions` and `noEmit`;
+- `jsx` = `react-jsx`: JSX compiles to the automatic runtime (`react/jsx-runtime`, or your `jsxImportSource`),
+  which generated modules import at its pinned version ([React](react.md#packages-and-versions)).
 
 Without its own `types`, a project gets ucm's `@types/node`, so scratch files typecheck without installing it.
 

@@ -320,11 +320,8 @@ function header(cb: Codebase, hash: string): string {
   const line = `${dim("//")} ${bold(names.join(", ") || "(unnamed)")} ${dim(shortHash(hash))} ${dim(rec.kind === "type" ? rec.signature : ": " + rec.signature)}`;
   if (rec.kind === "type") return line;
   const placement = new Placement(cb);
-  const p = placement.placeOf(hash);
-  const where = p.place === "anywhere" ? "runs anywhere" : `runs ${p.place === "server" ? "on the server" : "in the browser"}: it ${p.why}${p.conflict ? `; but ${p.conflict}` : ""}`;
-  const cross = p.place === "server" && placement.crossable(hash) ? "; browser code calls it by hash" : "";
   return `${line}
-${dim(`// ${where}${cross}`)}`;
+${dim(`// ${placement.describe(hash)}`)}`;
 }
 
 function view(cb: Codebase, targets: string[]) {
@@ -401,7 +398,10 @@ function todo(cb: Codebase) {
   console.log(n ? dim(`\nfix with \`ucm edit <name>\`, change the scratch file, then \`ucm update\``) : green("nothing to do"));
 }
 
-function edit(cb: Codebase, targets: string[], file: string, force: boolean) {
+function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) => string), force: boolean) {
+  // JSX only parses in a .tsx file: the default scratch file follows what's being edited
+  const jsx = targets.some((t) => (t.startsWith("#") ? [cb.lookupOne(t)] : cb.lookup(t)).some((h) => cb.store.getDef(h)?.jsx));
+  const file = typeof target === "string" ? target : target(jsx);
   if (fs.existsSync(file) && fs.readFileSync(file, "utf8").trim() && !force) {
     throw new UsageError(`${path.basename(file)} is not empty; pass --force to overwrite or --file <other.ts>`);
   }
@@ -562,12 +562,12 @@ function watch(cb: Codebase, into?: string, fresh = false) {
       }
     }
   };
-  const initial = fs.readdirSync(root).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts")).map((f) => path.join(root, f));
+  const initial = fs.readdirSync(root).filter((f) => /\.tsx?$/.test(f) && !f.endsWith(".d.ts")).map((f) => path.join(root, f));
   console.log(`${bold("ucm")} watching ${root} ${dim("(Ctrl-C to stop)")}`);
   initial.forEach((f) => pending.add(f));
   runChecks();
   fs.watch(root, (_event, filename) => {
-    if (!filename || !filename.endsWith(".ts") || filename.endsWith(".d.ts")) return;
+    if (!filename || !/\.tsx?$/.test(filename) || filename.endsWith(".d.ts")) return;
     pending.add(path.join(root, filename));
     clearTimeout(timer);
     timer = setTimeout(runChecks, 80);
@@ -579,7 +579,7 @@ function watch(cb: Codebase, into?: string, fresh = false) {
 const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeScript
 
   ucm init                       set up a codebase in this directory
-  ucm [watch] [--fresh]          watch *.ts scratch files: typecheck, hash, evaluate watch expressions and tests
+  ucm [watch] [--fresh]          watch *.ts/*.tsx scratch files: typecheck, hash, evaluate watch expressions and tests
                                  (their results are cached by hash; --fresh re-runs them)
   ucm check [file] [--fresh]     one-shot version of watch
   ucm lsp                        language server for editors (stdio): status, watch values, hovers, save commands
@@ -609,7 +609,8 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
   ucm history [n] / reset <id>   name changes on this branch / undo back to an entry
   ucm branch [name] / switch <name>
   ucm dev <app> [--port 5173] [--http <namespace>[=/prefix]]
-                                 serve a browser app from the codebase; what needs the server runs there, called by hash
+                                 serve a browser app (a function, or a React component) from the codebase; what needs
+                                 the server runs there, called by hash
   ucm build <app> [--force]      production build into .ucm/apps/<hash>/ (immutable; reused if it exists)
   ucm data [table [n]]           typed tables (table<Row>() from #ucm/server): row counts, or a table's rows
   ucm data migrate <table>       upgrade every stored row to the current row type now, through migrate
@@ -840,7 +841,7 @@ square(12);
     }
     case "edit":
       need(1, "edit <name>...");
-      edit(cb, args, scratch(typeof flags.file === "string" ? flags.file : undefined), !!flags.force);
+      edit(cb, args, typeof flags.file === "string" ? scratch(flags.file) : (jsx) => scratch(jsx ? "scratch.tsx" : "scratch.ts"), !!flags.force);
       return 0;
     case "mv":
       need(2, "mv <from> <to>");

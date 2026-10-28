@@ -112,7 +112,7 @@ export function analyzeProject(files: string[], host: AnalyzeHost, mode: Extract
     }
     return { ...base, diagnostics, errors };
   }
-  const result = analyzeSources(sfs, program.getTypeChecker(), host, mode);
+  const result = analyzeSources(sfs, program.getTypeChecker(), host, mode, program.getCompilerOptions());
   if (result.errors.length) return { ...base, diagnostics: [], errors: result.errors, warnings: result.warnings };
   // each definition remembers the options it typechecked under, so later re-checks use the same ones
   const checked = checkProfile(program.getCompilerOptions());
@@ -318,7 +318,7 @@ function signatureOf(site: DefSite, checker: ts.TypeChecker): string {
   return checker.typeToString(checker.getTypeOfSymbolAtLocation(sym, site.nameNode!), undefined, flags);
 }
 
-function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: AnalyzeHost, mode: ExtractMode) {
+function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: AnalyzeHost, mode: ExtractMode, options: ts.CompilerOptions) {
   const errors: string[] = [];
   const warnings: string[] = [];
   const sites: DefSite[] = [];
@@ -346,6 +346,12 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
     allowTransformed: mode === "import",
     classifyImport: (d, meaning) => classifiers.get(d.getSourceFile())!(d, meaning),
     classifyDynamicImport: (spec, at) => dynamicImportClassifier(at.getSourceFile().fileName)(spec, at),
+    jsxRuntime: (at) => {
+      const sf = at.getSourceFile();
+      // generated modules name their (aliased) runtime in a pragma; scratch files use the project's setting
+      const source = /@jsxImportSource\s+(\S+)/.exec(sf.text.slice(0, 2000))?.[1] ?? options.jsxImportSource ?? "react";
+      return externalModule(`${source}/jsx-runtime`, sf.fileName, at, "*");
+    },
     kindOf: (def) => sites[def]!.kind,
     isLet: (def) => sites[def]!.tag === "Let",
     warn: (message, node) => warnings.push(new UcmError(message, node).message),
@@ -405,6 +411,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
       else span.ext = s.target.ext;
       if (s.shorthand) span.shorthand = s.shorthand;
       if (s.literal) span.literal = true;
+      if (s.element) span.element = true;
       return span;
     });
     const deps = new Map<string, Dep>();
@@ -436,6 +443,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
       params: paramsOf(site, checker),
       table: tableOf(site, checker),
       ...(r.transform ? { transform: true } : {}),
+      ...(r.jsx ? { jsx: r.jsx } : {}),
       doc: site.doc,
       file: site.sf.fileName,
       range: {

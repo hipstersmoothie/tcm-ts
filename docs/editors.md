@@ -2,7 +2,7 @@
 
 `ucm lsp` is a language server (LSP over stdio) that runs **alongside TypeScript's own**. TypeScript keeps doing
 completions, type errors, go-to-definition and refactors; ucm adds what only it knows. It works on scratch files:
-the `.ts` files at the top of the codebase directory, the ones the watcher checks.
+the `.ts` and `.tsx` files at the top of the codebase directory, the ones the watcher checks.
 
 ## What it shows
 
@@ -37,9 +37,10 @@ Each reports its output as a message, and every open file's status is refreshed.
 The code lives in the codebase, not in files, so the server also shows the codebase itself.
 
 - **Definitions are documents.** `ucm:/lib/square.ts` is `lib.square` rendered with current names (what `ucm
-  view` prints), with a header line giving its names, hash and where it runs. They're read-only: to change one,
-  **Edit** writes it into a scratch file (`scratch.ts` if that's empty, else `edit.ts`, `edit-2.ts`, …), where
-  TypeScript checks it and the lens offers **Update codebase**.
+  view` prints), with a header line giving its names, hash and where it runs (`.tsx` for definitions with JSX).
+  They're read-only: to change one, **Edit** writes it into a scratch file (`scratch.ts` if that's empty, else
+  `edit.ts`, `edit-2.ts`, …; `scratch.tsx` and so on for JSX), where TypeScript checks it and the lens offers
+  **Update codebase**.
 - **Go to Definition (Cmd/Ctrl+click) goes to the source.** On a codebase name in a scratch file it opens that
   definition's document; in a definition's document every reference is a link, since ucm knows exactly where
   each one sits in the rendered text. (In VS Code, the extension's TypeScript plugin hides TypeScript's own

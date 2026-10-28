@@ -26,6 +26,8 @@ export interface Span {
   shorthand?: string;
   /** the span is the string literal of a dynamic `import("pkg")`: splicing writes a module specifier */
   literal?: boolean;
+  /** the span is a JSX tag (`<Counter />`): the definition is rendered, not called (metadata, not hashed) */
+  element?: boolean;
 }
 
 export interface Dep {
@@ -68,6 +70,8 @@ export interface DefRecord {
   table?: TableSchema;
   /** uses syntax Node's type stripping can't run: its generated module is compiled when loaded */
   transform?: boolean;
+  /** uses JSX, compiled to calls into this runtime (`npm:react@19.3.1`): its module is a `.tsx` file */
+  jsx?: string;
   /** the type-checking options it was checked under (strictness, lib, target); re-checks use the same */
   checked?: Record<string, unknown>;
 }

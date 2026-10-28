@@ -23,6 +23,7 @@ export function compilerOptions(): ts.CompilerOptions {
     erasableSyntaxOnly: true,
     verbatimModuleSyntax: true,
     allowImportingTsExtensions: true,
+    jsx: ts.JsxEmit.ReactJSX,
     skipLibCheck: true,
     typeRoots: ucmTypeRoots,
     types: ["node"],
@@ -79,6 +80,12 @@ export function projectCompilerOptions(tsconfig: string | undefined, mode: "scra
     if (!quiet && parsed.options[k] !== undefined && parsed.options[k] !== v) warnings.push(`${path.basename(tsconfig)}: ucm requires \`${k}\` = ${k === "module" || k === "moduleResolution" ? "NodeNext" : String(v)}, ignoring the project's setting`);
     (options as Record<string, unknown>)[k] = v;
   }
+  // JSX compiles to the automatic runtime (`react/jsx-runtime`, or the project's jsxImportSource), which generated
+  // modules import by pinned version
+  if (options.jsx !== ts.JsxEmit.ReactJSX && options.jsx !== ts.JsxEmit.ReactJSXDev) {
+    if (options.jsx !== undefined) warnings.push(`${path.basename(tsconfig)}: ucm compiles JSX with the automatic runtime (\`jsx\` = react-jsx), ignoring the project's setting`);
+    options.jsx = ts.JsxEmit.ReactJSX;
+  }
   // emit options mean nothing here (nothing is emitted), and some are invalid without the others
   for (const k of ["outDir", "declaration", "declarationMap", "emitDeclarationOnly", "isolatedDeclarations", "composite", "incremental", "tsBuildInfoFile", "sourceMap"]) delete options[k];
   return { options, warnings };
@@ -106,7 +113,7 @@ export function checkProfile(options: ts.CompilerOptions): CheckProfile {
 export function transpileForNode(source: string, fileName: string): string {
   return ts.transpileModule(source, {
     fileName,
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, preserveConstEnums: true, isolatedModules: true, verbatimModuleSyntax: false },
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, preserveConstEnums: true, isolatedModules: true, verbatimModuleSyntax: false, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
 }
 

@@ -8,11 +8,15 @@ import { spawn } from "node:child_process";
 
 export const CHROME = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => fs.existsSync(p));
 
-/**
- * Open `url` in a fresh headless Chrome and return the text of `selector` once `until` accepts it (or the last text
- * seen when `timeoutMs` runs out).
- */
-export async function pageText(url: string, selector: string, until: (text: string) => boolean, timeoutMs = 15000): Promise<string> {
+export interface Page {
+  /** evaluate an expression in the page (awaiting a promise), returning its JSON value */
+  evaluate<T = unknown>(expression: string): Promise<T>;
+  /** poll `expression` until `until` accepts its value; returns the last value seen */
+  waitFor<T = unknown>(expression: string, until: (v: T) => boolean, timeoutMs?: number): Promise<T>;
+}
+
+/** Open `url` in a fresh headless Chrome, run `fn` against it, then close Chrome. */
+export async function withPage<R>(url: string, fn: (page: Page) => Promise<R>): Promise<R> {
   if (!CHROME) throw new Error("no Chrome installed");
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "ucm-chrome-"));
   const chrome = spawn(CHROME, ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", `--user-data-dir=${profile}`, "--remote-debugging-port=0", "about:blank"]);
@@ -42,16 +46,26 @@ export async function pageText(url: string, selector: string, until: (text: stri
       });
     const { targetId } = (await send("Target.createTarget", { url })) as { targetId: string };
     const { sessionId } = (await send("Target.attachToTarget", { targetId, flatten: true })) as { sessionId: string };
-    let text = "";
-    for (const end = Date.now() + timeoutMs; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) {
-      const r = (await send("Runtime.evaluate", { expression: `document.querySelector(${JSON.stringify(selector)})?.textContent ?? ""`, returnByValue: true }, sessionId)) as {
-        result?: { value?: string };
-      };
-      text = r.result?.value ?? "";
-      if (until(text)) break;
+    const evaluate = async <T,>(expression: string): Promise<T> => {
+      const r = (await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }, sessionId)) as { result?: { value?: T } };
+      return r.result?.value as T;
+    };
+    const page: Page = {
+      evaluate,
+      async waitFor<T>(expression: string, until: (v: T) => boolean, timeoutMs = 15000) {
+        let v = undefined as T;
+        for (const end = Date.now() + timeoutMs; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) {
+          v = await evaluate<T>(expression);
+          if (until(v)) break;
+        }
+        return v;
+      },
+    };
+    try {
+      return await fn(page);
+    } finally {
+      sock.close();
     }
-    sock.close();
-    return text;
   } finally {
     // Chrome writes to its profile while shutting down: wait for it to exit before removing it
     const exited = new Promise((r) => chrome.once("exit", r));
@@ -59,4 +73,12 @@ export async function pageText(url: string, selector: string, until: (text: stri
     await Promise.race([exited, new Promise((r) => setTimeout(r, 3000))]);
     fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
+}
+
+/**
+ * Open `url` in a fresh headless Chrome and return the text of `selector` once `until` accepts it (or the last text
+ * seen when `timeoutMs` runs out).
+ */
+export function pageText(url: string, selector: string, until: (text: string) => boolean, timeoutMs = 15000): Promise<string> {
+  return withPage(url, (page) => page.waitFor<string>(`document.querySelector(${JSON.stringify(selector)})?.textContent ?? ""`, (t) => until(t ?? ""), timeoutMs).then((t) => t ?? ""));
 }

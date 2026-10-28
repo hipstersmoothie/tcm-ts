@@ -130,8 +130,8 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
   const request = (method: string, params?: unknown) => send({ id: `ucm-${nextId++}`, method, params });
   const message = (type: 1 | 2 | 3, text: string) => notify("window/showMessage", { type, message: text });
 
-  /** Only top-level `.ts` files of the codebase are scratch files, as for the watcher. */
-  const isScratch = (file: string) => !!cb && path.dirname(file) === cb.lay.root && file.endsWith(".ts") && !file.endsWith(".d.ts");
+  /** Only top-level `.ts`/`.tsx` files of the codebase are scratch files, as for the watcher. */
+  const isScratch = (file: string) => !!cb && path.dirname(file) === cb.lay.root && /\.tsx?$/.test(file) && !file.endsWith(".d.ts");
 
   const analyze = (doc: DocState, run: boolean) => {
     const c = cb!;
@@ -230,8 +230,8 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       else if (r.status === "doc") out.push(lens(at, `~ ${r.path}: ${r.note}`), lens(at, "Update codebase", "ucm.update", [doc.uri]));
       else if (r.status === "conflict") out.push(lens(at, `! ${r.path} is conflicted (${r.note}): ucm todo`));
       else {
-        const where = r.def.kind === "term" ? placement?.placeOf(r.def.hash) : undefined;
-        out.push(lens(at, `${r.path} ${short}${where && where.place !== "anywhere" ? ` · runs ${where.place === "server" ? "on the server" : "in the browser"}` : ""}`));
+        const where = r.def.kind === "term" ? placement?.label(r.def.hash) : undefined;
+        out.push(lens(at, `${r.path} ${short}${where ? ` · ${where}` : ""}`));
         if (isVsCode) out.push(lens(at, "Rename", "ucm.rename", [r.path]));
       }
       const t = s.tests.get(r.path);
@@ -260,8 +260,8 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     const names = c.store.pathsOf(hash);
     const lines = [`**${heading ?? (names.join(", ") || "(unnamed)")}** \`${shortHash(hash)}\``, "", "```ts", rec.kind === "type" ? `${rec.signature}` : `: ${rec.signature}`, "```"];
     if (rec.kind === "term") {
-      const p = new Placement(c).placeOf(hash);
-      lines.push(p.place === "anywhere" ? "Runs anywhere." : `Runs ${p.place === "server" ? "on the server" : "in the browser"}: it ${p.why}.`);
+      const d = new Placement(c).describe(hash);
+      lines.push(`${d[0]!.toUpperCase()}${d.slice(1)}.`);
     }
     const users = c.store.dependents(hash).filter((d) => c.store.pathsOf(d).length).length;
     lines.push(`${users} named dependent${users === 1 ? "" : "s"}${names.length > 1 ? ` · also named ${names.slice(1).join(", ")}` : ""}`);
@@ -374,7 +374,8 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       return r.ok;
     }
     if (command === "ucm.edit") {
-      const file = editFile();
+      const jsx = args.some((a) => { try { return c.lookup(String(a)).some((h) => c.store.getDef(h)?.jsx); } catch { return false; } });
+      const file = editFile(jsx ? ".tsx" : ".ts");
       const r = capture(() => tools.edit(c, args.map(String), file, false));
       if (!r.ok) message(1, r.output);
       return r.ok ? pathToFileURL(file).href : null;
@@ -412,10 +413,12 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
 
   const viewUri = (hash: string) => {
     const p = cb!.store.pathsOf(hash)[0];
-    return p ? `ucm:/${p.replaceAll(".", "/")}.ts` : `ucm:/@${hash}.ts`;
+    // JSX is only parsed (and highlighted) in a .tsx document
+    const ext = cb!.lookup(p ?? `#${hash}`).some((h) => cb!.store.getDef(h)?.jsx) ? ".tsx" : ".ts";
+    return p ? `ucm:/${p.replaceAll(".", "/")}${ext}` : `ucm:/@${hash}${ext}`;
   };
   const hashesOf = (uri: string): string[] => {
-    const p = decodeURIComponent(uri.replace(/^ucm:\/*/, "").replace(/[?#].*$/, "")).replace(/\.ts$/, "");
+    const p = decodeURIComponent(uri.replace(/^ucm:\/*/, "").replace(/[?#].*$/, "")).replace(/\.tsx?$/, "");
     try {
       return p.startsWith("@") ? cb!.lookup(`#${p.slice(1)}`) : cb!.lookup(p.replaceAll("/", "."));
     } catch {
@@ -436,8 +439,8 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     const placement = new Placement(c);
     const header = recs
       .map((r) => {
-        const where = r.kind === "term" ? placement.placeOf(r.hash) : undefined;
-        const runs = where && where.place !== "anywhere" ? ` · runs ${where.place === "server" ? "on the server" : "in the browser"}` : "";
+        const where = r.kind === "term" ? placement.label(r.hash) : "";
+        const runs = where ? ` · ${where}` : "";
         return `// ${c.store.pathsOf(r.hash).join(", ") || "(unnamed)"} ${shortHash(r.hash)}${runs}`;
       })
       .join("\n") + "\n";
@@ -768,11 +771,11 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       db.close();
     }
   };
-  /** A scratch file to edit in: scratch.ts if it's empty, else a fresh edit-N.ts. */
-  const editFile = () => {
+  /** A scratch file to edit in: scratch.ts if it's empty, else a fresh edit-N.ts (`.tsx` for JSX). */
+  const editFile = (ext = ".ts") => {
     const root = cb!.lay.root;
     for (let i = 0; ; i++) {
-      const f = path.join(root, i === 0 ? "scratch.ts" : i === 1 ? "edit.ts" : `edit-${i}.ts`);
+      const f = path.join(root, `${i === 0 ? "scratch" : i === 1 ? "edit" : `edit-${i}`}${ext}`);
       if (!fs.existsSync(f) || !fs.readFileSync(f, "utf8").trim()) return f;
     }
   };

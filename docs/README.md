@@ -14,7 +14,7 @@ New here? Read the [introduction](introduction.md), then follow [your first code
 | [Install](getting-started.md) | getting `ucm`, making a codebase, setting up your editor |
 | [Tutorial: first codebase](tutorial-codebase.md) | write, add, change, rename, undo, test and document code (15 minutes) |
 | [Tutorial: first app](tutorial-app.md) | a web app with a database, server and browser code, no API layer (10 minutes) |
-| [Examples](../examples/README.md) | a complete live polling app |
+| [Examples](../examples/README.md) | a live polling app, and a React notes app with server components |
 
 ## Guides
 
@@ -29,6 +29,7 @@ New here? Read the [introduction](introduction.md), then follow [your first code
 | [History and branches](history.md) | diffs, undo, branches and merging |
 | [Sharing code](sync.md) | pushing and pulling between codebases, running code on another machine |
 | [Web apps](apps.md) | how ucm splits an app between server and browser |
+| [React](react.md) | components, and server components without `"use client"` or `"use server"` |
 | [Server functions](server-api.md) | requests, cookies, sessions, errors, streaming, HTTP endpoints |
 | [Data](data.md) | typed tables, queries, changing a table's shape, transactions |
 | [Background jobs](jobs.md) | queued and recurring jobs |

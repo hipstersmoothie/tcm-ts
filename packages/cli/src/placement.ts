@@ -8,6 +8,13 @@
 // An async function that needs the server is a cut point: browser code calling it gets a stub that calls it by
 // hash, and the code around the call stays in the browser. So the boundary sits as deep as it can, and a
 // synchronous server function used from the browser is an error (a network call can't be synchronous).
+//
+// React components follow the same rules, plus React's own: a component that keeps state or handles events
+// (hooks, `onClick`) needs the browser, and an async component renders on the server. A JSX element is a cut
+// point in both directions: rendering `<Counter />` doesn't call Counter, so it doesn't pull Counter's needs into
+// the component rendering it. A server component used from the browser becomes a stub that fetches its rendered
+// tree by hash; a browser component rendered by a server component is sent as a reference to its hash, rendered
+// in the browser with the props the server gave it. No "use client", no "use server": the boundary is inferred.
 import fs from "node:fs";
 import path from "node:path";
 import { isBuiltin } from "node:module";
@@ -24,6 +31,31 @@ const DOM_GLOBALS = new Set([
 const isDomGlobal = (name: string) => DOM_GLOBALS.has(name) || /^(HTML|SVG)\w*Element$/.test(name);
 
 export type Place = "server" | "browser" | "anywhere";
+
+/** References to a definition other than as a JSX tag: calls, reads, passing it along. */
+function usesOf(rec: { spans: { hash?: string; pos: string; element?: boolean }[] }, self: string): Set<string> {
+  const out = new Set<string>();
+  for (const s of rec.spans) if (s.hash && s.hash !== self && s.pos === "value" && !s.element) out.add(s.hash);
+  return out;
+}
+
+/** React APIs that only work in a component instance the browser keeps alive: hooks, portals. */
+const isClientReactApi = (e: { module: string; export: string }) => /^npm:react(-dom)?@/.test(e.module) && /^(use[A-Z]\w*|use|createPortal|flushSync)$/.test(e.export);
+
+/** An `on…` attribute (`onClick={…}`): an event handler, which only exists in the browser. */
+function eventHandler(ir: IR): string | undefined {
+  if (typeof ir === "string") return undefined;
+  if (ir[0] === "JsxAttribute") {
+    const name = ir.find((x) => Array.isArray(x) && x[0] === "name") as IR[] | undefined;
+    const n = name?.[1] as IR[] | undefined;
+    if (n?.[0] === "N" && typeof n[1] === "string" && /^on[A-Z]/.test(n[1]) && ir.some((x) => Array.isArray(x) && x[0] === "initializer")) return n[1];
+  }
+  for (const c of ir) {
+    const found = eventHandler(c);
+    if (found) return found;
+  }
+  return undefined;
+}
 
 function globalsIn(ir: IR, out = new Set<string>()): Set<string> {
   if (typeof ir === "string") return out;
@@ -60,6 +92,12 @@ export interface AppState {
 export interface AppPlan {
   /** definitions shipped to the browser */
   browser: Set<string>;
+  /** server components the browser renders by fetching their rendered tree (they're among `endpoints`) */
+  components: Set<string>;
+  /** browser components server components render: sent as references, by hash */
+  clientRefs: Set<string>;
+  /** for each server component, the browser components its tree can contain */
+  refsOf: Map<string, Set<string>>;
   /** server functions the browser calls by hash: exactly the endpoints the app exposes */
   endpoints: Set<string>;
   /** components the browser receives as stubs instead of code */
@@ -86,6 +124,27 @@ export class Placement {
 
   private valueDeps(h: string): string[] {
     return (this.cb.store.getDef(h)?.deps ?? []).filter((d) => d.pos === "value" && d.ref.startsWith("#")).map((d) => d.ref.slice(1));
+  }
+
+  /** What `h` uses other than by rendering it as an element: these pull their needs into `h`. */
+  private usedBy(h: string): string[] {
+    const rec = this.cb.store.getDef(h);
+    return rec ? [...usesOf(rec, h)] : [];
+  }
+
+  /** A React component: a function with JSX in it, named like one (`Counter`). */
+  isComponent(h: string): boolean {
+    const rec = this.cb.store.getDef(h);
+    return !!rec && rec.kind === "term" && !!rec.jsx && /^[A-Z]/.test(rec.nameHint);
+  }
+
+  /** Renders on the server, so the browser fetches its rendered tree: needs the server, or is async. */
+  isServerComponent(h: string): boolean {
+    return this.isComponent(h) && !!this.needsServer(h) && !this.needsBrowser(h);
+  }
+
+  private isBrowserComponent(h: string): boolean {
+    return this.isComponent(h) && !!this.needsBrowser(h) && !this.needsServer(h);
   }
 
   /**
@@ -126,6 +185,8 @@ export class Placement {
       if (s.ext.module.startsWith("npm:") && this.isServerPackage(s.ext.module)) return `uses ${s.ext.module.slice(4)}, a server-side package`;
     }
     for (const g of globalsIn(JSON.parse(rec.ir) as IR)) if (NODE_GLOBALS.has(g)) return `uses ${g}`;
+    // React can't render an async component in the browser: it renders on the server, and its tree is sent
+    if (this.isComponent(h) && /^(<[^>]*>)?\(.*\) => Promise<.*>$/s.test(rec.signature)) return "is an async component";
     return undefined;
   }
 
@@ -133,6 +194,9 @@ export class Placement {
     const rec = this.cb.store.getDef(h);
     if (!rec || rec.kind === "type") return undefined;
     for (const g of globalsIn(JSON.parse(rec.ir) as IR)) if (isDomGlobal(g)) return `uses ${g}`;
+    for (const s of rec.spans) if (s.ext && s.pos === "value" && isClientReactApi(s.ext)) return `uses ${s.ext.export}`;
+    const handler = rec.jsx ? eventHandler(JSON.parse(rec.ir) as IR) : undefined;
+    if (handler) return `handles ${handler}`;
     return undefined;
   }
 
@@ -172,7 +236,7 @@ export class Placement {
       changed = false;
       for (const x of nodes) {
         if (memo.get(x)) continue;
-        const dep = this.valueDeps(x).find((d) => memo.get(d) && propagates(d));
+        const dep = this.usedBy(x).find((d) => memo.get(d) && propagates(d));
         if (dep) {
           memo.set(x, `uses ${this.name(dep)}, which ${memo.get(dep)!}`);
           changed = true;
@@ -202,16 +266,38 @@ export class Placement {
     return { place: "anywhere" };
   }
 
+  /** Where `h` runs and why, as a sentence ("runs on the server: it uses node:fs"); components "render". */
+  describe(h: string): string {
+    const p = this.placeOf(h);
+    const component = this.isComponent(h);
+    const verb = component ? "renders" : "runs";
+    if (p.place === "anywhere") return component ? "renders anywhere: on the server inside server components, in the browser otherwise" : "runs anywhere";
+    const where = `${verb} ${p.place === "server" ? "on the server" : "in the browser"}: it ${p.why}${p.conflict ? `; but ${p.conflict}` : ""}`;
+    if (p.place === "server" && component && !p.conflict) return `${where}; the browser fetches its rendered tree by hash`;
+    if (p.place === "server" && this.crossable(h)) return `${where}; browser code calls it by hash`;
+    return where;
+  }
+
+  /** `runs on the server`, `renders in the browser`, or nothing for code that runs anywhere: for short labels. */
+  label(h: string): string {
+    const p = this.placeOf(h);
+    if (p.place === "anywhere") return "";
+    return `${this.isComponent(h) ? "renders" : "runs"} ${p.place === "server" ? "on the server" : "in the browser"}`;
+  }
+
   /** The sync server dependencies that pull `h` onto the server: `[dep, its dep, ..., the one using Node]`. */
   private culprit(h: string): string[] {
     if (this.directServer(h)) return [];
-    const d = this.valueDeps(h).find((x) => this.needsServer(x) && !this.crossable(x));
+    const d = this.usedBy(h).find((x) => this.needsServer(x) && !this.crossable(x));
     return d ? [d, ...this.culprit(d)] : [];
   }
 
   /** Explain why browser code `h` got pulled onto the server, naming the function to make async. */
   private explainPull(h: string, via: string): string {
     const chain = this.culprit(h);
+    if (!chain.length && this.isComponent(h)) {
+      return `${via}: ${this.name(h)} renders on the server (it ${this.directServer(h)}) but ${this.needsBrowser(h)}, which only works in the browser; move that part into a component of its own, and render it from ${this.name(h)}.`;
+    }
     if (!chain.length) return `${via}: ${this.name(h)} uses Node (it ${this.directServer(h)}) and the DOM (it ${this.needsBrowser(h)}); split it into a server part and a browser part.`;
     const sync = chain[0]!;
     const path = chain.map((x) => this.name(x)).join(" → ");
@@ -223,11 +309,40 @@ export class Placement {
 
   /** What a browser app rooted at `entry` ships, which server functions it calls, and what's wrong with it. */
   planApp(entry: string): AppPlan {
-    const plan: AppPlan = { browser: new Set(), endpoints: new Set(), stubbed: new Set(), streaming: new Set(), errors: [], state: { server: [], browser: [], both: [] } };
+    const plan: AppPlan = {
+      browser: new Set(), components: new Set(), clientRefs: new Set(), refsOf: new Map(), endpoints: new Set(), stubbed: new Set(), streaming: new Set(), errors: [],
+      state: { server: [], browser: [], both: [] },
+    };
+    // a server component's tree, followed on the server: browser components it renders become references, and
+    // their code ships to the browser
+    const serverTree = (root: string, chain: string[]) => {
+      const refs = new Set<string>();
+      plan.refsOf.set(root, refs);
+      const seen = new Set<string>();
+      const walk = (x: string) => {
+        if (seen.has(x)) return;
+        seen.add(x);
+        for (const d of this.valueDeps(x)) {
+          if (this.isBrowserComponent(d)) {
+            refs.add(d);
+            plan.clientRefs.add(d);
+            visit(d, [...chain, this.name(root)]);
+          } else walk(d);
+        }
+      };
+      walk(root);
+    };
     const visit = (h: string, chain: string[]) => {
       if (plan.browser.has(h) || plan.endpoints.has(h)) return;
       const via = [...chain, this.name(h)].join(" → ");
       const server = this.needsServer(h);
+      if (server && this.isServerComponent(h)) {
+        plan.endpoints.add(h);
+        plan.components.add(h);
+        plan.stubbed.add(this.cb.store.getDef(h)!.componentHash);
+        serverTree(h, chain);
+        return;
+      }
       if (server) {
         if (!this.crossable(h)) {
           plan.errors.push(
@@ -249,7 +364,7 @@ export class Placement {
       plan.browser.add(h);
       for (const d of this.valueDeps(h)) visit(d, [...chain, this.name(h)]);
     };
-    if (this.needsServer(entry) && !this.crossable(entry)) {
+    if (this.needsServer(entry) && !this.crossable(entry) && !this.isServerComponent(entry)) {
       plan.errors.push(`${this.name(entry)} runs on the server (it ${this.needsServer(entry)}), so it can't be the browser app's entry point.`);
       return plan;
     }

@@ -262,7 +262,7 @@ async function activate(context) {
     { command, args: [...args, "lsp"], options: { cwd: folder } },
     {
       // scratch files, and the codebase's own documents
-      documentSelector: [{ scheme: "file", language: "typescript" }, { scheme: "ucm" }],
+      documentSelector: [{ scheme: "file", language: "typescript" }, { scheme: "file", language: "typescriptreact" }, { scheme: "ucm" }],
       middleware: {
         // ucm add/update save what's on disk: save the file first, and default to the active editor's file
         executeCommand: async (cmd, cmdArgs, next) => {

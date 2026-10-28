@@ -51,7 +51,12 @@ a [web app](apps.md).
 ## Types
 
 If a package has no types of its own, install its `@types` package, as you would anyway: ucm typechecks
-everything you add. `@types/node` comes with ucm, so Node's builtins are typed out of the box.
+everything you add. ucm installs the same `@types` version beside the pinned package (React's types for
+`react@19.3.1`, say), so generated modules and re-checks see the types you wrote against. `@types/node` comes
+with ucm, so Node's builtins are typed out of the box.
+
+A package another one installs as a peer (React DOM's `react`) is linked to the pinned copy at the same version,
+so there's one instance of it: React's hooks need that.
 
 ## Packages in web apps
 

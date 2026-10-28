@@ -33,7 +33,7 @@ function registerTransformHook() {
   transformRegistered = true;
   registerHooks({
     load(url, context, nextLoad) {
-      if (url.startsWith("file:") && url.endsWith(".ts")) {
+      if (url.startsWith("file:") && (url.endsWith(".ts") || url.endsWith(".tsx"))) {
         const source = fs.readFileSync(new URL(url), "utf8");
         if (source.startsWith(TRANSFORM_MARK)) return { format: "module", source: transpileForNode(source, url), shortCircuit: true };
       }
@@ -50,10 +50,10 @@ import { readFileSync } from "node:fs";
 import ts from ${JSON.stringify(typescript)};
 registerHooks({
   load(url, context, nextLoad) {
-    if (url.startsWith("file:") && url.endsWith(".ts")) {
+    if (url.startsWith("file:") && (url.endsWith(".ts") || url.endsWith(".tsx"))) {
       const source = readFileSync(new URL(url), "utf8");
       if (source.startsWith(${JSON.stringify(TRANSFORM_MARK)})) {
-        const out = ts.transpileModule(source, { fileName: url, compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, preserveConstEnums: true, isolatedModules: true, verbatimModuleSyntax: false } });
+        const out = ts.transpileModule(source, { fileName: url, compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, preserveConstEnums: true, isolatedModules: true, verbatimModuleSyntax: false, jsx: ts.JsxEmit.ReactJSX } });
         return { format: "module", source: out.outputText, shortCircuit: true };
       }
     }
@@ -63,7 +63,7 @@ registerHooks({
 `;
 }
 import { Store } from "@ucm/store";
-import { ensureExternals, layout, materialize, render, writeIfChanged, writeShim, type DefSource, type Layout } from "@ucm/loader";
+import { ensureExternals, layout, materialize, moduleFile, render, writeIfChanged, writeShim, type DefSource, type Layout } from "@ucm/loader";
 import { serverApiFiles } from "./server-api.ts";
 
 /** A dotted codebase name: `lib.util.sort`. */
@@ -109,6 +109,11 @@ export class Codebase {
     }
   }
 
+  /** The cache module of a component: `.tsx` when it uses JSX. */
+  modulePath(componentHash: string): string {
+    return path.join(this.lay.cacheDir, moduleFile(componentHash, { members: (c) => this.store.componentMembers(c) }));
+  }
+
   static init(root: string): Codebase {
     fs.mkdirSync(path.join(root, ".ucm", "cache"), { recursive: true });
     fs.writeFileSync(
@@ -138,11 +143,12 @@ export class Codebase {
         erasableSyntaxOnly: true,
         verbatimModuleSyntax: true,
         allowImportingTsExtensions: true,
+        jsx: "react-jsx",
         skipLibCheck: true,
         typeRoots: ucmTypeRoots,
         types: ["node"],
       };
-      fs.writeFileSync(tsconfig, JSON.stringify({ compilerOptions: options, include: ["*.ts"] }, null, 2) + "\n");
+      fs.writeFileSync(tsconfig, JSON.stringify({ compilerOptions: options, include: ["*.ts", "*.tsx"] }, null, 2) + "\n");
     }
     const cb = new Codebase(root);
     cb.refreshShim(true);
@@ -278,7 +284,7 @@ export class Codebase {
     for (const c of comps) {
       const members = src.members(c);
       const r = render(members, src, this.lay, { style: "internal" });
-      const file = path.join(this.lay.cacheDir, `_verify_${c}.ts`);
+      const file = path.join(this.lay.cacheDir, `_verify_${moduleFile(c, src)}`);
       fs.writeFileSync(file, r.text);
       expected.set(file, new Map([...r.memberNames].map(([h, n]) => [n, h])));
       records.set(file, new Map([...r.memberNames].map(([h, n]) => [n, src.get(h)!])));
@@ -360,7 +366,7 @@ export class Codebase {
     const src = this.source(fresh);
     const reject = (why: string): never => {
       // cache modules rendered from rejected definitions must not linger under hashes they don't have
-      for (const c of byComp.keys()) fs.rmSync(path.join(this.lay.cacheDir, `${c}.ts`), { force: true });
+      for (const c of byComp.keys()) for (const ext of [".ts", ".tsx"]) fs.rmSync(path.join(this.lay.cacheDir, `${c}${ext}`), { force: true });
       throw new Error(`rejected definitions: ${why}`);
     };
     let r: ReturnType<Codebase["rehash"]> | undefined;
@@ -496,7 +502,7 @@ export class Codebase {
       materialize(deps, src, lay);
       ensureExternals(lay, members.flatMap((m) => m.spans.flatMap((s) => (s.ext ? [s.ext] : []))));
       const rendered = render(members, src, lay, { style: "internal", remap: resolve });
-      const tmp = path.join(lay.cacheDir, `_update_${c}.ts`);
+      const tmp = path.join(lay.cacheDir, `_update_${moduleFile(c, src)}`);
       fs.writeFileSync(tmp, rendered.text);
       // untyped npm packages are fine here: the definition was already checked against their types when added
       const salts = this.storedSalts(new Map([[tmp, new Map([...rendered.memberNames].map(([h, n]) => [n, src.get(h)!]))]]));

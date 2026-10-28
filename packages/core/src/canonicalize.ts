@@ -35,9 +35,6 @@ const REJECTED: Partial<Record<ts.SyntaxKind, string>> = {
   [ts.SyntaxKind.Decorator]: "decorators are not supported by Node's type stripping",
   [ts.SyntaxKind.ImportEqualsDeclaration]: "`import x = require()` is not supported",
   [ts.SyntaxKind.ImportType]: "`import(\"...\")` types are not content-addressable; use `import type` at the top of the file",
-  [ts.SyntaxKind.JsxElement]: "JSX is not supported",
-  [ts.SyntaxKind.JsxSelfClosingElement]: "JSX is not supported",
-  [ts.SyntaxKind.JsxFragment]: "JSX is not supported",
 };
 
 /** What an identifier denotes. */
@@ -57,6 +54,7 @@ export interface RawSpan {
   target: { def: number } | { hash: string } | { ext: ExtRef };
   shorthand?: string;
   literal?: boolean;
+  element?: boolean;
 }
 
 export interface SiteResult {
@@ -72,6 +70,8 @@ export interface SiteResult {
   globals: Set<string>;
   /** top-level `let`s it assigns to: it must share their module, since an imported binding is read-only */
   writes: Set<number>;
+  /** uses JSX: the runtime its elements compile to (`npm:react@19.3.1`), pinned like an import */
+  jsx?: string;
 }
 
 export type Meaning = "type" | "value";
@@ -108,6 +108,8 @@ export interface CanonContext {
   declToDef: Map<ts.Node, number>;
   classifyImport(decl: ts.ImportSpecifier | ts.ImportClause | ts.NamespaceImport, meaning: Meaning): Resolved;
   classifyDynamicImport(spec: string, at: ts.Node): ExtRef;
+  /** the package JSX compiles to calls of (`<jsxImportSource>/jsx-runtime`), as resolved from `at` */
+  jsxRuntime(at: ts.Node): ExtRef;
 }
 
 const IDENT_NAME = /^[A-Za-z_$][\w$]*$/;
@@ -133,7 +135,33 @@ function isStructuralName(id: ts.Identifier): boolean {
   if (ts.isLabeledStatement(p) || ts.isBreakStatement(p) || ts.isContinueStatement(p)) return p.label === id;
   if (ts.isMetaProperty(p)) return true;
   if (ts.isNamedTupleMember(p)) return p.name === id;
+  // `<div className>`: an intrinsic element and its attributes are names, not references
+  if (ts.isJsxAttribute(p)) return p.name === id;
+  if (ts.isJsxNamespacedName(p)) return true;
+  if (ts.isJsxOpeningElement(p) || ts.isJsxSelfClosingElement(p) || ts.isJsxClosingElement(p)) return p.tagName === id && isIntrinsicTag(id.text);
   return false;
+}
+
+/** `Counter` in `<Counter>`, `</Counter>`, `<Counter />` */
+function isJsxTag(n: ts.Node): boolean {
+  const p = n.parent;
+  return !!p && (ts.isJsxOpeningElement(p) || ts.isJsxSelfClosingElement(p) || ts.isJsxClosingElement(p)) && p.tagName === n;
+}
+
+/** TypeScript's rule: a lowercase or dashed tag is an intrinsic element (`div`, `my-widget`), anything else a value. */
+const isIntrinsicTag = (name: string) => /^[a-z]/.test(name) || name.includes("-");
+
+/**
+ * Text between JSX tags as React sees it: each line trimmed, blank lines dropped, lines joined with a space. So
+ * reformatting markup hashes the same, and whitespace React keeps (`a <b/>`) still counts.
+ */
+function jsxText(raw: string): string {
+  const lines = raw.split(/\r\n|\n|\r/);
+  if (lines.length === 1) return raw;
+  return lines
+    .map((l, i) => (i === 0 ? l.trimEnd() : i === lines.length - 1 ? l.trimStart() : l.trim()))
+    .filter((l) => l !== "")
+    .join(" ");
 }
 
 const NAMING_ASSIGNMENTS = new Set([
@@ -221,6 +249,7 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
   const edges = new Map<number, boolean>();
   const writes = new Set<number>();
   let transform = false;
+  let jsx: string | undefined;
   const globals = new Set<string>();
   const ACCESSIBILITY = new Set([ts.SyntaxKind.PublicKeyword, ts.SyntaxKind.PrivateKeyword, ts.SyntaxKind.ProtectedKeyword, ts.SyntaxKind.ReadonlyKeyword, ts.SyntaxKind.OverrideKeyword]);
 
@@ -303,7 +332,7 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
     }
     const pos: RefPos = site.kind === "type" || isTypePosition(at) ? "type" : "value";
     const strict = pos === "value" && !isDeferred(at, site.nodes);
-    const base = { start: at.getStart(sf), end: at.end, pos, strict, shorthand };
+    const base = { start: at.getStart(sf), end: at.end, pos, strict, shorthand, ...(isJsxTag(at) ? { element: true } : {}) };
     switch (r.kind) {
       case "def":
         spans.push({ ...base, target: { def: r.def } });
@@ -328,7 +357,8 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
       },
       (arr) => {
         // only the definition's own `export` is dropped: inside a namespace, `export` changes what the code means
-        const kids = arr.filter((c) => !(atRoot(node) && isSkippedModifier(c)));
+        // and indentation between JSX tags, which React drops: `<a><b /></a>` hashes like its multi-line layout
+        const kids = arr.filter((c) => !(atRoot(node) && isSkippedModifier(c)) && !(ts.isJsxText(c) && jsxText(c.text) === ""));
         // `export function f` and `function f` must hash the same: drop a modifier list emptied by stripping
         if (kids.length === 0 && ts.canHaveModifiers(node) && node.modifiers === arr) return;
         out.push([slotOf(node, arr), ["[", ...kids.map(visit)]]);
@@ -351,6 +381,17 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
         const ref = refIR(classifySymbol(checker.getSymbolAtLocation(id), id, id.text), id, id.text);
         return isNamingPosition(id) ? ["Named", id.text, ref] : ref;
       }
+      case ts.SyntaxKind.JsxText:
+        return ["JsxText", jsxText((node as ts.JsxText).text)];
+      case ts.SyntaxKind.JsxElement:
+      case ts.SyntaxKind.JsxSelfClosingElement:
+      case ts.SyntaxKind.JsxFragment:
+        // elements compile to calls into a runtime package: pinned (and installed) like an import of it
+        if (jsx === undefined) {
+          const e = ctx.jsxRuntime(node);
+          jsx = e.module;
+        }
+        break;
       case ts.SyntaxKind.PrivateIdentifier:
         return ["PN", (node as ts.PrivateIdentifier).text];
       case ts.SyntaxKind.StringLiteral:
@@ -467,7 +508,8 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
 
   // the salt gives separately declared definitions separate identities, even when their code is identical
   const head: IR[] = site.salt === undefined ? ["Def", site.tag] : ["Def", site.tag, ["Salt", site.salt]];
-  const ir: IR = [...head, ...site.nodes.map(visit)];
+  const body = site.nodes.map(visit);
+  const ir: IR = [...head, ...(jsx ? [["Jsx", jsx] as IR] : []), ...body];
   if (site.tag === "Enum" || site.tag === "Namespace") transform = true;
-  return { ir, spans, reserved, edges, transform, globals, writes };
+  return { ir, spans, reserved, edges, transform, globals, writes, ...(jsx ? { jsx } : {}) };
 }

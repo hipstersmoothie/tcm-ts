@@ -85,7 +85,7 @@ export function migrate(root: string): boolean {
     ensureExternals(cb.lay, members.flatMap((m) => m.spans.flatMap((s) => (s.ext ? [s.ext] : []))));
     // keep every identifier as written, so the stored source text survives migration unchanged
     const rendered = render(members, src, cb.lay, { style: "internal", remap: (h) => map.get(h) ?? h, preserveText: true });
-    const tmp = path.join(cb.lay.cacheDir, `_migrate_${c}.ts`);
+    const tmp = path.join(cb.lay.cacheDir, `_migrate_${c}${members.some((m) => m.jsx) ? ".tsx" : ".ts"}`);
     fs.writeFileSync(tmp, rendered.text);
     const byName = new Map([...rendered.memberNames].map(([h, n]) => [n, members.find((m) => m.hash === h)!]));
     const a = cb.analyzeProject(
