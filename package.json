@@ -12,7 +12,8 @@
     "compare-ts": "scripts/compare-ts-versions.sh",
     "build": "node scripts/build.ts",
     "test:package": "scripts/test-package.sh",
-    "docs:site": "node scripts/docs-site.ts"
+    "docs:site": "node scripts/docs-site.ts",
+    "docs:dev": "node scripts/docs-dev.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

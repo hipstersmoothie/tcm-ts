@@ -11,7 +11,7 @@ packages/
             #ucm/server runtime, the wire codec
 editors/    vscode/: the VS Code extension (a thin client for `ucm lsp`; not part of the npm package)
 examples/   polls/: an example app, built and run in a browser by packages/cli/test/examples.test.ts
-scripts/    build.ts (npm package), docs-site.ts, selfhost.sh, test-package.sh, compare-ts-versions.sh
+scripts/    build.ts (npm package), docs-site.ts, docs-dev.ts, selfhost.sh, test-package.sh, compare-ts-versions.sh
 docs/       user documentation, one page per feature area
 ```
 
@@ -27,6 +27,7 @@ written to `.ucm/cache/ucm-server.js`. It must stay self-contained: everything i
 | `pnpm typecheck` | typecheck the repo |
 | `pnpm selfhost` | the self-hosting check below |
 | `pnpm test:package` | pack and install the npm package, then run every suite against the installed copy |
+| `pnpm docs:dev` | serve the docs site locally (port 4321, or the next free one), rebuilding and reloading open pages when `docs/` or `examples/` change |
 | `pnpm docs:site` | build the docs site (`docs/*.md` and the examples page) into `dist/site`; it fails on any broken link or anchor |
 | `pnpm compare-ts 5.8` | re-hash the repo and the golden corpus on another TypeScript version; hashes must match |
 
