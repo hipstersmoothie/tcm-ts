@@ -134,6 +134,7 @@ export class Store {
         sig.run(r.hash, r.signature, tsVersion);
         if (r.doc) meta.run(r.hash, "doc", r.doc);
         if (r.params) meta.run(r.hash, "params", JSON.stringify(r.params));
+        if (r.shape) meta.run(r.hash, "shape", JSON.stringify(r.shape));
         if (r.table) meta.run(r.hash, "table", JSON.stringify(r.table));
         if (r.transform) meta.run(r.hash, "transform", "1");
         if (r.checked) meta.run(r.hash, "checked", JSON.stringify(r.checked));
@@ -158,7 +159,7 @@ export class Store {
   getDef(hash: string): DefRecord | undefined {
     const row = this.db
       .prepare(
-        `SELECT d.*, c.size, s.display, m.value AS doc, p.value AS params, t.value AS table_schema, x.value AS transform, k.value AS checked, g.value AS globals FROM definitions d
+        `SELECT d.*, c.size, s.display, m.value AS doc, p.value AS params, t.value AS table_schema, x.value AS transform, k.value AS checked, g.value AS globals, sh.value AS shape FROM definitions d
          JOIN components c ON c.hash = d.component_hash
          LEFT JOIN signatures s ON s.hash = d.hash
          LEFT JOIN metadata m ON m.hash = d.hash AND m.key = 'doc'
@@ -167,6 +168,7 @@ export class Store {
          LEFT JOIN metadata x ON x.hash = d.hash AND x.key = 'transform'
          LEFT JOIN metadata k ON k.hash = d.hash AND k.key = 'checked'
          LEFT JOIN metadata g ON g.hash = d.hash AND g.key = 'globals'
+         LEFT JOIN metadata sh ON sh.hash = d.hash AND sh.key = 'shape'
          WHERE d.hash = ?`,
       )
       .get(hash) as Row | undefined;
@@ -201,6 +203,7 @@ export class Store {
       signature: (row.display as string | null) ?? "?",
       doc: (row.doc as string | null) ?? undefined,
       params: row.params ? JSON.parse(row.params as string) : undefined,
+      ...(row.shape ? { shape: JSON.parse(row.shape as string) } : {}),
       table: row.table_schema ? JSON.parse(row.table_schema as string) : undefined,
       ...(row.transform ? { transform: true } : {}),
       ...(row.checked ? { checked: JSON.parse(row.checked as string) } : {}),

@@ -1,4 +1,5 @@
 import type { ParamsSchema, TableSchema } from "./schema.ts";
+import type { TypeShape } from "./shape.ts";
 
 export type DefKind = "term" | "type" | "class";
 export type InitKind = "hoisted" | "strict";
@@ -59,6 +60,8 @@ export interface DefRecord {
   doc?: string;
   /** runtime schema of a function's parameters (metadata, not hashed): checks arguments arriving from browsers */
   params?: ParamsSchema;
+  /** a term's type as structure, codebase types by hash (metadata, not hashed): for searching by type */
+  shape?: TypeShape;
   /** for `const x = table<T>(...)`: the row type's schema (metadata, not hashed); attached to the value at runtime */
   table?: TableSchema;
   /** uses syntax Node's type stripping can't run: its generated module is compiled when loaded */

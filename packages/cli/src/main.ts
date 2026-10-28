@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { checkValue, isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from "@ucm/core";
+import { checkValue, isConflicted, matchShapes, queryShape, sameSpace, shortHash, type DefKind, type DefRecord } from "@ucm/core";
 import { decode } from "./codec.ts";
 import { inspect } from "node:util";
 import { DatabaseSync } from "node:sqlite";
@@ -339,14 +339,50 @@ function ls(cb: Codebase, ns = "") {
 }
 
 function find(cb: Codebase, query: string) {
-  const sigOnly = query.startsWith(":");
-  const q = (sigOnly ? query.slice(1) : query).trim().toLowerCase();
-  const hits = cb.store.names().filter((n) => {
-    const sig = cb.store.getDef(n.hash)!.signature.toLowerCase();
-    return sigOnly ? sig.includes(q) : n.path.toLowerCase().includes(q) || sig.includes(q);
-  });
+  if (query.trim().startsWith(":")) return findByType(cb, query.trim().slice(1));
+  const q = query.trim().toLowerCase();
+  const hits = cb.store.names().filter((n) => n.path.toLowerCase().includes(q) || cb.store.getDef(n.hash)!.signature.toLowerCase().includes(q));
   if (!hits.length) return console.log(dim("no matches"));
   for (const n of hits) console.log(`${bold(n.path)}  ${dim(shortHash(n.hash))}  ${dim(cb.store.getDef(n.hash)!.signature)}`);
+}
+
+/** The most distant match worth listing: a few reorderings, specializations or awaits away. */
+const MAX_MATCH_COST = 6;
+
+/**
+ * `ucm find ':<type>'`: terms whose type has that shape, as Unison searches by type. Codebase types in the query
+ * are found by name; names that aren't types become type variables. Exact matches (up to renaming) come first,
+ * then ones with arguments reordered, a Promise result, or a more general or more specific type.
+ */
+function findByType(cb: Codebase, text: string) {
+  if (!text.trim()) throw new UsageError("find :<type>, e.g. ucm find ':(xs: T[]) => T'");
+  const names = cb.store.names();
+  const types = names.filter((n) => n.kind !== "term");
+  const resolve = (name: string) => {
+    const hits = types.filter((n) => n.path === name || n.path.endsWith(`.${name}`));
+    const exact = hits.filter((n) => n.path === name);
+    const pick = exact.length ? exact : hits;
+    const paths = [...new Set(pick.map((n) => n.path))];
+    if (paths.length > 1) throw new UsageError(`'${name}' in the query could be ${paths.join(", ")}; write the one you mean`);
+    if (!paths.length) return undefined;
+    const segs = paths[0]!.split(".");
+    return { module: ["#codebase", ...segs.slice(0, -1)].join("/"), export: segs.at(-1)! };
+  };
+  cb.refreshShim();
+  const q = queryShape(text, path.join(cb.lay.ucmDir, "query.ts"), cb.compilerOptions(), resolve);
+  const terms = names.filter((n) => n.kind === "term");
+  cb.ensureShapes(terms.map((n) => n.hash));
+  const hits = terms
+    .map((n) => ({ ...n, def: cb.store.getDef(n.hash)! }))
+    .map((n) => ({ ...n, m: n.def.shape ? matchShapes(q.shape, n.def.shape) : undefined }))
+    .filter((n) => n.m && n.m.cost <= MAX_MATCH_COST)
+    .sort((a, b) => a.m!.cost - b.m!.cost || (a.path < b.path ? -1 : 1));
+  if (q.variables.length) console.log(dim(`type variables: ${q.variables.join(", ")}`));
+  if (!hits.length) return console.log(dim("no matches"));
+  for (const n of hits) {
+    const how = n.m!.cost === 0 ? "" : `  ${yellow(n.m!.notes.join(", "))}`;
+    console.log(`${bold(n.path)}  ${dim(shortHash(n.hash))}  ${dim(n.def.signature)}${how}`);
+  }
 }
 
 function deps(cb: Codebase, target: string) {
@@ -568,7 +604,8 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
   ucm migrate                    rebuild a codebase written with an older hash format (keeps a backup)
   ucm view <name|#hash>...       show definitions with current names
   ucm ls [namespace]             list names
-  ucm find <query>               search names and signatures (\`:query\` for signatures only)
+  ucm find <query>               search names and signature text
+  ucm find ':<type>'             search by type, e.g. ':(xs: T[]) => T' (unknown names are type variables)
   ucm deps <name> / dependents <name>
   ucm run <name> [args...]       run a definition (functions are called with args)
   ucm edit <name>... [--file f] [--force]   write definitions to a scratch file for editing

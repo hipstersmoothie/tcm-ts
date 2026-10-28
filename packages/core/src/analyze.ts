@@ -9,6 +9,7 @@ import { checkProfile, createProgram, fileDiagnostics, type Diagnostic } from ".
 import { depRef, type DefRecord, type Dep, type ExtRef, type Span } from "./types.ts";
 import { paramsSchema, typeSchema, type ParamsSchema, type TableSchema } from "./schema.ts";
 import { createHash } from "node:crypto";
+import { cacheRefOf, shapeBuilder, type TypeShape } from "./shape.ts";
 
 export interface AnalyzeHost {
   /** absolute path of `.ucm/cache`; relative imports into it address definitions by hash */
@@ -435,7 +436,19 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
     };
   };
 
-  const defs = sites.map((s) => toRecord(s, ok[s.id]!, hashOf.get(s.id)!, placed.get(s.id)!));
+  // a type a definition mentions is a codebase type if it's one of these definitions, or a stored one
+  const cacheRef = cacheRefOf(checker);
+  const shapes = shapeBuilder(checker, (sym) => {
+    const d = sym.declarations?.[0];
+    const id = d && declToDef.get(d);
+    return id !== undefined ? hashOf.get(id) : cacheRef(sym);
+  });
+  const shapeOf = (site: DefSite): TypeShape | undefined => {
+    if (site.kind !== "term" || site.isWatch || !site.nameNode) return undefined;
+    const sym = checker.getSymbolAtLocation(site.nameNode);
+    return sym ? shapes.typeShape(checker.getTypeOfSymbolAtLocation(sym, site.nameNode)) : undefined;
+  };
+  const defs = sites.map((s) => ({ ...toRecord(s, ok[s.id]!, hashOf.get(s.id)!, placed.get(s.id)!), shape: shapeOf(s) }));
 
   const watches = watchSites.map((s) => {
     const r = canonicalizeSite(s, ctx);

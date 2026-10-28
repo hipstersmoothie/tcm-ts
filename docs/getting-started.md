@@ -53,6 +53,7 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
    whose path isn't `<namespace>.<declared name>` gets a `// ucm: path a.b.c` comment, so `update` binds it
    back to the same path. You can write those comments yourself too.
 5. **Browse.** `ucm view`, `ls`, `find`, `deps`, `dependents` and `docs` render code with the *current* names.
+   `ucm find ':(xs: T[]) => T'` searches by type ([search](search.md)).
    `ucm mv`, `alias` and `rm` change names and never touch code.
 
 Leading JSDoc on a definition is stored as its documentation (`ucm docs <name>`); it isn't part of the hash.

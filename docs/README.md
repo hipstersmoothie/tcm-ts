@@ -9,6 +9,7 @@ tables.
 |---|---|
 | [Getting started](getting-started.md) | install, `ucm init`, scratch files, the watcher, adding and updating |
 | [CLI reference](cli.md) | every command and flag |
+| [Searching](search.md) | `ucm find` by name, and by type the way Unison does |
 | [Definitions and hashing](hashing.md) | what a definition is, how it's hashed, identity, the frozen IR format |
 | [Storage and execution](execution.md) | the SQLite store, the generated cache, npm packages, running code |
 | [Compiler options](compiler-options.md) | which tsconfig options are used or forced, check profiles |

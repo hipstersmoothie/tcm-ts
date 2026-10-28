@@ -24,6 +24,8 @@ ucm add           # save new definitions from scratch.ts
 - **A content-addressed codebase.** Scratch files are ordinary TypeScript. `ucm add`/`update` store
   definitions by hash; updates re-hash dependents automatically, and what stops typechecking goes to `todo`.
   [Getting started](docs/getting-started.md) · [hashing](docs/hashing.md) · [CLI](docs/cli.md)
+- **Search by type,** as in Unison: `ucm find ':(xs: T[]) => T'` finds matches up to renaming, reordered
+  arguments, `async` results, and more general or specific types. [Search](docs/search.md)
 - **Real projects import as they are.** neverthrow, ts-pattern and valibot import, verify and run.
   [Importing](docs/importing.md)
 - **History by meaning.** Diffs ignore renames and reformatting; three-way merge of names; undo anything.

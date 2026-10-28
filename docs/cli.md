@@ -15,7 +15,8 @@
 | `ucm edit <name>... [--file f] [--force]` | write definitions to a scratch file for editing, with references following any updates |
 | `ucm view <name\|#hash>...` | show definitions, rendered with current names, with their placement for app code |
 | `ucm ls [namespace]` | list names |
-| `ucm find <query>` | search names and signatures; `:query` searches signatures only (as text) |
+| `ucm find <query>` | search names and signature text |
+| `ucm find ':<type>'` | search by type: `':(xs: T[]) => T'`; unknown names are type variables ([search](search.md)) |
 | `ucm deps <name>` / `ucm dependents <name>` | what a definition uses / what uses it |
 | `ucm docs <name>` | show a definition's documentation (its leading JSDoc) |
 | `ucm run <name> [args...]` | run a definition. Functions are called with the args; the result is awaited and printed |

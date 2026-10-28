@@ -2,8 +2,9 @@
 
 What isn't done yet, or is deliberately out of scope:
 
-- **Structural type search.** `find` searches signature *text*; searching by type shape (signature IR) isn't
-  built.
+- **Signatures are shown as first written.** `ucm view` and `find` show a definition's signature text from when
+  it was added, so after `ucm mv` of a type it can show the old name. (Type *search* matches by hash and isn't
+  affected.)
 - **The watcher** uses `createProgram` with `oldProgram` reuse, not a LanguageService, and watch results
   aren't cached by hash.
 - **`import.meta`** is location-dependent: it's evaluated inside `.ucm/cache`, so ucm warns about it.

@@ -318,6 +318,15 @@ export class Codebase {
     for (const [h, d] of r.defs) if (d.params && d.hash === h) this.store.setMetadata(h, "params", JSON.stringify(d.params));
   }
 
+  /** Make sure these terms have type shapes, for `find` by type (older definitions get them by re-analysis). */
+  ensureShapes(hashes: Iterable<string>) {
+    const src = this.source();
+    const missing = [...hashes].filter((h) => src.get(h)?.kind === "term" && !src.get(h)?.shape);
+    if (!missing.length) return;
+    const r = this.rehash(src, new Set(missing.map((h) => src.get(h)!.componentHash)));
+    for (const [h, d] of r.defs) if (d.shape && d.hash === h) this.store.setMetadata(h, "shape", JSON.stringify(d.shape));
+  }
+
   /** Components needed to run or name `hashes`: their own plus everything they reference. */
   closureComponents(hashes: Iterable<string>): Set<string> {
     const comps = new Set<string>();
