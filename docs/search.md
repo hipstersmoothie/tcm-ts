@@ -2,30 +2,30 @@
 
 ## By name or signature text
 
-`ucm find <query>` lists names containing `query`, or whose signature text contains it.
+`tcm find <query>` lists names containing `query`, or whose signature text contains it.
 
 ## By type
 
-`ucm find ':<type>'` finds terms by the shape of their type, as Unison's type search does. The query is a
+`tcm find ':<type>'` finds terms by the shape of their type, as Unison's type search does. The query is a
 TypeScript type:
 
 ```sh
-$ ucm find ':(xs: T[]) => T | undefined'
+$ tcm find ':(xs: T[]) => T | undefined'
 type variables: T
 lib.first  #q5xh6tqo  <A>(xs: A[]) => A | undefined
 lib.head   #glnvgmf6  <T>(xs: T[]) => T | undefined
 
-$ ucm find ':(n: number, s: string) => string'
+$ tcm find ':(n: number, s: string) => string'
 lib.repeat  #66hwcb26  (s: string, n: number) => string  arguments reordered
 
-$ ucm find ':(id: string) => User'
+$ tcm find ':(id: string) => User'
 lib.loadUser  #sjksocbz  (id: string) => Promise<User>  async
 ```
 
 - **Type variables.** Names in the query that are neither codebase types nor TypeScript globals become type
   variables, so `(xs: a[]) => a` works like Unison's `[a] -> a`. Explicit generics (`<T>(xs: T[]) => T`) work
   too.
-- **Codebase types are found by name:** `User`, or `lib.User` when the short name is ambiguous (ucm says which
+- **Codebase types are found by name:** `User`, or `lib.User` when the short name is ambiguous (tcm says which
   paths it could be).
 - **Parameter names don't matter**, nor do type-variable names: `<A>(xs: A[]) => A` and `<T>(ys: T[]) => T` are
   the same shape.
@@ -46,9 +46,9 @@ Overloads are searched one by one; a function matches through its closest overlo
 
 ### How it works
 
-When a term is added, ucm records its type as a *shape* (metadata, not part of the hash): functions,
+When a term is added, tcm records its type as a *shape* (metadata, not part of the hash): functions,
 parameters, arrays, tuples, unions, object types and literals. Type parameters become numbered variables.
-Codebase types are referenced **by hash**, so renaming a type (`ucm mv lib.User lib.Person`) doesn't lose any
+Codebase types are referenced **by hash**, so renaming a type (`tcm mv lib.User lib.Person`) doesn't lose any
 matches; library types (`Promise`, `Map`, a package's types) by name. Definitions stored before shapes existed
 get theirs on the first search.
 

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { sameSpace, type DefKind, type DefRecord, type Dep, type InitKind, type RefPos, type Span } from "@ucm/core";
+import { sameSpace, type DefKind, type DefRecord, type Dep, type InitKind, type RefPos, type Span } from "@tcm/core";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS components (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, ir_version INTEGER NOT NULL, created_at INTEGER NOT NULL);

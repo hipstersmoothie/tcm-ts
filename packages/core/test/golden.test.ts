@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type * as Core from "../src/index.ts";
 
-const { analyzeProject, IR_VERSION } = (await import(process.env.UCM_CORE ? path.resolve(process.env.UCM_CORE) : "../src/index.ts")) as typeof Core;
+const { analyzeProject, IR_VERSION } = (await import(process.env.TCM_CORE ? path.resolve(process.env.TCM_CORE) : "../src/index.ts")) as typeof Core;
 
 /**
  * IR v5 is frozen: these hashes are what existing codebases contain. A failure here means the hash format
@@ -30,7 +30,7 @@ test("IR v5 hashes are frozen", () => {
   const corpus = fileURLToPath(new URL("./golden/corpus.ts", import.meta.url));
   // salted the way the CLI salts a fresh definition: by the path it is first added at
   const a = analyzeProject([corpus], {
-    cacheDir: fs.mkdtempSync(path.join(os.tmpdir(), "ucm-golden-")),
+    cacheDir: fs.mkdtempSync(path.join(os.tmpdir(), "tcm-golden-")),
     resolveName: () => "",
     saltFor: (_file, name) => `golden.${name}`,
   });
@@ -39,7 +39,7 @@ test("IR v5 hashes are frozen", () => {
 });
 
 test("classes are nominal: their name is part of the hash", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ucm-classes-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcm-classes-"));
   fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ type: "module" }));
   const file = path.join(dir, "errors.ts");
   fs.writeFileSync(file, `export class UsageError extends Error {}\nexport class ConflictError extends Error {}\nexport const a = () => 1;\nexport const b = () => 1;\nexport const x = 1;\nexport const y = 1;\n`);
@@ -51,11 +51,11 @@ test("classes are nominal: their name is part of the hash", () => {
 });
 
 test("importing a module with top-level side effects is refused, with a reason", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ucm-effects-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcm-effects-"));
   fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ type: "module" }));
   const file = path.join(dir, "kinds.ts");
   // skipping the loop would silently leave `names` empty, so it must be an error, not a warning
   fs.writeFileSync(file, `export const names: string[] = [];\nfor (const n of ["a", "b"]) names.push(n);\n`);
   const a = analyzeProject([file], { cacheDir: dir, resolveName: () => "" });
-  assert.match(a.errors.join("\n"), /top-level ForOfStatement: ucm stores definitions, not module side effects/);
+  assert.match(a.errors.join("\n"), /top-level ForOfStatement: tcm stores definitions, not module side effects/);
 });

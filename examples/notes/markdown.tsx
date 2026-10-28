@@ -1,5 +1,5 @@
-// ucm: namespace notes
-// A small markdown renderer. It's React elements and nothing else (no state, no DOM, no server), so ucm places it
+// tcm: namespace notes
+// A small markdown renderer. It's React elements and nothing else (no state, no DOM, no server), so tcm places it
 // "anywhere": the same definition renders a note on the server, and the editor's live preview in the browser.
 import assert from "node:assert/strict";
 

@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { checkValue, isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from "@ucm/core";
+import { checkValue, isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from "@tcm/core";
 import { decode } from "./codec.ts";
 import { inspect } from "node:util";
 import { DatabaseSync } from "node:sqlite";
-import { render, run, sendRunnerOutputToStderr } from "@ucm/loader";
+import { render, run, sendRunnerOutputToStderr } from "@tcm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { migrate } from "./migrate.ts";
 import { serveLsp } from "./lsp.ts";
@@ -139,7 +139,7 @@ function check(cb: Codebase, file: string, into?: string, fresh = false): boolea
   const pending = rows.filter((r) => r.status !== "identical");
   if (pending.length) {
     const needsUpdate = pending.some((r) => r.status === "update" || r.status === "conflict");
-    console.log(dim(`\n  run \`ucm ${needsUpdate ? "update" : "add"}\` to save ${pending.length} definition${pending.length > 1 ? "s" : ""}`));
+    console.log(dim(`\n  run \`tcm ${needsUpdate ? "update" : "add"}\` to save ${pending.length} definition${pending.length > 1 ? "s" : ""}`));
   }
   return true;
 }
@@ -182,12 +182,12 @@ function apply(cb: Codebase, rows: Row[], mode: "add" | "update", command: strin
     for (const r of rows) if (!skipped.includes(r)) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
     console.log([...counts].map(([s, n]) => `${STATUS_LABEL[s].trim()} ${n}`).join(dim(" · ")) || dim("nothing to do"));
   } else printRows(rows.filter((r) => !skipped.includes(r)));
-  for (const r of skipped) console.log(`${yellow("  ~ skipped  ")} ${bold(r.path)} ${dim("already names a different definition; use `ucm update`")}`);
+  for (const r of skipped) console.log(`${yellow("  ~ skipped  ")} ${bold(r.path)} ${dim("already names a different definition; use `tcm update`")}`);
   checkStoredRows(cb, rows.map((r) => r.def));
   if (patches.size) {
     const { updated, failed } = cb.propagate(patches, new Set(rows.map((r) => r.def.hash)));
     for (const p of updated) console.log(`${yellow("  ~ updated  ")} ${bold(p)} ${dim("(dependent)")}`);
-    if (failed.length) console.log(red(`\n  ${failed.length} dependent definition(s) no longer typecheck; see \`ucm todo\``));
+    if (failed.length) console.log(red(`\n  ${failed.length} dependent definition(s) no longer typecheck; see \`tcm todo\``));
   }
   cb.refreshShim();
   // examples in docs are code too: the ones just saved, and the ones naming anything just replaced, must still
@@ -198,7 +198,7 @@ function apply(cb: Codebase, rows: Row[], mode: "add" | "update", command: strin
 
 // ---- data ----------------------------------------------------------------------------------------------------
 
-const storeFile = (cb: Codebase) => path.join(cb.lay.ucmDir, "data", "store.sqlite");
+const storeFile = (cb: Codebase) => path.join(cb.lay.tcmDir, "data", "store.sqlite");
 
 /**
  * When a table's row type changes, look at what's already stored, now rather than in production: rows that still
@@ -225,7 +225,7 @@ function checkStoredRows(cb: Codebase, defs: DefRecord[]) {
       else if (misfits.length && t.steps?.length) {
         // a migrate step takes a row if the row fits its parameter type
         const untaken = misfits.filter((m) => !t.steps!.some((st) => checkValue(st.s, m.value, "row", st.defs) === undefined));
-        if (!untaken.length) console.log(yellow(`${label}: ${misfits.length} stored row(s) don't fit the new type; migrate takes them as they're read (or all now: ucm data migrate ${t.name})`));
+        if (!untaken.length) console.log(yellow(`${label}: ${misfits.length} stored row(s) don't fit the new type; migrate takes them as they're read (or all now: tcm data migrate ${t.name})`));
         else {
           const e = untaken[0]!;
           console.log(red(`${label}: ${untaken.length} stored row(s) fit neither the new type nor any migrate step's parameter type, e.g. ${e.id}: ${e.why}`));
@@ -247,13 +247,13 @@ function checkStoredRows(cb: Codebase, defs: DefRecord[]) {
 }
 
 function data(cb: Codebase, table?: string, limit = 20) {
-  if (!fs.existsSync(storeFile(cb))) return console.log(dim("no tables yet (table<Row>(\"name\") from #ucm/server)"));
+  if (!fs.existsSync(storeFile(cb))) return console.log(dim("no tables yet (table<Row>(\"name\") from #tcm/server)"));
   const db = new DatabaseSync(storeFile(cb), { readOnly: true });
   try {
     if (!table) {
       const rows = db.prepare("SELECT tbl, count(*) AS n, count(DISTINCT schema_hash) AS versions FROM rows GROUP BY tbl ORDER BY tbl").all() as { tbl: string; n: number; versions: number }[];
       if (!rows.length) return console.log(dim("no rows stored yet"));
-      for (const r of rows) console.log(`${bold(r.tbl.padEnd(20))} ${String(r.n).padStart(6)} row(s)${r.versions > 1 ? yellow(`  written under ${r.versions} row types (ucm data migrate ${r.tbl} upgrades them all)`) : ""}`);
+      for (const r of rows) console.log(`${bold(r.tbl.padEnd(20))} ${String(r.n).padStart(6)} row(s)${r.versions > 1 ? yellow(`  written under ${r.versions} row types (tcm data migrate ${r.tbl} upgrades them all)`) : ""}`);
       return;
     }
     const rows = db.prepare("SELECT id, data, schema_hash FROM rows WHERE tbl = ? ORDER BY updated DESC LIMIT ?").all(table, limit) as { id: string; data: string; schema_hash: string }[];
@@ -358,7 +358,7 @@ function find(cb: Codebase, query: string) {
   for (const n of hits) console.log(`${bold(n.path)}  ${dim(shortHash(n.hash))}  ${dim(cb.store.getDef(n.hash)!.signature)}`);
 }
 
-/** `ucm find ':<type>'`: terms whose type has that shape (see search.ts). */
+/** `tcm find ':<type>'`: terms whose type has that shape (see search.ts). */
 function findByType(cb: Codebase, text: string) {
   const r = searchByType(cb, text);
   if (r.variables.length) console.log(dim(`type variables: ${r.variables.join(", ")}`));
@@ -386,7 +386,7 @@ function todo(cb: Codebase) {
     if (!isConflicted(rows.map((r) => r.kind))) continue;
     const hs = rows.map((r) => r.hash);
     n++;
-    console.log(`${red("conflict")} ${bold(p)}: ${hs.map((h) => shortHash(h)).join(", ")}  ${dim(`ucm resolve ${p} ${shortHash(hs[0]!)}`)}`);
+    console.log(`${red("conflict")} ${bold(p)}: ${hs.map((h) => shortHash(h)).join(", ")}  ${dim(`tcm resolve ${p} ${shortHash(hs[0]!)}`)}`);
   }
   const live = cb.liveHashes();
   for (const t of cb.store.todos()) {
@@ -395,7 +395,7 @@ function todo(cb: Codebase) {
     const names = cb.store.pathsOf(t.hash);
     console.log(`${yellow("needs fixing")} ${bold(names.join(", ") || shortHash(t.hash))}: ${t.message.split("\n")[0]}`);
   }
-  console.log(n ? dim(`\nfix with \`ucm edit <name>\`, change the scratch file, then \`ucm update\``) : green("nothing to do"));
+  console.log(n ? dim(`\nfix with \`tcm edit <name>\`, change the scratch file, then \`tcm update\``) : green("nothing to do"));
 }
 
 function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) => string), force: boolean) {
@@ -426,10 +426,10 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
     // its runtime name) says where it goes, so `update` binds it back to the same path
     annotate: (h, declaredAs) => {
       const p = pathOf.get(h);
-      return p && p !== joinName(ns, declaredAs) ? `// ucm: path ${p}` : undefined;
+      return p && p !== joinName(ns, declaredAs) ? `// tcm: path ${p}` : undefined;
     },
   }).text;
-  fs.writeFileSync(file, (ns ? `// ucm: namespace ${ns}\n` : "") + text);
+  fs.writeFileSync(file, (ns ? `// tcm: namespace ${ns}\n` : "") + text);
   console.log(`wrote ${targets.join(", ")} to ${path.basename(file)}`);
 }
 
@@ -563,7 +563,7 @@ function watch(cb: Codebase, into?: string, fresh = false) {
     }
   };
   const initial = fs.readdirSync(root).filter((f) => /\.tsx?$/.test(f) && !f.endsWith(".d.ts")).map((f) => path.join(root, f));
-  console.log(`${bold("ucm")} watching ${root} ${dim("(Ctrl-C to stop)")}`);
+  console.log(`${bold("tcm")} watching ${root} ${dim("(Ctrl-C to stop)")}`);
   initial.forEach((f) => pending.add(f));
   runChecks();
   fs.watch(root, (_event, filename) => {
@@ -576,58 +576,58 @@ function watch(cb: Codebase, into?: string, fresh = false) {
 
 // ---- entry --------------------------------------------------------------------------------------------
 
-const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeScript
+const HELP = `${bold("tcm")} — a content-addressed codebase manager for TypeScript
 
-  ucm init                       set up a codebase in this directory
-  ucm [watch] [--fresh]          watch *.ts/*.tsx scratch files: typecheck, hash, evaluate watch expressions and tests
+  tcm init                       set up a codebase in this directory
+  tcm [watch] [--fresh]          watch *.ts/*.tsx scratch files: typecheck, hash, evaluate watch expressions and tests
                                  (their results are cached by hash; --fresh re-runs them)
-  ucm check [file] [--fresh]     one-shot version of watch
-  ucm lsp                        language server for editors (stdio): status, watch values, hovers, save commands
-  ucm add [file] [--into ns]     add new definitions from a scratch file (default scratch.ts)
-  ucm update [file] [--into ns]  add, and replace changed definitions; dependents are re-hashed
-  ucm import <dir> [--into ns] [--update] [--exclude a,b] [--verbose]
+  tcm check [file] [--fresh]     one-shot version of watch
+  tcm lsp                        language server for editors (stdio): status, watch values, hovers, save commands
+  tcm add [file] [--into ns]     add new definitions from a scratch file (default scratch.ts)
+  tcm update [file] [--into ns]  add, and replace changed definitions; dependents are re-hashed
+  tcm import <dir> [--into ns] [--update] [--exclude a,b] [--verbose]
                                  add an existing project: one namespace per file (src/ and index dropped)
-  ucm test [namespace] [--fresh]  run tests (definitions named test… or under \`tests\`); results are cached by hash
-  ucm verify                     re-render and re-hash every live definition; must be the identity
-  ucm migrate                    rebuild a codebase written with an older hash format (keeps a backup)
-  ucm view <name|#hash>...       show definitions with current names
-  ucm ls [namespace]             list names
-  ucm find <query>               search names and signature text
-  ucm find ':<type>'             search by type, e.g. ':(xs: T[]) => T' (unknown names are type variables)
-  ucm deps <name> / dependents <name>
-  ucm run <name> [args...]       run a definition (functions are called with args)
-  ucm edit <name>... [--file f] [--force]   write definitions to a scratch file for editing
-  ucm mv <from> <to>             rename a definition or namespace (no code changes)
-  ucm alias <name> <new>         add another name for a definition
-  ucm rm <name> [--force]        remove a name
-  ucm todo                       conflicts and dependents that need fixing
-  ucm resolve <name> <#hash>     pick one definition for a conflicted name
-  ucm docs <name>                show documentation
-  ucm diff                       what the last command changed: edits, dependents re-hashed by them, renames
-  ucm diff <id> | <branch> | <a> <b>
+  tcm test [namespace] [--fresh]  run tests (definitions named test… or under \`tests\`); results are cached by hash
+  tcm verify                     re-render and re-hash every live definition; must be the identity
+  tcm migrate                    rebuild a codebase written with an older hash format (keeps a backup)
+  tcm view <name|#hash>...       show definitions with current names
+  tcm ls [namespace]             list names
+  tcm find <query>               search names and signature text
+  tcm find ':<type>'             search by type, e.g. ':(xs: T[]) => T' (unknown names are type variables)
+  tcm deps <name> / dependents <name>
+  tcm run <name> [args...]       run a definition (functions are called with args)
+  tcm edit <name>... [--file f] [--force]   write definitions to a scratch file for editing
+  tcm mv <from> <to>             rename a definition or namespace (no code changes)
+  tcm alias <name> <new>         add another name for a definition
+  tcm rm <name> [--force]        remove a name
+  tcm todo                       conflicts and dependents that need fixing
+  tcm resolve <name> <#hash>     pick one definition for a conflicted name
+  tcm docs <name>                show documentation
+  tcm diff                       what the last command changed: edits, dependents re-hashed by them, renames
+  tcm diff <id> | <branch> | <a> <b>
                                  changes since a history entry, to another branch, or between branches
-  ucm history [n] / reset <id>   name changes on this branch / undo back to an entry
-  ucm branch [name] / switch <name>
-  ucm dev <app> [--port 5173] [--http <namespace>[=/prefix]]
+  tcm history [n] / reset <id>   name changes on this branch / undo back to an entry
+  tcm branch [name] / switch <name>
+  tcm dev <app> [--port 5173] [--http <namespace>[=/prefix]]
                                  serve a browser app (a function, or a React component) from the codebase; what needs
                                  the server runs there, called by hash
-  ucm build <app> [--force]      production build into .ucm/apps/<hash>/ (immutable; reused if it exists)
-  ucm data [table [n]]           typed tables (table<Row>() from #ucm/server): row counts, or a table's rows
-  ucm data migrate <table>       upgrade every stored row to the current row type now, through migrate
-  ucm jobs [n] | retry <id> | cancel <id>
-                                 background jobs: enqueue() / every() from #ucm/server, run by ucm start / ucm dev
-  ucm apps [prune [--keep 3]]    list builds (* = current); prune keeps the current build plus the newest N others
+  tcm build <app> [--force]      production build into .tcm/apps/<hash>/ (immutable; reused if it exists)
+  tcm data [table [n]]           typed tables (table<Row>() from #tcm/server): row counts, or a table's rows
+  tcm data migrate <table>       upgrade every stored row to the current row type now, through migrate
+  tcm jobs [n] | retry <id> | cancel <id>
+                                 background jobs: enqueue() / every() from #tcm/server, run by tcm start / tcm dev
+  tcm apps [prune [--keep 3]]    list builds (* = current); prune keeps the current build plus the newest N others
                                  (tabs on a pruned build reload themselves onto the current one)
-  ucm start <app> [--port 8080] [--host] [--tls] [--keep N] [--http <namespace>[=/prefix]]
+  tcm start <app> [--port 8080] [--host] [--tls] [--keep N] [--http <namespace>[=/prefix]]
                                  serve the app in production; follows its name (deploy and rollback = moving the
                                  name) and keeps earlier builds' assets and server functions working for open tabs
-  ucm merge <branch>             three-way merge into this branch; dependents follow the other side's updates
+  tcm merge <branch>             three-way merge into this branch; dependents follow the other side's updates
 
-  ucm remote [add <name> <url|dir> [--token t] [--fingerprint sha256] | rm <name>]
-  ucm push [remote] [--as branch] [--force]   send definitions + this branch's names (refuses if the remote moved)
-  ucm pull [remote] [branch]     fetch into <remote>/<branch>; fast-forward this branch if it hasn't changed
-  ucm run <name> [args] --on <remote|url|dir>   send what the remote lacks, run there, stream output back
-  ucm serve [--port 7737] [--host 127.0.0.1] [--token t] [--no-run] [--tls [--tls-cert f --tls-key f]] [--insecure]
+  tcm remote [add <name> <url|dir> [--token t] [--fingerprint sha256] | rm <name>]
+  tcm push [remote] [--as branch] [--force]   send definitions + this branch's names (refuses if the remote moved)
+  tcm pull [remote] [branch]     fetch into <remote>/<branch>; fast-forward this branch if it hasn't changed
+  tcm run <name> [args] --on <remote|url|dir>   send what the remote lacks, run there, stream output back
+  tcm serve [--port 7737] [--host 127.0.0.1] [--token t] [--no-run] [--tls [--tls-cert f --tls-key f]] [--insecure]
                                  serve this codebase; clients with the token can push, pull and run code.
                                  --tls without files makes a self-signed certificate; clients pin its fingerprint
 `;
@@ -640,7 +640,7 @@ export async function main(argv: string[]): Promise<number> {
   if (into !== undefined && into !== "" && !IDENT_PATH.test(into)) throw new UsageError(`'${into}' is not a valid namespace`);
   const scratch = (f?: string) => path.resolve(cwd, f ?? "scratch.ts");
   const need = (n: number, usage: string) => {
-    if (args.length < n) throw new UsageError(`usage: ucm ${usage}`);
+    if (args.length < n) throw new UsageError(`usage: tcm ${usage}`);
   };
 
   if (cmd === "help" || flags.help) {
@@ -653,7 +653,7 @@ export async function main(argv: string[]): Promise<number> {
     if (!fs.existsSync(file)) {
       fs.writeFileSync(
         file,
-        `// Definitions here are checked and hashed by \`ucm\`; bare expressions are watch expressions.
+        `// Definitions here are checked and hashed by \`tcm\`; bare expressions are watch expressions.
 // Import saved definitions with: import { name } from "#codebase/namespace"
 
 /** Square a number. */
@@ -663,7 +663,7 @@ square(12);
 `,
       );
     }
-    console.log(`initialized codebase in ${cb.lay.ucmDir}\nnext: run \`ucm\` and edit scratch.ts`);
+    console.log(`initialized codebase in ${cb.lay.tcmDir}\nnext: run \`tcm\` and edit scratch.ts`);
     return 0;
   }
 
@@ -703,7 +703,7 @@ square(12);
       data(cb, args[0], Number(args[1] ?? 20));
       return 0;
     case "jobs": {
-      const file = path.join(cb.lay.ucmDir, "data", "jobs.sqlite");
+      const file = path.join(cb.lay.tcmDir, "data", "jobs.sqlite");
       if (!fs.existsSync(file)) return (console.log(dim("no jobs yet (enqueue() from a server function, or every() for recurring ones)")), 0);
       const db = new DatabaseSync(file);
       try {
@@ -741,7 +741,7 @@ square(12);
         return 0;
       }
       const builds = listBuilds(cb);
-      if (!builds.length) return (console.log(dim("no builds yet (`ucm build <app>`)")), 0);
+      if (!builds.length) return (console.log(dim("no builds yet (`tcm build <app>`)")), 0);
       for (const b of builds) {
         let current = false;
         try {
@@ -809,16 +809,16 @@ square(12);
     case "remote": {
       const [sub, name, url] = args;
       if (sub === "add") {
-        if (!name || !url) throw new UsageError("usage: ucm remote add <name> <url|path> [--token t]");
+        if (!name || !url) throw new UsageError("usage: tcm remote add <name> <url|path> [--token t]");
         addRemote(cb, name, url, typeof flags.token === "string" ? flags.token : undefined, typeof flags.fingerprint === "string" ? flags.fingerprint : undefined);
         console.log(`added remote ${name}`);
       } else if (sub === "rm") {
-        if (!name) throw new UsageError("usage: ucm remote rm <name>");
+        if (!name) throw new UsageError("usage: tcm remote rm <name>");
         cb.store.deleteSetting(`remote.${name}`);
         console.log(`removed remote ${name}`);
       } else {
         const remotes = listRemotes(cb);
-        if (!remotes.length) console.log(dim("no remotes; add one with `ucm remote add <name> <url|path>`"));
+        if (!remotes.length) console.log(dim("no remotes; add one with `tcm remote add <name> <url|path>`"));
         for (const [n, c] of remotes) console.log(`${bold(n)}  ${c.url}${c.token ? dim("  (token)") : ""}`);
       }
       return 0;
@@ -830,7 +830,7 @@ square(12);
       await pull(cb, args[0] ?? "origin", args[1]);
       return 0;
     case "serve": {
-      const token = typeof flags.token === "string" ? flags.token : (process.env.UCM_TOKEN ?? newToken());
+      const token = typeof flags.token === "string" ? flags.token : (process.env.TCM_TOKEN ?? newToken());
       const port = Number(typeof flags.port === "string" ? flags.port : 7737);
       const str = (k: string) => (typeof flags[k] === "string" ? (flags[k] as string) : undefined);
       const tls = flags.tls || str("tls-cert") ? tlsMaterial(cb, str("tls-cert"), str("tls-key")) : undefined;
@@ -908,7 +908,7 @@ export async function runCli(argv: string[]): Promise<void> {
   } catch (e) {
     if (e instanceof UsageError || (e instanceof Error && !(e instanceof TypeError) && !(e instanceof RangeError))) {
       console.error(red(e.message));
-      if (process.env.UCM_DEBUG) console.error(e.stack);
+      if (process.env.TCM_DEBUG) console.error(e.stack);
     } else throw e;
     process.exitCode = 1;
   }

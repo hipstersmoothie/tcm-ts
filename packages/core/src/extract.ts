@@ -1,7 +1,7 @@
 import ts from "typescript";
 import type { DefKind, InitKind } from "./types.ts";
 
-export class UcmError extends Error {
+export class TcmError extends Error {
   readonly node: ts.Node | undefined;
   constructor(message: string, node?: ts.Node) {
     super(node ? `${location(node)}: ${message}` : message);
@@ -40,13 +40,14 @@ export interface DefSite {
   nominal: boolean;
   /** lineage salt giving the definition its own identity; see AnalyzeHost.saltFor */
   salt?: string;
-  /** from a `// ucm: path a.b.c` comment: the codebase path to bind, regardless of namespace and declared name */
+  /** from a `// tcm: path a.b.c` comment: the codebase path to bind, regardless of namespace and declared name */
   targetPath?: string;
   /** bindings of one destructuring statement share a group: one component, emitted once */
   group?: number;
 }
 
-const PATH_PRAGMA = /^\/\/\s*ucm:\s*path\s+(\S+)\s*$/;
+// `// ucm:` is the spelling from before the rename to tcm
+const PATH_PRAGMA = /^\/\/\s*[tu]cm:\s*path\s+(\S+)\s*$/;
 const DOTTED = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
 
 function pathPragma(node: ts.Node, sf: ts.SourceFile): string | undefined {
@@ -54,7 +55,7 @@ function pathPragma(node: ts.Node, sf: ts.SourceFile): string | undefined {
   for (const r of ts.getLeadingCommentRanges(sf.text, node.getFullStart()) ?? []) {
     const m = PATH_PRAGMA.exec(sf.text.slice(r.pos, r.end));
     if (!m) continue;
-    if (!DOTTED.test(m[1]!)) throw new UcmError(`'${m[1]}' is not a valid codebase path`, node);
+    if (!DOTTED.test(m[1]!)) throw new TcmError(`'${m[1]}' is not a valid codebase path`, node);
     found = m[1];
   }
   return found;
@@ -133,7 +134,7 @@ function jsDocText(node: ts.Node, sf: ts.SourceFile): string | undefined {
 export type ExtractMode = "scratch" | "import";
 
 const SIDE_EFFECT_HINT =
-  "ucm stores definitions, not module side effects: move this statement into a function (e.g. an exported `main`) and call it from an entry file outside the codebase";
+  "tcm stores definitions, not module side effects: move this statement into a function (e.g. an exported `main`) and call it from an entry file outside the codebase";
 
 /** Whether a namespace produces a runtime value (anything but types inside). */
 function isInstantiated(ns: ts.ModuleDeclaration): boolean {
@@ -170,7 +171,7 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
     const space = site.kind === "type" ? "type" : site.kind === "class" ? "both" : "value";
     for (const s of space === "both" ? ["type", "value"] : [space]) {
       if (byName.has(`${s} ${site.name}`)) {
-        throw new UcmError(
+        throw new TcmError(
           `'${site.name}' is declared more than once. A name binds one definition, or one type plus one value (declaration merging is not supported).`,
           site.nodes[0],
         );
@@ -188,11 +189,11 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
     const mods = modifierKinds(st);
     if (mods.includes(ts.SyntaxKind.DeclareKeyword)) {
       // `declare const brand: unique symbol` (a value that exists only for its type) is a type-only definition in
-      // imported code; anything else ambient (modules, globals) would describe code ucm can't see
+      // imported code; anything else ambient (modules, globals) would describe code tcm can't see
       if (mode === "import" && ts.isVariableStatement(st)) {
         const kw = ts.tokenToString(st.declarationList.flags & ts.NodeFlags.Const ? ts.SyntaxKind.ConstKeyword : st.declarationList.flags & ts.NodeFlags.Let ? ts.SyntaxKind.LetKeyword : ts.SyntaxKind.VarKeyword);
         for (const decl of st.declarationList.declarations) {
-          if (!ts.isIdentifier(decl.name)) throw new UcmError("ambient destructuring is not supported", decl);
+          if (!ts.isIdentifier(decl.name)) throw new TcmError("ambient destructuring is not supported", decl);
           push({
             name: decl.name.text,
             kind: "type",
@@ -208,18 +209,18 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
         }
         continue;
       }
-      throw new UcmError("`declare` is not supported; external code comes in through `import`.", st);
+      throw new TcmError("`declare` is not supported; external code comes in through `import`.", st);
     }
     const doc = jsDocText(st, sf);
     targetPath = pathPragma(st, sf);
     if (targetPath && ts.isVariableStatement(st) && st.declarationList.declarations.length > 1) {
-      throw new UcmError("a `// ucm: path` comment names one definition; split this `const` list", st);
+      throw new TcmError("a `// tcm: path` comment names one definition; split this `const` list", st);
     }
 
     if (ts.isImportDeclaration(st)) {
       imports.push(st);
     } else if (ts.isFunctionDeclaration(st)) {
-      if (!st.name) throw new UcmError("anonymous default export: give the function a name.", st);
+      if (!st.name) throw new TcmError("anonymous default export: give the function a name.", st);
       // overload signatures followed by the implementation form one definition
       const group: ts.FunctionDeclaration[] = [st];
       while (!group.at(-1)!.body) {
@@ -252,7 +253,7 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
       const blockScope = st.declarationList.flags & ts.NodeFlags.BlockScoped;
       if (mode === "import" && blockScope === ts.NodeFlags.Let) {
         for (const decl of st.declarationList.declarations) {
-          if (!ts.isIdentifier(decl.name)) throw new UcmError("a top-level `let` with destructuring is not supported", decl);
+          if (!ts.isIdentifier(decl.name)) throw new TcmError("a top-level `let` with destructuring is not supported", decl);
           push({
             name: decl.name.text,
             kind: "term",
@@ -270,7 +271,7 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
         continue;
       }
       if (blockScope !== ts.NodeFlags.Const) {
-        throw new UcmError(
+        throw new TcmError(
           "top-level `let`/`var`/`using` is not supported: codebase bindings are immutable. Use `const` (the value itself may be mutable, e.g. `const cache = new Map()`).",
           st,
         );
@@ -279,7 +280,7 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
         if (!ts.isIdentifier(decl.name)) {
           // `const { a, b: [c] } = init()`: every bound name is its own definition, but the statement runs
           // once, so they share its source and are hashed and emitted together (see DefSite.group)
-          if (targetPath) throw new UcmError("a `// ucm: path` comment can't name the bindings of a destructuring", decl);
+          if (targetPath) throw new TcmError("a `// tcm: path` comment can't name the bindings of a destructuring", decl);
           const group = groups++;
           const bind = (pattern: ts.BindingName) => {
             if (ts.isIdentifier(pattern)) return;
@@ -320,7 +321,7 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
         });
       }
     } else if (ts.isClassDeclaration(st)) {
-      if (!st.name) throw new UcmError("anonymous default export: give the class a name.", st);
+      if (!st.name) throw new TcmError("anonymous default export: give the class a name.", st);
       push({
         name: st.name.text,
         kind: "class",
@@ -375,20 +376,20 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
         nominal: false,
       });
     } else if (ts.isEnumDeclaration(st)) {
-      throw new UcmError(`enums are not supported in scratch files: ${NON_ERASABLE_HINT} (\`ucm import\` accepts them).`, st);
+      throw new TcmError(`enums are not supported in scratch files: ${NON_ERASABLE_HINT} (\`tcm import\` accepts them).`, st);
     } else if (ts.isModuleDeclaration(st)) {
-      throw new UcmError(`namespaces are not supported${mode === "import" ? " in this form (dotted or ambient)" : " in scratch files"}: ${NON_ERASABLE_HINT}.`, st);
+      throw new TcmError(`namespaces are not supported${mode === "import" ? " in this form (dotted or ambient)" : " in scratch files"}: ${NON_ERASABLE_HINT}.`, st);
     } else if (ts.isImportEqualsDeclaration(st)) {
-      throw new UcmError("`import x = require(...)` is not supported; use an ES import.", st);
+      throw new TcmError("`import x = require(...)` is not supported; use an ES import.", st);
     } else if (ts.isExportAssignment(st)) {
-      throw new UcmError("`export default <expression>` is not supported: give it a name with `const`.", st);
+      throw new TcmError("`export default <expression>` is not supported: give it a name with `const`.", st);
     } else if (ts.isExportDeclaration(st)) {
       // `export {}` only marks the file as a module
       const empty = !st.moduleSpecifier && st.exportClause && ts.isNamedExports(st.exportClause) && !st.exportClause.elements.length;
       if (mode === "import" || empty) continue;
       warnings.push(`ignoring export list at line ${sf.getLineAndCharacterOfPosition(st.getStart(sf)).line + 1}: exports have no meaning in a codebase`);
     } else if (ts.isExpressionStatement(st)) {
-      if (mode === "import") throw new UcmError(`top-level expression statement: ${SIDE_EFFECT_HINT}.`, st);
+      if (mode === "import") throw new TcmError(`top-level expression statement: ${SIDE_EFFECT_HINT}.`, st);
       const name = `__watch_${watches.length}`;
       watches.push({
         id: -1 - watches.length,
@@ -406,7 +407,7 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
     } else if (st.kind === ts.SyntaxKind.EmptyStatement) {
       // ignore stray semicolons
     } else {
-      throw new UcmError(
+      throw new TcmError(
         mode === "import"
           ? `top-level ${ts.SyntaxKind[st.kind]}: ${SIDE_EFFECT_HINT}.`
           : `top-level ${ts.SyntaxKind[st.kind]} is not supported: a scratch file contains declarations, imports, and watch expressions.`,

@@ -8,7 +8,7 @@ importers:
 
   .:
     dependencies:
-      '@ucm/cli':
+      '@tcm/cli':
         specifier: workspace:*
         version: link:packages/cli
     devDependencies:
@@ -27,13 +27,13 @@ importers:
 
   packages/cli:
     dependencies:
-      '@ucm/core':
+      '@tcm/core':
         specifier: workspace:*
         version: link:../core
-      '@ucm/loader':
+      '@tcm/loader':
         specifier: workspace:*
         version: link:../loader
-      '@ucm/store':
+      '@tcm/store':
         specifier: workspace:*
         version: link:../store
       vite:
@@ -51,16 +51,16 @@ importers:
 
   packages/loader:
     dependencies:
-      '@ucm/core':
+      '@tcm/core':
         specifier: workspace:*
         version: link:../core
-      '@ucm/store':
+      '@tcm/store':
         specifier: workspace:*
         version: link:../store
 
   packages/store:
     dependencies:
-      '@ucm/core':
+      '@tcm/core':
         specifier: workspace:*
         version: link:../core
 

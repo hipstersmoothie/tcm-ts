@@ -13,14 +13,14 @@ choice. A few are forced, with a warning when the project sets them otherwise:
 - `jsx` = `react-jsx`: JSX compiles to the automatic runtime (`react/jsx-runtime`, or your `jsxImportSource`),
   which generated modules import at its pinned version ([React](react.md#packages-and-versions)).
 
-Without its own `types`, a project gets ucm's `@types/node`, so scratch files typecheck without installing it.
+Without its own `types`, a project gets tcm's `@types/node`, so scratch files typecheck without installing it.
 
 ## Imported projects
 
-`ucm import <dir>` uses the tsconfig nearest that directory, with:
+`tcm import <dir>` uses the tsconfig nearest that directory, with:
 
 - bundler resolution, so extensionless and directory imports work;
-- no stripping requirements (`verbatimModuleSyntax`, `erasableSyntaxOnly` off), since ucm renders imports
+- no stripping requirements (`verbatimModuleSyntax`, `erasableSyntaxOnly` off), since tcm renders imports
   itself and compiles what Node can't strip;
 - emit options (`declaration`, `isolatedDeclarations`, `composite`, `outDir`, …) dropped;
 - TypeScript 6 deprecations (`baseUrl`, node10 resolution) ignored.

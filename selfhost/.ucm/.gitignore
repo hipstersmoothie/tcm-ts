@@ -1,0 +1,11 @@
+# derived from codebase.sqlite
+cache/
+codebase/
+web/
+build/
+apps/
+examples/
+# app data and secrets: never commit these
+data/
+secret
+tls/

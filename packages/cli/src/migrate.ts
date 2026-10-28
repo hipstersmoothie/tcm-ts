@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { IR_VERSION, saltOf, shortHash, type DefRecord } from "@ucm/core";
-import { Store, stateHashOf } from "@ucm/store";
-import { ensureExternals, layout, materialize, render } from "@ucm/loader";
+import { IR_VERSION, saltOf, shortHash, type DefRecord } from "@tcm/core";
+import { Store, stateHashOf } from "@tcm/store";
+import { ensureExternals, layout, materialize, render } from "@tcm/loader";
 import { Codebase } from "./codebase.ts";
 import { dim, green, red, yellow } from "./style.ts";
 
@@ -11,7 +11,7 @@ type Row = Record<string, string | number | null>;
 
 /** Open a private copy of a database (WAL files included), so reading an old codebase never modifies it. */
 function openCopy(dbFile: string): Store {
-  const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ucm-migrate-")), "old.sqlite");
+  const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tcm-migrate-")), "old.sqlite");
   for (const suffix of ["", "-wal", "-shm"]) if (fs.existsSync(dbFile + suffix)) fs.copyFileSync(dbFile + suffix, tmp + suffix);
   return new Store(tmp);
 }
@@ -42,7 +42,7 @@ function dependencyOrder(old: Store): string[] {
  * Rebuild a codebase written with an older hash format. Every stored definition (named or not, so history
  * stays meaningful) is re-rendered from its source against its already-migrated dependencies, typechecked, and
  * hashed by the current analyzer; branches, history, patches, todo and remotes are carried over through the
- * old → new hash map. The old `.ucm` directory is kept as a backup.
+ * old → new hash map. The old `.tcm` directory is kept as a backup.
  */
 export function migrate(root: string): boolean {
   const lay = layout(root);
@@ -53,9 +53,9 @@ export function migrate(root: string): boolean {
     console.log(dim(`already on hash format v${IR_VERSION}`));
     return true;
   }
-  let backup = `${lay.ucmDir}-v${versions.join("-")}-backup`;
+  let backup = `${lay.tcmDir}-v${versions.join("-")}-backup`;
   if (fs.existsSync(backup)) backup += `-${Date.now()}`;
-  fs.renameSync(lay.ucmDir, backup);
+  fs.renameSync(lay.tcmDir, backup);
   console.log(`migrating hash format v${versions.join(", v")} → v${IR_VERSION} ${dim(`(old codebase kept in ${path.basename(backup)})`)}`);
   const cb = Codebase.init(root);
 

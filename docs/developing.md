@@ -1,4 +1,4 @@
-# Developing ucm-ts
+# Developing tcm-ts
 
 ## Layout
 
@@ -6,17 +6,17 @@
 packages/
   core/     extraction, canonicalization (the IR), hashing, runtime schemas from types, compiler options
   store/    the SQLite codebase store
-  loader/   rendering stored definitions to .ucm/cache modules, running them, the #codebase shim
-  cli/      the ucm command, placement inference, sync, merge, web (Vite plugin, dev/build/start), the
-            #ucm/server runtime, the wire codec
-editors/    vscode/: the VS Code extension (a thin client for `ucm lsp`; not part of the npm package)
+  loader/   rendering stored definitions to .tcm/cache modules, running them, the #codebase shim
+  cli/      the tcm command, placement inference, sync, merge, web (Vite plugin, dev/build/start), the
+            #tcm/server runtime, the wire codec
+editors/    vscode/: the VS Code extension (a thin client for `tcm lsp`; not part of the npm package)
 examples/   polls/: an example app, built and run in a browser by packages/cli/test/examples.test.ts
 scripts/    build.ts (npm package), docs-site.ts, docs-dev.ts, selfhost.sh, test-package.sh, compare-ts-versions.sh
 docs/       user documentation, one page per feature area
 ```
 
-The `#ucm/server` runtime (`packages/cli/src/server-api.ts`) is one factory function whose own source is
-written to `.ucm/cache/ucm-server.js`. It must stay self-contained: everything it uses comes in through its
+The `#tcm/server` runtime (`packages/cli/src/server-api.ts`) is one factory function whose own source is
+written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything it uses comes in through its
 `deps` parameter.
 
 ## Tests
@@ -35,12 +35,12 @@ All three of `pnpm test`, `pnpm selfhost` and `pnpm test:package` should pass be
 
 ## Self-hosting
 
-`pnpm selfhost` imports `packages/` into `selfhost/.ucm` and then:
+`pnpm selfhost` imports `packages/` into `selfhost/.tcm` and then:
 
-1. runs `ucm verify` with the **self-hosted** ucm: every definition round-trips to its own hash;
-2. runs the whole test suite against the self-hosted CLI and analyzer (`UCM_BIN=selfhost/ucm.ts
-   UCM_CORE=selfhost/core.ts`), which execute entirely from `.ucm/cache`;
-3. checks the fixed point: the self-hosted ucm imports `packages/` again and assigns exactly the same hashes.
+1. runs `tcm verify` with the **self-hosted** tcm: every definition round-trips to its own hash;
+2. runs the whole test suite against the self-hosted CLI and analyzer (`TCM_BIN=selfhost/tcm.ts
+   TCM_CORE=selfhost/core.ts`), which execute entirely from `.tcm/cache`;
+3. checks the fixed point: the self-hosted tcm imports `packages/` again and assigns exactly the same hashes.
 
 Getting there took two small refactors, both now enforced by the tool. A top-level `for` loop that filled a
 lookup table became an immediately-invoked function, and the CLI's top-level `try` moved into an exported
@@ -49,5 +49,5 @@ lookup table became an immediately-invoked function, and the CLI's top-level `tr
 ## Packaging
 
 Node won't strip types from files under `node_modules`, so `pnpm build` (`scripts/build.ts`) transpiles the
-workspace into one plain-JavaScript package, `ucm-ts`, in `dist/package`. Code ucm generates (`.ucm/cache`)
+workspace into one plain-JavaScript package, `tcm-ts`, in `dist/package`. Code tcm generates (`.tcm/cache`)
 stays TypeScript, because it lives in the user's project. Publishing is done by hand.

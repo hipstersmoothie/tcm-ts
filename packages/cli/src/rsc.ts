@@ -5,11 +5,11 @@
 // The server walks the element tree a server component returns, calling every component that can run there, and
 // sends the result as plain data through the same codec as server function results:
 //
-// - host elements (`<li>`) as `{ $ucm: "e", type, key, props }`, their children rendered;
-// - browser components (state, effects, event handlers) as `{ $ucm: "c", ref: <hash>, key, props }`: a reference to
+// - host elements (`<li>`) as `{ $tcm: "e", type, key, props }`, their children rendered;
+// - browser components (state, effects, event handlers) as `{ $tcm: "c", ref: <hash>, key, props }`: a reference to
 //   code the browser already has, by hash, with the props the server gave it.
 //
-// In the browser, a server component is a stub component that fetches its tree (`POST /__ucm/rpc/<hash>`, its
+// In the browser, a server component is a stub component that fetches its tree (`POST /__tcm/rpc/<hash>`, its
 // props as the argument) and renders it. After any server function call from the page, mounted server components
 // fetch their trees again, so what they show follows the data without any wiring.
 
@@ -18,7 +18,7 @@ const FRAGMENT = Symbol.for("react.fragment");
 const PASS_THROUGH = new Set([FRAGMENT, Symbol.for("react.suspense"), Symbol.for("react.strict_mode"), Symbol.for("react.profiler")]);
 const MEMO = Symbol.for("react.memo");
 const FORWARD_REF = Symbol.for("react.forward_ref");
-const UCM_HASH = Symbol.for("ucm.hash");
+const TCM_HASH = Symbol.for("tcm.hash");
 
 interface Element {
   $$typeof: symbol;
@@ -27,7 +27,7 @@ interface Element {
   props: Record<string, unknown>;
 }
 
-export type Wire = null | string | number | bigint | Wire[] | { $ucm: "e"; type: string; key: string | null; props: Record<string, unknown> } | { $ucm: "c"; ref: string; key: string | null; props: Record<string, unknown> };
+export type Wire = null | string | number | bigint | Wire[] | { $tcm: "e"; type: string; key: string | null; props: Record<string, unknown> } | { $tcm: "c"; ref: string; key: string | null; props: Record<string, unknown> };
 
 const isElement = (v: unknown): v is Element => !!v && typeof v === "object" && ELEMENT.has((v as Element).$$typeof);
 const isThenable = (v: unknown): v is PromiseLike<unknown> => !!v && typeof (v as PromiseLike<unknown>).then === "function";
@@ -55,19 +55,19 @@ async function render(node: unknown, ctx: RenderContext, path: string[]): Promis
     throw new Error(`${where(path)}: can't render ${typeof node === "function" ? "a function" : "an object"} as a child`);
   }
   const { type, key, props } = node;
-  if (typeof type === "string") return { $ucm: "e", type, key, props: await hostProps(type, props, ctx, path) };
+  if (typeof type === "string") return { $tcm: "e", type, key, props: await hostProps(type, props, ctx, path) };
   if (typeof type === "symbol" && PASS_THROUGH.has(type)) return render(props.children, ctx, path);
   if (typeof type === "function") {
-    const hash = (type as unknown as Record<symbol, unknown>)[UCM_HASH];
+    const hash = (type as unknown as Record<symbol, unknown>)[TCM_HASH];
     // codebase components by their current names
     const at = [...path, typeof hash === "string" ? ctx.name(hash) : nameOf(type)];
-    if (typeof hash === "string" && ctx.isClientRef(hash)) return { $ucm: "c", ref: hash, key, props: await clientProps(props, ctx, at) };
+    if (typeof hash === "string" && ctx.isClientRef(hash)) return { $tcm: "c", ref: hash, key, props: await clientProps(props, ctx, at) };
     if ((type.prototype as { isReactComponent?: unknown } | undefined)?.isReactComponent) throw new Error(`${where(at)}: class components only render in the browser`);
     try {
       return await render(await (type as (p: unknown) => unknown)(props), ctx, at);
     } catch (e) {
       // a hook outside a component instance: React's own message doesn't say where or why
-      if (e instanceof TypeError && /reading 'use\w*'/.test(e.message)) throw new Error(`${where(at)} uses a React hook, but renders on the server; import hooks by name (\`import { useState } from "react"\`) so ucm can tell it needs the browser`);
+      if (e instanceof TypeError && /reading 'use\w*'/.test(e.message)) throw new Error(`${where(at)} uses a React hook, but renders on the server; import hooks by name (\`import { useState } from "react"\`) so tcm can tell it needs the browser`);
       throw e;
     }
   }
@@ -96,7 +96,7 @@ async function clientProps(props: Record<string, unknown>, ctx: RenderContext, p
   const value = async (v: unknown, k: string): Promise<unknown> => {
     if (isElement(v) || isThenable(v)) return render(v, ctx, path);
     if (typeof v === "function") {
-      const hash = (v as unknown as Record<symbol, unknown>)[UCM_HASH];
+      const hash = (v as unknown as Record<symbol, unknown>)[TCM_HASH];
       throw new Error(
         `${where(path)}: prop \`${k}\` is a function${typeof hash === "string" ? ` (${ctx.name(hash)})` : ""}, which can't be sent from the server to the browser; ` +
           `the browser component can import what it needs itself`,
@@ -129,8 +129,8 @@ const trees = new Map();
 function toElement(node, refs) {
   if (node === null || typeof node !== "object") return node;
   if (Array.isArray(node)) return node.map((n) => toElement(n, refs));
-  if (node.$ucm === "e") return create(node.type, node, refs);
-  if (node.$ucm === "c") {
+  if (node.$tcm === "e") return create(node.type, node, refs);
+  if (node.$tcm === "c") {
     const C = refs[node.ref];
     if (!C) throw new Error("the server rendered a browser component this page doesn't have (" + node.ref.slice(0, 8) + "); reload");
     return create(C, node, refs);
@@ -150,7 +150,7 @@ function create(type, node, refs) {
 
 function value(v, refs) {
   if (v === null || typeof v !== "object") return v;
-  if (v.$ucm === "e" || v.$ucm === "c") return toElement(v, refs);
+  if (v.$tcm === "e" || v.$tcm === "c") return toElement(v, refs);
   if (Array.isArray(v)) return v.map((x) => value(x, refs));
   if (Object.getPrototypeOf(v) !== Object.prototype) return v;
   const o = {};
@@ -161,7 +161,7 @@ function value(v, refs) {
 async function fetchTree(hash, name, body) {
   let res;
   try {
-    res = await fetch("/__ucm/rpc/" + hash, { method: "POST", headers: { "content-type": "application/json" }, body });
+    res = await fetch("/__tcm/rpc/" + hash, { method: "POST", headers: { "content-type": "application/json" }, body });
   } catch (e) {
     throw new Error(name + ": the server is unreachable (" + e.message + ")");
   }

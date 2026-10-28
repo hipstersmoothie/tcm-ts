@@ -148,11 +148,11 @@ function template(page: Page, body: string, title: string, toc: { id: string; te
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(page.n ? `${title} — ucm-ts` : "ucm-ts")}</title>
+<title>${esc(page.n ? `${title} — tcm-ts` : "tcm-ts")}</title>
 <link rel="stylesheet" href="style.css">
 </head><body>
 <nav class="side" aria-label="pages">
-<a class="home" href="index.html">ucm-ts.txt</a>
+<a class="home" href="index.html">tcm-ts.txt</a>
 <div class="rule" aria-hidden="true"></div>
 <ol>
 ${menu}
@@ -171,7 +171,7 @@ ${version ? `<p class="build">built from ${version}</p>` : ""}
 `;
 }
 
-const STYLE = `/* ucm-ts docs: a text file with a menu */
+const STYLE = `/* tcm-ts docs: a text file with a menu */
 :root { --bg: #fff; --fg: #111; --dim: #777; --rule: #999; --link: #00e; --visited: #551a8b; --here: #111; --code: #f4f4f1; }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #0c0c0c; --fg: #d6d6d6; --dim: #7a7a7a; --rule: #555; --link: #8ab4ff; --visited: #c4a3ff; --here: #fff; --code: #151515; }

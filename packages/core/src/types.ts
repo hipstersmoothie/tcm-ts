@@ -1,6 +1,12 @@
 import type { ParamsSchema, TableSchema } from "./schema.ts";
 import type { TypeShape } from "./shape.ts";
 
+/**
+ * The module id `#tcm/server` imports get in the IR (`["Ext", "ucm:server", …]`). Frozen: it's part of the hash of
+ * every definition that uses the server API, and dates from when tcm was called ucm-ts.
+ */
+export const SERVER_API_MODULE = "ucm:server";
+
 export type DefKind = "term" | "type" | "class";
 export type InitKind = "hoisted" | "strict";
 export type RefPos = "value" | "type";
@@ -55,7 +61,7 @@ export interface DefRecord {
   nameHint: string;
   /** the declared name is observable at runtime, so generated code must keep it */
   nominal: boolean;
-  /** scratch-file only: the path a `// ucm: path` comment binds this definition to (not stored) */
+  /** scratch-file only: the path a `// tcm: path` comment binds this definition to (not stored) */
   targetPath?: string;
   deps: Dep[];
   signature: string;
@@ -99,7 +105,7 @@ export function depRef(span: Span): string {
 
 /**
  * A name in a doc, at `start`..`end` of the doc's text: a definition (by hash), or, in an example, something the
- * definition imports from outside the codebase (a package, a Node builtin, #ucm/server), so the example can too.
+ * definition imports from outside the codebase (a package, a Node builtin, #tcm/server), so the example can too.
  */
 export interface DocRef {
   start: number;

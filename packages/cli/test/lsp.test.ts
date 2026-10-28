@@ -7,8 +7,8 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
-const BIN = process.env.UCM_BIN ? path.resolve(process.env.UCM_BIN) : fileURLToPath(new URL("../bin/ucm.js", import.meta.url));
-const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ucm lsp ")));
+const BIN = process.env.TCM_BIN ? path.resolve(process.env.TCM_BIN) : fileURLToPath(new URL("../bin/tcm.js", import.meta.url));
+const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "tcm lsp ")));
 const env = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" };
 const children: ChildProcess[] = [];
 after(() => children.forEach((c) => c.kill()));
@@ -68,11 +68,11 @@ const at = (text: string, needle: string, delta = 0) => {
 };
 const titles = (lenses: { command: { title: string } }[]) => lenses.map((l) => l.command.title);
 
-test("the language server: status lenses, save commands, watch values, hovers, ucm diagnostics", async () => {
+test("the language server: status lenses, save commands, watch values, hovers, tcm diagnostics", async () => {
   spawnSync(process.execPath, [BIN, "init"], { cwd: dir, env });
   const file = path.join(dir, "scratch.ts");
   const uri = pathToFileURL(file).href;
-  const text = `// ucm: namespace lib
+  const text = `// tcm: namespace lib
 /** Square a number. */
 export const square = (x: number): number => x * x;
 export const testSquare = () => {
@@ -86,7 +86,7 @@ square(12);
   const c = client();
   const init = await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir).href, capabilities: {}, clientInfo: { name: "test" } });
   assert.ok(init.capabilities.codeLensProvider && init.capabilities.inlayHintProvider && init.capabilities.hoverProvider);
-  assert.deepEqual(init.capabilities.executeCommandProvider.commands, ["ucm.add", "ucm.update", "ucm.mv", "ucm.edit", "ucm.dataMigrate"]);
+  assert.deepEqual(init.capabilities.executeCommandProvider.commands, ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.dataMigrate"]);
   c.notify("initialized", {});
   c.notify("textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text } });
   const doc = { textDocument: { uri } };
@@ -105,7 +105,7 @@ square(12);
   assert.ok(titles(lenses).includes("✓ passed"), titles(lenses).join(" | "));
 
   // the Add action saves to the codebase; the lenses then show the hash
-  const added = await c.request("workspace/executeCommand", { command: "ucm.add", arguments: [uri] });
+  const added = await c.request("workspace/executeCommand", { command: "tcm.add", arguments: [uri] });
   assert.equal(added, true);
   await c.waitFor(() => c.notes.find((n) => n.method === "window/showMessage" && /\+ new\s+lib\.square/.test(n.params.message)));
   lenses = await c.request("textDocument/codeLens", doc);
@@ -117,7 +117,7 @@ square(12);
   lenses = await c.request("textDocument/codeLens", doc);
   assert.match(titles(lenses)[0]!, /^~ update lib\.square \(was #[a-z2-7]{8}\)$/);
   assert.equal(titles(lenses)[1], "Update codebase");
-  assert.equal(await c.request("workspace/executeCommand", { command: "ucm.update", arguments: [uri] }), null);
+  assert.equal(await c.request("workspace/executeCommand", { command: "tcm.update", arguments: [uri] }), null);
   await c.waitFor(() => c.notes.find((n) => n.method === "window/showMessage" && /Save scratch\.ts first/.test(n.params.message)));
 
   // hovers: a definition in the file, and a codebase name imported elsewhere
@@ -135,17 +135,17 @@ square(12);
   assert.match(imported.contents.value, /\*\*lib\.square\*\*/);
   assert.match(imported.contents.value, /1 named dependent\n/, "testSquare uses it");
 
-  // ucm's own errors are diagnostics; type errors are TypeScript's to report, and stop hashing
+  // tcm's own errors are diagnostics; type errors are TypeScript's to report, and stop hashing
   const withLet = text + "let counter = 0;\n";
   c.notify("textDocument/didChange", { textDocument: { uri, version: 4 }, contentChanges: [{ text: withLet }] });
   const diag = await c.waitFor(() => c.notes.findLast((n) => n.method === "textDocument/publishDiagnostics" && n.params.uri === uri && n.params.version === 4));
-  assert.equal(diag.params.diagnostics[0].source, "ucm");
+  assert.equal(diag.params.diagnostics[0].source, "tcm");
   assert.match(diag.params.diagnostics[0].message, /top-level `let`/);
   assert.equal(diag.params.diagnostics[0].range.start.line, 8);
   const typeError = text.replace("square(12)", 'square("12")');
   c.notify("textDocument/didChange", { textDocument: { uri, version: 5 }, contentChanges: [{ text: typeError }] });
   lenses = await c.request("textDocument/codeLens", doc);
-  assert.deepEqual(titles(lenses), ["ucm: 1 type error; nothing hashed until they're fixed"]);
+  assert.deepEqual(titles(lenses), ["tcm: 1 type error; nothing hashed until they're fixed"]);
 
   await c.request("shutdown", null);
   c.notify("exit", null);
@@ -153,21 +153,21 @@ square(12);
 });
 
 test("the codebase in the editor: tree, rendered views, definition, references, symbols, type search, edit", async () => {
-  const dir2 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ucm lsp2 ")));
-  const ucm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: dir2, env, encoding: "utf8" });
-  ucm("init");
+  const dir2 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "tcm lsp2 ")));
+  const tcm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: dir2, env, encoding: "utf8" });
+  tcm("init");
   fs.writeFileSync(
     path.join(dir2, "scratch.ts"),
-    `// ucm: namespace geo
+    `// tcm: namespace geo
 export type Point = { x: number; y: number };
 /** Distance between two points. */
 export const dist = (a: Point, b: Point): number => Math.hypot(a.x - b.x, a.y - b.y);
 export const perimeter = (ps: Point[]): number => ps.reduce((n, p, i) => n + dist(p, ps[(i + 1) % ps.length]!), 0);
 `,
   );
-  ucm("add");
-  fs.writeFileSync(path.join(dir2, "scratch.ts"), `// ucm: namespace app\nimport { dist } from "#codebase/geo";\n\nexport const far = (n: number) => dist({ x: 0, y: 0 }, { x: n, y: n }) > 10;\n`);
-  ucm("add");
+  tcm("add");
+  fs.writeFileSync(path.join(dir2, "scratch.ts"), `// tcm: namespace app\nimport { dist } from "#codebase/geo";\n\nexport const far = (n: number) => dist({ x: 0, y: 0 }, { x: n, y: n }) > 10;\n`);
+  tcm("add");
   const scratchText = `import { perimeter } from "#codebase/geo";\n\nperimeter([]);\n`;
   fs.writeFileSync(path.join(dir2, "scratch.ts"), scratchText);
 
@@ -176,71 +176,71 @@ export const perimeter = (ps: Point[]): number => ps.reduce((n, p, i) => n + dis
   c.notify("initialized", {});
 
   // the namespace tree
-  const root = await c.request("ucm/tree", { namespace: "" });
+  const root = await c.request("tcm/tree", { namespace: "" });
   assert.deepEqual(root.namespaces.map((n: any) => [n.name, n.count]), [["app", 1], ["geo", 3]]);
-  const geo = await c.request("ucm/tree", { namespace: "geo" });
+  const geo = await c.request("tcm/tree", { namespace: "geo" });
   assert.deepEqual(geo.definitions.map((d: any) => [d.name, d.kind]), [["Point", "type"], ["dist", "term"], ["perimeter", "term"]]);
   assert.equal(geo.definitions[1].doc, "Distance between two points.");
-  assert.equal(geo.definitions[1].uri, "ucm:/geo/dist.ts");
+  assert.equal(geo.definitions[1].uri, "tcm:/geo/dist.ts");
 
   // a definition's view: rendered with current names, references link to their definitions
-  const perim = await c.request("ucm/source", { uri: "ucm:/geo/perimeter.ts" });
+  const perim = await c.request("tcm/source", { uri: "tcm:/geo/perimeter.ts" });
   assert.match(perim.text, /^\/\/ geo\.perimeter #[a-z2-7]{8}\n/);
   assert.match(perim.text, /import \{ dist \} from "#codebase\/geo";/);
-  const def = await c.request("textDocument/definition", { textDocument: { uri: "ucm:/geo/perimeter.ts" }, position: at(perim.text, "dist(p", 1) });
-  assert.equal(def.uri, "ucm:/geo/dist.ts");
-  const distText = (await c.request("ucm/source", { uri: "ucm:/geo/dist.ts" })).text;
+  const def = await c.request("textDocument/definition", { textDocument: { uri: "tcm:/geo/perimeter.ts" }, position: at(perim.text, "dist(p", 1) });
+  assert.equal(def.uri, "tcm:/geo/dist.ts");
+  const distText = (await c.request("tcm/source", { uri: "tcm:/geo/dist.ts" })).text;
   assert.equal(distText.split("\n")[def.range.start.line]!.slice(def.range.start.character, def.range.end.character), "dist");
 
   // references: from a view, and from a codebase name in a scratch file, across the codebase
-  const fromView = await c.request("textDocument/references", { textDocument: { uri: "ucm:/geo/dist.ts" }, position: def.range.start, context: { includeDeclaration: false } });
-  assert.deepEqual(fromView.map((l: any) => l.uri).sort(), ["ucm:/app/far.ts", "ucm:/geo/perimeter.ts"]);
+  const fromView = await c.request("textDocument/references", { textDocument: { uri: "tcm:/geo/dist.ts" }, position: def.range.start, context: { includeDeclaration: false } });
+  assert.deepEqual(fromView.map((l: any) => l.uri).sort(), ["tcm:/app/far.ts", "tcm:/geo/perimeter.ts"]);
   const uri = pathToFileURL(path.join(dir2, "scratch.ts")).href;
   c.notify("textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text: scratchText } });
   // Cmd+click on a codebase name in a scratch file goes to its source; local names are TypeScript's
   const toSource = await c.request("textDocument/definition", { textDocument: { uri }, position: at(scratchText, "perimeter([", 2) });
-  assert.equal(toSource.uri, "ucm:/geo/perimeter.ts");
+  assert.equal(toSource.uri, "tcm:/geo/perimeter.ts");
   assert.equal(await c.request("textDocument/definition", { textDocument: { uri }, position: { line: 2, character: 12 } }), null, "not a name");
   const fromScratch = await c.request("textDocument/references", { textDocument: { uri }, position: at(scratchText, "perimeter([", 2), context: { includeDeclaration: true } });
-  assert.deepEqual(fromScratch.map((l: any) => l.uri), ["ucm:/geo/perimeter.ts"], "the declaration; nothing uses it yet");
+  assert.deepEqual(fromScratch.map((l: any) => l.uri), ["tcm:/geo/perimeter.ts"], "the declaration; nothing uses it yet");
 
   // lenses on a view: who uses it, edit, rename
-  const lenses = await c.request("textDocument/codeLens", { textDocument: { uri: "ucm:/geo/dist.ts" } });
+  const lenses = await c.request("textDocument/codeLens", { textDocument: { uri: "tcm:/geo/dist.ts" } });
   assert.deepEqual(titles(lenses), ["2 dependents", "Edit", "Rename"]);
 
   // outline, workspace symbols, hover in a view
-  const symbols = await c.request("textDocument/documentSymbol", { textDocument: { uri: "ucm:/geo/dist.ts" } });
+  const symbols = await c.request("textDocument/documentSymbol", { textDocument: { uri: "tcm:/geo/dist.ts" } });
   assert.equal(symbols[0].name, "dist");
   const found = await c.request("workspace/symbol", { query: "per" });
   assert.deepEqual(found.map((s: any) => [s.name, s.containerName]), [["perimeter", "geo"]]);
-  const hover = await c.request("textDocument/hover", { textDocument: { uri: "ucm:/geo/perimeter.ts" }, position: at(perim.text, "dist(p", 1) });
+  const hover = await c.request("textDocument/hover", { textDocument: { uri: "tcm:/geo/perimeter.ts" }, position: at(perim.text, "dist(p", 1) });
   assert.match(hover.contents.value, /Distance between two points\./);
 
   // search by type, for a picker
-  const byType = await c.request("ucm/findByType", { query: "(a: Point, b: Point) => number" });
-  assert.deepEqual(byType.hits.map((h: any) => [h.path, h.uri]), [["geo.dist", "ucm:/geo/dist.ts"]]);
+  const byType = await c.request("tcm/findByType", { query: "(a: Point, b: Point) => number" });
+  assert.deepEqual(byType.hits.map((h: any) => [h.path, h.uri]), [["geo.dist", "tcm:/geo/dist.ts"]]);
 
   // edit: into a free scratch file, which the client then opens
-  const edited = await c.request("workspace/executeCommand", { command: "ucm.edit", arguments: ["geo.dist"] });
+  const edited = await c.request("workspace/executeCommand", { command: "tcm.edit", arguments: ["geo.dist"] });
   assert.equal(edited, pathToFileURL(path.join(dir2, "edit.ts")).href, "scratch.ts is taken");
   assert.match(fs.readFileSync(path.join(dir2, "edit.ts"), "utf8"), /const dist = \(a: Point, b: Point\)/);
 
   // a change made elsewhere (a terminal) reaches the client
   c.notes.length = 0;
-  ucm("mv", "geo.dist", "geo.distance");
-  await c.waitFor(() => c.notes.find((n) => n.method === "ucm/changed"));
-  const moved = await c.request("ucm/tree", { namespace: "geo" });
+  tcm("mv", "geo.dist", "geo.distance");
+  await c.waitFor(() => c.notes.find((n) => n.method === "tcm/changed"));
+  const moved = await c.request("tcm/tree", { namespace: "geo" });
   assert.ok(moved.definitions.some((d: any) => d.name === "distance"));
 });
 
 test("apps and data in the editor: roles, an app's parts, tables, rows, migrating", async () => {
-  const dir3 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ucm lsp3 ")));
-  const ucm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: dir3, env, encoding: "utf8" });
-  ucm("init");
+  const dir3 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "tcm lsp3 ")));
+  const tcm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: dir3, env, encoding: "utf8" });
+  tcm("init");
   fs.writeFileSync(
     path.join(dir3, "scratch.ts"),
-    `// ucm: namespace shop
-import { table, every } from "#ucm/server";
+    `// tcm: namespace shop
+import { table, every } from "#tcm/server";
 export type Item = { name: string; price: number };
 export const items = table<Item>("items", { migrate: (old: { name: string }) => ({ name: old.name, price: 0 }) });
 export async function listItems(): Promise<string[]> {
@@ -257,12 +257,12 @@ export const testFormat = () => {
 };
 `,
   );
-  assert.equal(ucm("add").status, 0, ucm("add").stdout);
+  assert.equal(tcm("add").status, 0, tcm("add").stdout);
   fs.writeFileSync(path.join(dir3, "scratch.ts"), "");
   // rows an app wrote: one of the current type, one of an older one
-  const schema = JSON.parse(spawnSync("sqlite3", [path.join(dir3, ".ucm", "codebase.sqlite"), "select value from metadata where key = 'table'"], { encoding: "utf8" }).stdout).hash;
-  fs.mkdirSync(path.join(dir3, ".ucm", "data"), { recursive: true });
-  const store = new DatabaseSync(path.join(dir3, ".ucm", "data", "store.sqlite"));
+  const schema = JSON.parse(spawnSync("sqlite3", [path.join(dir3, ".tcm", "codebase.sqlite"), "select value from metadata where key = 'table'"], { encoding: "utf8" }).stdout).hash;
+  fs.mkdirSync(path.join(dir3, ".tcm", "data"), { recursive: true });
+  const store = new DatabaseSync(path.join(dir3, ".tcm", "data", "store.sqlite"));
   store.exec(`CREATE TABLE rows (tbl TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, schema_hash TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (tbl, id));
     CREATE TABLE schemas (tbl TEXT NOT NULL, hash TEXT NOT NULL, schema TEXT NOT NULL, first_seen INTEGER NOT NULL, PRIMARY KEY (tbl, hash));`);
   store.prepare("INSERT INTO rows VALUES ('items', 'a1', ?, ?, 2)").run(JSON.stringify({ name: "apple", price: 3 }), schema);
@@ -274,14 +274,14 @@ export const testFormat = () => {
   c.notify("initialized", {});
 
   // each definition says what it's for
-  const shop = await c.request("ucm/tree", { namespace: "shop" });
+  const shop = await c.request("tcm/tree", { namespace: "shop" });
   const roles = Object.fromEntries(shop.definitions.map((d: any) => [d.name, d.role]));
   assert.deepEqual(roles, { Item: "type", cleanup: "shared", format: "shared", items: "table", listItems: "server", main: "app", nightly: "schedule", testFormat: "test" });
   assert.equal(shop.definitions.find((d: any) => d.name === "listItems").endpoint, true);
   assert.equal(shop.definitions.find((d: any) => d.name === "testFormat").place, undefined, "a test's placement is noise");
 
   // the app, and what it's made of
-  const [app] = await c.request("ucm/apps", {});
+  const [app] = await c.request("tcm/apps", {});
   assert.equal(app.path, "shop.main");
   assert.deepEqual(app.endpoints.map((e: any) => e.path), ["shop.listItems"]);
   assert.deepEqual(app.browser.map((e: any) => e.path), ["shop.format", "shop.main"]);
@@ -290,38 +290,38 @@ export const testFormat = () => {
   assert.deepEqual(app.tests.map((t: any) => t.path), ["shop.testFormat"]);
 
   // the data: tables, a page of rows, a row in full
-  const [items] = await c.request("ucm/data", {});
+  const [items] = await c.request("tcm/data", {});
   assert.deepEqual([items.table, items.rows, items.older, items.path], ["items", 2, 1, "shop.items"]);
   // a page for the table viewer: typed columns, cells, older rows marked; sorted and searched in SQL
-  const page = await c.request("ucm/rows", { table: "items", offset: 0, limit: 10 });
+  const page = await c.request("tcm/rows", { table: "items", offset: 0, limit: 10 });
   assert.equal(page.total, 2);
   assert.deepEqual(page.fields, [{ name: "name", type: "string" }, { name: "price", type: "number" }]);
   assert.deepEqual(page.rows.map((r: any) => [r.id, r.cells.name, r.cells.price, r.older]), [["a1", "apple", "3", false], ["p1", "pear", "", true]]);
-  const byName = await c.request("ucm/rows", { table: "items", offset: 0, limit: 10, sort: { field: "name", desc: true } });
+  const byName = await c.request("tcm/rows", { table: "items", offset: 0, limit: 10, sort: { field: "name", desc: true } });
   assert.deepEqual(byName.rows.map((r: any) => r.id), ["p1", "a1"]);
-  const found = await c.request("ucm/rows", { table: "items", offset: 0, limit: 10, search: "APP" });
+  const found = await c.request("tcm/rows", { table: "items", offset: 0, limit: 10, search: "APP" });
   assert.deepEqual([found.total, found.rows.map((r: any) => r.id)], [1, ["a1"]]);
   const rows = page.rows;
-  const row = await c.request("ucm/source", { uri: rows[0].uri });
+  const row = await c.request("tcm/source", { uri: rows[0].uri });
   assert.match(row.text, /^\/\/ table "items", row a1: written .* as row type #/);
-  assert.match((await c.request("ucm/source", { uri: "ucm:/.data/items.txt" })).text, /\/\/ table "items": 2 rows\n\na1  \{ name: 'apple', price: 3 \}\np1/);
+  assert.match((await c.request("tcm/source", { uri: "tcm:/.data/items.txt" })).text, /\/\/ table "items": 2 rows\n\na1  \{ name: 'apple', price: 3 \}\np1/);
 
   // migrate the older row from the editor; the client hears the data changed
   c.notes.length = 0;
-  assert.equal(await c.request("workspace/executeCommand", { command: "ucm.dataMigrate", arguments: ["items"] }), true);
-  await c.waitFor(() => c.notes.find((n) => n.method === "ucm/dataChanged"));
-  const after = await c.request("ucm/data", {});
+  assert.equal(await c.request("workspace/executeCommand", { command: "tcm.dataMigrate", arguments: ["items"] }), true);
+  await c.waitFor(() => c.notes.find((n) => n.method === "tcm/dataChanged"));
+  const after = await c.request("tcm/data", {});
   assert.equal(after[0].older, 0);
-  assert.equal((await c.request("ucm/rows", { table: "items", offset: 0, limit: 10 })).rows.find((r: any) => r.id === "p1").summary, "{ name: 'pear', price: 0 }");
+  assert.equal((await c.request("tcm/rows", { table: "items", offset: 0, limit: 10 })).rows.find((r: any) => r.id === "p1").summary, "{ name: 'pear', price: 0 }");
 });
 
 test("pages: a definition's rendered doc and linked source, a namespace's README, and the finder", async () => {
-  const dir4 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ucm lsp4 ")));
-  const ucm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: dir4, env, encoding: "utf8" });
-  ucm("init");
+  const dir4 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "tcm lsp4 ")));
+  const tcm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: dir4, env, encoding: "utf8" });
+  tcm("init");
   fs.writeFileSync(
     path.join(dir4, "scratch.ts"),
-    `// ucm: namespace geo
+    `// tcm: namespace geo
 /** A point on the plane. */
 export type Point = { x: number; y: number };
 /**
@@ -342,19 +342,19 @@ export const perimeter = (ps: Point[]): number => ps.reduce((n, p, i) => n + dis
 export type README = never;
 `,
   );
-  assert.equal(ucm("add").status, 0);
-  const dist = spawnSync("sqlite3", [path.join(dir4, ".ucm", "codebase.sqlite"), "select hash from names where path = 'geo.dist'"], { encoding: "utf8" }).stdout.trim();
-  const pointHash = spawnSync("sqlite3", [path.join(dir4, ".ucm", "codebase.sqlite"), "select hash from names where path = 'geo.Point'"], { encoding: "utf8" }).stdout.trim();
+  assert.equal(tcm("add").status, 0);
+  const dist = spawnSync("sqlite3", [path.join(dir4, ".tcm", "codebase.sqlite"), "select hash from names where path = 'geo.dist'"], { encoding: "utf8" }).stdout.trim();
+  const pointHash = spawnSync("sqlite3", [path.join(dir4, ".tcm", "codebase.sqlite"), "select hash from names where path = 'geo.Point'"], { encoding: "utf8" }).stdout.trim();
 
   const c = client();
   await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir4).href, capabilities: {}, clientInfo: { name: "Visual Studio Code" } });
   c.notify("initialized", {});
 
   // a definition's page: rendered doc (links by hash, the example evaluated), source with references as links
-  const page = await c.request("ucm/page", { path: "geo.dist" });
+  const page = await c.request("tcm/page", { path: "geo.dist" });
   assert.equal(page.hash, dist);
   assert.deepEqual(page.names, ["geo.dist"]);
-  assert.match(page.docMarkdown, new RegExp(`Distance between two \\[\`Point\`\\]\\(ucm-page:${pointHash}\\)s\\.`));
+  assert.match(page.docMarkdown, new RegExp(`Distance between two \\[\`Point\`\\]\\(tcm-page:${pointHash}\\)s\\.`));
   assert.match(page.docMarkdown, /```text\n⧩ 5\n```/);
   assert.match(page.sourceHtml, new RegExp(`<a class="ref t" data-hash="${pointHash}">Point</a>`));
   assert.match(page.sourceHtml, /<span class="k">const<\/span>/);
@@ -362,16 +362,16 @@ export type README = never;
   assert.deepEqual(page.usedBy.map((u: any) => u.name), ["geo.perimeter"]);
 
   // a namespace's page: its README rendered, then what's in it by role
-  const ns = await c.request("ucm/namespace", { namespace: "geo" });
-  assert.match(ns.readme, /^# Geometry\n\nPoints and distances\. Start with \[`dist`\]\(ucm-page:/);
+  const ns = await c.request("tcm/namespace", { namespace: "geo" });
+  assert.match(ns.readme, /^# Geometry\n\nPoints and distances\. Start with \[`dist`\]\(tcm-page:/);
   assert.deepEqual(ns.definitions.map((d: any) => [d.name, d.role]), [["Point", "type"], ["dist", "shared"], ["perimeter", "shared"]]);
   assert.equal(ns.definitions[0].summary, "A point on the plane.");
 
   // the finder: names (best first), words in docs, and types
-  const byName = await c.request("ucm/find", { query: "dist" });
+  const byName = await c.request("tcm/find", { query: "dist" });
   assert.equal(byName[0].path, "geo.dist");
-  const byDoc = await c.request("ucm/find", { query: "outside" });
+  const byDoc = await c.request("tcm/find", { query: "outside" });
   assert.deepEqual(byDoc.map((i: any) => [i.path, i.match]), [["geo.perimeter", "doc"]]);
-  const byType = await c.request("ucm/find", { query: "(a: Point, b: Point) => number" });
+  const byType = await c.request("tcm/find", { query: "(a: Point, b: Point) => number" });
   assert.deepEqual(byType.map((i: any) => [i.path, i.match]), [["geo.dist", "type"]]);
 });

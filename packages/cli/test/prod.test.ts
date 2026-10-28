@@ -6,16 +6,16 @@ import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const BIN = process.env.UCM_BIN ? path.resolve(process.env.UCM_BIN) : fileURLToPath(new URL("../bin/ucm.js", import.meta.url));
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ucm prod "));
+const BIN = process.env.TCM_BIN ? path.resolve(process.env.TCM_BIN) : fileURLToPath(new URL("../bin/tcm.js", import.meta.url));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcm prod "));
 const env = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" };
 const children: ChildProcess[] = [];
 after(() => children.forEach((c) => c.kill()));
 
-function ucm(...args: string[]): string {
+function tcm(...args: string[]): string {
   const r = spawnSync(process.execPath, [BIN, ...args], { cwd: dir, encoding: "utf8", env });
   const out = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "");
-  if (r.status !== 0) throw new Error(`ucm ${args.join(" ")} exited ${r.status}:\n${out}`);
+  if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} exited ${r.status}:\n${out}`);
   return out;
 }
 const scratch = (text: string) => fs.writeFileSync(path.join(dir, "scratch.ts"), text);
@@ -44,20 +44,20 @@ async function loadTab(url: string) {
 }
 
 const call = async (url: string, hash: string, args: unknown[]) => {
-  const r = await get(new URL(`/__ucm/rpc/${hash}`, url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) });
+  const r = await get(new URL(`/__tcm/rpc/${hash}`, url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) });
   return { status: r.status, body: await r.text() };
 };
 
-test("ucm build / start: deploy and roll back by moving a name; open tabs keep working", async () => {
-  ucm("init");
+test("tcm build / start: deploy and roll back by moving a name; open tabs keep working", async () => {
+  tcm("init");
   fs.rmSync(path.join(dir, "scratch.ts"));
-  scratch(`// ucm: namespace app
+  scratch(`// tcm: namespace app
 import { hostname } from "node:os";
 export async function greeting(name: string): Promise<string> { return "hello " + name + " from " + hostname(); }
 export async function main() { document.querySelector("#app")!.textContent = await greeting("ada"); }
 `);
-  ucm("add");
-  assert.match(ucm("build", "app.main"), /built app\.main/);
+  tcm("add");
+  assert.match(tcm("build", "app.main"), /built app\.main/);
 
   const child = spawn(process.execPath, [BIN, "start", "app.main", "--port", "0"], { cwd: dir, env });
   children.push(child);
@@ -80,8 +80,8 @@ export async function main() { document.querySelector("#app")!.textContent = awa
 
   // deploy: update the server function; the server builds and switches by itself
   // (still using Node, so it stays on the server; without hostname() it would move into the browser bundle)
-  scratch(`// ucm: namespace app\nimport { hostname } from "node:os";\nexport async function greeting(name: string): Promise<string> { return "hi " + name + " (v2 on " + hostname() + ")"; }\n`);
-  ucm("update");
+  scratch(`// tcm: namespace app\nimport { hostname } from "node:os";\nexport async function greeting(name: string): Promise<string> { return "hi " + name + " (v2 on " + hostname() + ")"; }\n`);
+  tcm("update");
   await waitFor(() => /deployed app\.main/.test(out));
   const v2 = await loadTab(url);
   assert.notEqual(v2.asset, v1.asset);
@@ -92,15 +92,15 @@ export async function main() { document.querySelector("#app")!.textContent = awa
   assert.equal((await call(url, v1.endpoint, ["ada"])).body, `"hello ada from ${os.hostname()}"`);
 
   // roll back by moving the names back: the v1 build is reused
-  const before = /^\s*(\d+)\s.*app\.greeting.*update scratch\.ts/m.exec(ucm("history", "50"))![1]!;
-  ucm("reset", String(Number(before) - 1));
+  const before = /^\s*(\d+)\s.*app\.greeting.*update scratch\.ts/m.exec(tcm("history", "50"))![1]!;
+  tcm("reset", String(Number(before) - 1));
   await waitFor(async () => (await loadTab(url)).asset === v1.asset);
 
   // pruning: keep only the current build; a tab still on the removed v2 build is told to reload (410)
-  const apps = ucm("apps");
+  const apps = tcm("apps");
   assert.equal(apps.trim().split("\n").length, 2, "both builds are listed");
   assert.match(apps, new RegExp(`\\* app\\.main\\s+#${v1.asset.split("/")[2]!.slice(0, 8)}`), "the rolled-back-to build is current");
-  assert.match(ucm("apps", "prune", "--keep", "0"), /removed 1 build/);
+  assert.match(tcm("apps", "prune", "--keep", "0"), /removed 1 build/);
   await waitFor(async () => (await call(url, v2.endpoint, ["ada"])).status === 410);
   assert.equal((await get(new URL(v2.asset, url))).status, 404);
   assert.equal((await call(url, v1.endpoint, ["ada"])).status, 200, "the current build is untouched");
@@ -121,12 +121,12 @@ test("the browser runtime reloads a page whose build was retired", async () => {
     assert.equal(settled, "pending", "and the stale call never resolves with stale data");
   } finally {
     Object.assign(g, saved);
-    delete g.__ucmReloading;
+    delete g.__tcmReloading;
   }
 });
 
 test("module-level state is placed by who uses it, and split state is flagged", () => {
-  scratch(`// ucm: namespace st
+  scratch(`// tcm: namespace st
 import { hostname } from "node:os";
 export const visits = new Map<string, number>();
 export const recent: string[] = [];
@@ -135,20 +135,20 @@ export const frozen = { a: 1 } as const;
 export async function whoami(name: string): Promise<string> { visits.set(name, 1); shared.hits++; return hostname() + String(frozen.a); }
 export async function app() { recent.push("x"); shared.hits++; document.title = await whoami("ada"); }
 `);
-  ucm("add");
-  const out = ucm("build", "st.app");
+  tcm("add");
+  const out = tcm("build", "st.app");
   assert.match(out, /state\s+st\.visits on the server, shared by every client/);
   assert.match(out, /state\s+st\.recent in the browser, one copy per tab/);
   assert.match(out, /warning\s+st\.shared is used by both browser and server code/);
   assert.doesNotMatch(out, /st\.frozen/, "an `as const` value isn't mutable state");
 });
 
-test("ucm push deploys: a running `ucm start` on the other side builds and switches", async () => {
-  const server = fs.mkdtempSync(path.join(os.tmpdir(), "ucm deploy-server "));
-  const laptop = fs.mkdtempSync(path.join(os.tmpdir(), "ucm deploy-laptop "));
+test("tcm push deploys: a running `tcm start` on the other side builds and switches", async () => {
+  const server = fs.mkdtempSync(path.join(os.tmpdir(), "tcm deploy-server "));
+  const laptop = fs.mkdtempSync(path.join(os.tmpdir(), "tcm deploy-laptop "));
   const at = (cwd: string, ...args: string[]) => {
     const r = spawnSync(process.execPath, [BIN, ...args], { cwd, encoding: "utf8", env });
-    if (r.status !== 0) throw new Error(`ucm ${args.join(" ")} in ${cwd}: ${r.stdout}${r.stderr}`);
+    if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} in ${cwd}: ${r.stdout}${r.stderr}`);
     return r.stdout;
   };
   at(server, "init");
@@ -156,7 +156,7 @@ test("ucm push deploys: a running `ucm start` on the other side builds and switc
   const app = (version: string) =>
     fs.writeFileSync(
       path.join(laptop, "scratch.ts"),
-      `// ucm: namespace web
+      `// tcm: namespace web
 import { hostname } from "node:os";
 export async function hello(): Promise<string> { return "${version} " + hostname(); }
 export async function main() { document.body.textContent = await hello(); }

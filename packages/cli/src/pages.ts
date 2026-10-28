@@ -2,8 +2,8 @@
 // examples), its source highlighted with every reference a link, where it runs, what it uses and what uses it.
 // Plus the search behind the editor's finder. The language server sends these to the editor as data.
 import ts from "typescript";
-import { shortHash, type DefRecord } from "@ucm/core";
-import { render } from "@ucm/loader";
+import { SERVER_API_MODULE, shortHash, type DefRecord } from "@tcm/core";
+import { render } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 import type { Placement } from "./placement.ts";
 import { renderDoc } from "./docs.ts";
@@ -63,7 +63,7 @@ export function highlight(text: string, refs: { start: number; end: number; hash
 }
 
 export interface PageLinks {
-  /** where a definition's text document is (`ucm:/lib/square.ts`) */
+  /** where a definition's text document is (`tcm:/lib/square.ts`) */
   viewUri(hash: string): string;
 }
 
@@ -77,7 +77,7 @@ export function definitionPage(cb: Codebase, hash: string, placement: Placement,
   const r = render([{ ...rec, doc: undefined }], cb.source(), cb.lay, { style: "scratch", exportDeclarations: true });
   const deps = [...new Set(rec.deps.filter((d) => d.ref.startsWith("#") && d.ref !== `#${hash}`).map((d) => d.ref.slice(1)))];
   const typeHashes = new Set([...deps, hash].filter((h) => cb.store.getDef(h)?.kind === "type"));
-  const doc = renderDoc(cb, rec, { evaluate: true, link: (h) => `ucm-page:${h}` });
+  const doc = renderDoc(cb, rec, { evaluate: true, link: (h) => `tcm-page:${h}` });
   const where = rec.kind === "term" ? placement.placeOf(hash) : undefined;
   const isTest = rec.kind !== "type" && names.some(isTestPath);
   const test = isTest ? cb.store.testResult(hash, process.version) : undefined;
@@ -95,8 +95,8 @@ export function definitionPage(cb: Codebase, hash: string, placement: Placement,
     docProblems: doc?.problems ?? [],
     sourceHtml: highlight(r.text.trimEnd(), r.refs.filter((x) => x.hash !== hash || x.from !== hash), typeHashes),
     uses: deps.map(item).sort((a, b) => (a.name < b.name ? -1 : 1)),
-    // what it imports from outside the codebase, as written in code: a package, a Node builtin, #ucm/server
-    externals: [...new Set(rec.spans.flatMap((s) => (s.ext ? [s.ext.module === "ucm:server" ? "#ucm/server" : s.ext.module.replace(/^npm:/, "")] : [])))],
+    // what it imports from outside the codebase, as written in code: a package, a Node builtin, #tcm/server
+    externals: [...new Set(rec.spans.flatMap((s) => (s.ext ? [s.ext.module === SERVER_API_MODULE ? "#tcm/server" : s.ext.module.replace(/^npm:/, "")] : [])))],
     usedBy: [...new Set(cb.store.dependents(hash))].filter((d) => d !== hash && cb.store.pathsOf(d).length).map(item).sort((a, b) => (a.name < b.name ? -1 : 1)),
     uri: links.viewUri(hash),
   };

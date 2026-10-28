@@ -8,22 +8,22 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { CHROME, pageText } from "./browser.ts";
 
-const BIN = process.env.UCM_BIN ? path.resolve(process.env.UCM_BIN) : fileURLToPath(new URL("../bin/ucm.js", import.meta.url));
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ucm web "));
+const BIN = process.env.TCM_BIN ? path.resolve(process.env.TCM_BIN) : fileURLToPath(new URL("../bin/tcm.js", import.meta.url));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcm web "));
 const env = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" };
 const children: ChildProcess[] = [];
 after(() => children.forEach((c) => c.kill()));
 
-function ucm(...args: string[]): string {
+function tcm(...args: string[]): string {
   const r = spawnSync(process.execPath, [BIN, ...args], { cwd: dir, encoding: "utf8", env });
   const out = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "");
-  if (r.status !== 0) throw new Error(`ucm ${args.join(" ")} exited ${r.status}:\n${out}`);
+  if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} exited ${r.status}:\n${out}`);
   return out;
 }
 const scratch = (text: string) => fs.writeFileSync(path.join(dir, "scratch.ts"), text);
-/** The full hash a name points to (`ucm ls` shows short ones). */
+/** The full hash a name points to (`tcm ls` shows short ones). */
 function hashOf(name: string): string {
-  const db = new DatabaseSync(path.join(dir, ".ucm", "codebase.sqlite"), { readOnly: true });
+  const db = new DatabaseSync(path.join(dir, ".tcm", "codebase.sqlite"), { readOnly: true });
   try {
     return (db.prepare("SELECT hash FROM names WHERE path = ?").get(name) as { hash: string }).hash;
   } finally {
@@ -31,7 +31,7 @@ function hashOf(name: string): string {
   }
 }
 
-/** Start `ucm dev`; resolves with its URL and a way to wait for more output. */
+/** Start `tcm dev`; resolves with its URL and a way to wait for more output. */
 function startDev(app: string): Promise<{ url: string; output: () => string }> {
   const child = spawn(process.execPath, [BIN, "dev", app, "--port", "0"], { cwd: dir, env });
   children.push(child);
@@ -46,7 +46,7 @@ function startDev(app: string): Promise<{ url: string; output: () => string }> {
         resolve({ url: m[1]!, output: () => out });
       }
     }, 50);
-    child.on("exit", (code) => reject(new Error(`ucm dev exited ${code}:\n${out}`)));
+    child.on("exit", (code) => reject(new Error(`tcm dev exited ${code}:\n${out}`)));
   });
 }
 
@@ -93,12 +93,12 @@ const waitFor = async (cond: () => boolean, ms = 8000) => {
 };
 
 const rpc = (url: string, hash: string, args: unknown[]) =>
-  get(new URL(`/__ucm/rpc/${hash}`, url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) }).then(async (r) => ({ status: r.status, body: await r.text() }));
+  get(new URL(`/__tcm/rpc/${hash}`, url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) }).then(async (r) => ({ status: r.status, body: await r.text() }));
 
-test("ucm dev: placement is inferred, server code never reaches the browser, calls cross by hash", async () => {
-  ucm("init");
+test("tcm dev: placement is inferred, server code never reaches the browser, calls cross by hash", async () => {
+  tcm("init");
   fs.rmSync(path.join(dir, "scratch.ts"));
-  scratch(`// ucm: namespace app
+  scratch(`// tcm: namespace app
 import { readFileSync } from "node:fs";
 const visits = new Map<string, number>();
 export async function lineCount(): Promise<number> { return readFileSync(${JSON.stringify(fileURLToPath(import.meta.url))}, "utf8").split("\\n").length; }
@@ -113,10 +113,10 @@ export async function main() {
   document.querySelector("#app")!.textContent = render(await lineCount(), v.n);
 }
 `);
-  ucm("add");
-  assert.match(ucm("view", "app.lineCount"), /runs on the server: it uses node:fs; browser code calls it by hash/);
-  assert.match(ucm("view", "app.main"), /runs in the browser: it uses document/);
-  assert.match(ucm("view", "app.render"), /runs anywhere/);
+  tcm("add");
+  assert.match(tcm("view", "app.lineCount"), /runs on the server: it uses node:fs; browser code calls it by hash/);
+  assert.match(tcm("view", "app.main"), /runs in the browser: it uses document/);
+  assert.match(tcm("view", "app.render"), /runs anywhere/);
 
   const { url, output } = await startDev("app.main");
   // the report is written in several pieces after the url line: wait for it rather than racing it
@@ -126,7 +126,7 @@ export async function main() {
   const modules = await crawl(url);
   const shipped = [...modules.values()].join("\n");
   for (const secret of ["readFileSync", "node:fs", "process.pid", "visits.set"]) assert.ok(!shipped.includes(secret), `${secret} must not reach the browser`);
-  assert.ok([...modules.keys()].some((u) => u.includes("ucm-stub")), "server components arrive as stubs");
+  assert.ok([...modules.keys()].some((u) => u.includes("tcm-stub")), "server components arrive as stubs");
   assert.ok(shipped.includes("lines ${lines}"), "browser code is shipped as code");
 
   // the endpoints: exactly the server functions the app calls; state stays on the server
@@ -144,8 +144,8 @@ export async function main() {
   }
 
   // an update in another process reloads the app
-  scratch(`// ucm: namespace app\nexport const render = (lines: number, n: number) => \`\${lines} lines (visit \${n})\`;\n`);
-  ucm("update");
+  scratch(`// tcm: namespace app\nexport const render = (lines: number, n: number) => \`\${lines} lines (visit \${n})\`;\n`);
+  tcm("update");
   const updated = hashOf("app.main");
   let entry = "";
   for (const end = Date.now() + 8000; Date.now() < end && !entry.includes(updated); await new Promise((r) => setTimeout(r, 150))) {
@@ -159,12 +159,12 @@ export async function main() {
   }
 
   // a synchronous server function can't be called across the network; the error names it
-  scratch(`// ucm: namespace app
+  scratch(`// tcm: namespace app
 import { hostname } from "node:os";
 export const machine = () => hostname();
 export async function main() { document.body.textContent = machine(); }
 `);
-  ucm("update");
+  tcm("update");
   await waitFor(() => /calls app\.machine, which runs on the server .* isn't async/.test(output()));
   assert.match(output(), /Make app\.machine async\./);
 });

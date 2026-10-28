@@ -1,6 +1,6 @@
-import type { DefRecord, WatchRecord } from "@ucm/core";
-import type { TestResult } from "@ucm/store";
-import { evaluateWatches, runTests, type DefSource, type WatchResult } from "@ucm/loader";
+import type { DefRecord, WatchRecord } from "@tcm/core";
+import type { TestResult } from "@tcm/store";
+import { evaluateWatches, runTests, type DefSource, type WatchResult } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 import { bold, dim, green, red } from "./style.ts";
 

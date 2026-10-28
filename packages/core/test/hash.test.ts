@@ -6,10 +6,10 @@ import path from "node:path";
 import type * as Core from "../src/index.ts";
 import type { Analysis } from "../src/index.ts";
 
-// UCM_CORE runs these tests against another build of the analyzer, e.g. the self-hosted one in selfhost/core.ts
-const { analyzeFile, analyzeProject } = (await import(process.env.UCM_CORE ? path.resolve(process.env.UCM_CORE) : "../src/index.ts")) as typeof Core;
+// TCM_CORE runs these tests against another build of the analyzer, e.g. the self-hosted one in selfhost/core.ts
+const { analyzeFile, analyzeProject } = (await import(process.env.TCM_CORE ? path.resolve(process.env.TCM_CORE) : "../src/index.ts")) as typeof Core;
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ucm-core-"));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcm-core-"));
 fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ type: "module" }));
 let n = 0;
 
@@ -17,7 +17,7 @@ function analyze(source: string): Analysis {
   const file = path.join(dir, `f${n++}.ts`);
   fs.writeFileSync(file, source);
   const a = analyzeFile(file, {
-    cacheDir: path.join(dir, ".ucm", "cache"),
+    cacheDir: path.join(dir, ".tcm", "cache"),
     resolveName: (name) => {
       throw new Error(`unknown ${name}`);
     },
@@ -124,7 +124,7 @@ function project(files: Record<string, string>) {
     fs.writeFileSync(file, text);
     return file;
   });
-  const a = analyzeProject(paths, { cacheDir: path.join(sub, ".ucm", "cache"), resolveName: () => "" });
+  const a = analyzeProject(paths, { cacheDir: path.join(sub, ".tcm", "cache"), resolveName: () => "" });
   assert.deepEqual([...a.diagnostics.map((d) => d.message), ...a.errors], []);
   return Object.fromEntries(a.defs.map((d) => [d.nameHint, d]));
 }
@@ -185,7 +185,7 @@ test("dynamic import() of a package is a pinned external dependency", () => {
 });
 
 test("parameter schemas check arguments arriving from the network", async () => {
-  const { checkArgs } = (await import(process.env.UCM_CORE ? path.resolve(process.env.UCM_CORE) : "../src/index.ts")) as typeof Core & { checkArgs?: typeof import("../src/schema.ts").checkArgs };
+  const { checkArgs } = (await import(process.env.TCM_CORE ? path.resolve(process.env.TCM_CORE) : "../src/index.ts")) as typeof Core & { checkArgs?: typeof import("../src/schema.ts").checkArgs };
   const [def] = analyze(`
     type Tree = { v: number; kids: Tree[] };
     export async function save(name: string, opts: { limit?: number; tags: string[] }, when: Date, mode: "a" | "b", tree: Tree, ...extra: number[]) {}
@@ -223,7 +223,7 @@ function fakeReact(root: string) {
 function analyzeTsx(source: string): Analysis {
   const file = path.join(dir, `f${n++}.tsx`);
   fs.writeFileSync(file, source);
-  const a = analyzeFile(file, { cacheDir: path.join(dir, ".ucm", "cache"), resolveName: (name) => { throw new Error(`unknown ${name}`); } });
+  const a = analyzeFile(file, { cacheDir: path.join(dir, ".tcm", "cache"), resolveName: (name) => { throw new Error(`unknown ${name}`); } });
   assert.deepEqual(a.diagnostics.map((d) => d.message), []);
   assert.deepEqual(a.errors, []);
   return a;

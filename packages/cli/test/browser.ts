@@ -18,7 +18,7 @@ export interface Page {
 /** Open `url` in a fresh headless Chrome, run `fn` against it, then close Chrome. */
 export async function withPage<R>(url: string, fn: (page: Page) => Promise<R>): Promise<R> {
   if (!CHROME) throw new Error("no Chrome installed");
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "ucm-chrome-"));
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "tcm-chrome-"));
   const chrome = spawn(CHROME, ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", `--user-data-dir=${profile}`, "--remote-debugging-port=0", "about:blank"]);
   try {
     const ws = await new Promise<string>((resolve, reject) => {

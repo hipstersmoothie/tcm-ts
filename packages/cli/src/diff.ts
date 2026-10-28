@@ -1,6 +1,6 @@
-import { shortHash, type DefKind, type IR } from "@ucm/core";
-import type { LogEntry, NameRow } from "@ucm/store";
-import { render } from "@ucm/loader";
+import { shortHash, type DefKind, type IR } from "@tcm/core";
+import type { LogEntry, NameRow } from "@tcm/store";
+import { render } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
 

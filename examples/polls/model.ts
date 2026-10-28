@@ -1,5 +1,5 @@
-// ucm: namespace polls
-// The model: plain functions over plain data. Nothing here touches Node or the DOM, so ucm places all of it
+// tcm: namespace polls
+// The model: plain functions over plain data. Nothing here touches Node or the DOM, so tcm places all of it
 // "anywhere": the server, the browser and tests share the same hashes.
 import assert from "node:assert/strict";
 

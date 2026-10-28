@@ -1,10 +1,10 @@
-// A TypeScript server plugin, loaded into VS Code's TypeScript server by the ucm-ts extension.
+// A TypeScript server plugin, loaded into VS Code's TypeScript server by the tcm-ts extension.
 //
-// Codebase definitions reach scratch files through generated modules (.ucm/codebase re-exports .ucm/cache/<hash>.ts),
-// so TypeScript's Go to Definition lands in generated code. The ucm language server answers the same request
-// with the definition's source (a ucm: document); this drops TypeScript's answers that point into generated
+// Codebase definitions reach scratch files through generated modules (.tcm/codebase re-exports .tcm/cache/<hash>.ts),
+// so TypeScript's Go to Definition lands in generated code. The tcm language server answers the same request
+// with the definition's source (a tcm: document); this drops TypeScript's answers that point into generated
 // modules, so Cmd+click goes straight to the source instead of offering both.
-const GENERATED = /[\\/]\.ucm[\\/](cache|codebase)[\\/]/;
+const GENERATED = /[\\/]\.tcm[\\/](cache|codebase)[\\/]/;
 
 function init() {
   return {

@@ -1,14 +1,14 @@
-// ucm: namespace polls
-// The server side. Nothing says "server": these functions use #ucm/server (tables, sessions) and Node, so ucm
+// tcm: namespace polls
+// The server side. Nothing says "server": these functions use #tcm/server (tables, sessions) and Node, so tcm
 // places them on the server, and the browser code that calls them gets stubs that call them by hash.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { enqueueAfter, every, HttpError, rateLimit, request, session, setSession, table, withRequest } from "#ucm/server";
+import { enqueueAfter, every, HttpError, rateLimit, request, session, setSession, table, withRequest } from "#tcm/server";
 import { chart, isOpen, tally, verdict, type Poll, type Tally, type Vote } from "#codebase/polls";
 
 /**
  * Every {@link Poll}, by id. Rows are checked against the `Poll` type when written, and dates come back as dates.
- * Browse them in the editor's Data view, or with `ucm data polls`.
+ * Browse them in the editor's Data view, or with `tcm data polls`.
  */
 export const polls = table<Poll>("polls");
 
@@ -110,7 +110,7 @@ export async function listPolls(): Promise<{ id: string; question: string; optio
 
 /**
  * Live results: a fresh {@link Tally} every second while the poll is open, then the final one. It's an async
- * generator, so ucm streams it: the browser iterates it with `for await`, and leaving the loop (or closing the
+ * generator, so tcm streams it: the browser iterates it with `for await`, and leaving the loop (or closing the
  * page) stops it here too.
  */
 export async function* watchResults(id: string): AsyncGenerator<Tally> {
@@ -143,7 +143,7 @@ export async function forgetOldPolls(): Promise<void> {
 }
 
 /**
- * A recurring job: {@link forgetOldPolls} at 03:00 UTC every night. `ucm start` and `ucm dev` find it in the app's
+ * A recurring job: {@link forgetOldPolls} at 03:00 UTC every night. `tcm start` and `tcm dev` find it in the app's
  * namespace; each night runs once, however many servers there are.
  */
 export const nightly = every("0 3 * * *", forgetOldPolls);

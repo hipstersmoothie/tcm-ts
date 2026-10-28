@@ -12,6 +12,6 @@ printf '{"type":"module","dependencies":{"typescript":"%s","@types/node":"^24.0.
 cd "$REPO"
 for dir in packages packages/core/test/golden; do
   node scripts/hash-project.ts "$dir" >> "$TMP/pinned.txt"
-  UCM_CORE="$TMP/core/src/index.ts" node scripts/hash-project.ts "$dir" >> "$TMP/other.txt"
+  TCM_CORE="$TMP/core/src/index.ts" node scripts/hash-project.ts "$dir" >> "$TMP/other.txt"
 done
 if diff "$TMP/pinned.txt" "$TMP/other.txt"; then echo "identical hashes ($(wc -l < "$TMP/pinned.txt" | tr -d ' ') definitions)"; else echo "hashes differ"; exit 1; fi

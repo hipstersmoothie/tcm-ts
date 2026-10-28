@@ -1,4 +1,4 @@
-// ucm: namespace polls
+// tcm: namespace polls
 // The browser side: it uses the DOM, so it runs in the browser. Calls to server functions look like local calls;
 // `for await` over watchResults streams live tallies from the server.
 import { chart, createPoll, leader, listPolls, samplePoll, sampleVotes, tally, vote, watchResults, type Poll } from "#codebase/polls";
@@ -43,7 +43,7 @@ async function showPoll(root: HTMLElement, poll: { id: string; question: string;
 
 /**
  * The app: a form to start a poll ({@link createPoll}) and every recent poll ({@link listPolls}), each shown by
- * {@link showPoll}. Run it with **▶ Start** in the editor's Apps view, or `ucm dev polls.main`.
+ * {@link showPoll}. Run it with **▶ Start** in the editor's Apps view, or `tcm dev polls.main`.
  */
 export async function main() {
   const root = el("main");
@@ -63,7 +63,7 @@ export async function main() {
 /**
  * # Polls
  *
- * A live polling app: start a poll, vote, and watch the results move. Nothing in it says what runs where; ucm
+ * A live polling app: start a poll, vote, and watch the results move. Nothing in it says what runs where; tcm
  * works that out from what each definition uses.
  *
  * | part | runs | what |
@@ -84,6 +84,6 @@ export async function main() {
  * chart(tally(samplePoll, sampleVotes))
  * ```
  *
- * Run it with **▶ Start** in the Apps view, or `ucm dev polls.main`.
+ * Run it with **▶ Start** in the Apps view, or `tcm dev polls.main`.
  */
 export type README = never;

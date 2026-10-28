@@ -1,6 +1,6 @@
-// `#ucm/server`: what a server function can know about the call it's serving.
+// `#tcm/server`: what a server function can know about the call it's serving.
 //
-//   import { request, session, setSession, HttpError } from "#ucm/server";
+//   import { request, session, setSession, HttpError } from "#tcm/server";
 //
 //   export async function me(): Promise<string> {
 //     const user = session().user;
@@ -11,14 +11,14 @@
 // Using anything from here makes a definition need the server (placement is inferred, not annotated). Each call
 // runs inside its HTTP request's context (AsyncLocalStorage), so these work at any depth of the call.
 //
-// The API is written as one factory whose own source text becomes `.ucm/cache/ucm-server.js` (with types in
-// `ucm-server.d.ts`): server functions, test runners and the RPC host all import that file, so they share one
-// instance per process wherever ucm itself runs from (its source, a built package, or a codebase's cache).
+// The API is written as one factory whose own source text becomes `.tcm/cache/tcm-server.js` (with types in
+// `tcm-server.d.ts`): server functions, test runners and the RPC host all import that file, so they share one
+// instance per process wherever tcm itself runs from (its source, a built package, or a codebase's cache).
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { codecSource, decode, encode } from "./codec.ts";
-import { checkValue, schemaCheckerSource } from "@ucm/core";
+import { checkValue, schemaCheckerSource } from "@tcm/core";
 
 export function createServerApi(deps: {
   AsyncLocalStorage: typeof AsyncLocalStorage;
@@ -52,11 +52,11 @@ export function createServerApi(deps: {
     dataDir?: string;
   }
   const storage = new deps.AsyncLocalStorage<CallContext>();
-  const SESSION_COOKIE = "ucm_sid";
+  const SESSION_COOKIE = "tcm_sid";
 
   const context = (what: string): CallContext => {
     const c = storage.getStore();
-    if (!c) throw new Error(`${what} only works inside a server function called from the browser (ucm dev / ucm start)`);
+    if (!c) throw new Error(`${what} only works inside a server function called from the browser (tcm dev / tcm start)`);
     return c;
   };
 
@@ -173,11 +173,11 @@ export function createServerApi(deps: {
   };
 
   // ---- background jobs and schedules ------------------------------------------------------------------------
-  // Jobs live in .ucm/data/jobs.sqlite and name their function by hash, so a job runs the exact code version that
+  // Jobs live in .tcm/data/jobs.sqlite and name their function by hash, so a job runs the exact code version that
   // enqueued it, even across deploys. A claim is one atomic UPDATE with a lease, so several processes can work
   // the same queue; a scheduled slot is claimed by a unique key, so it runs once however many servers there are.
-  const HASH_MARK = Symbol.for("ucm.hash");
-  const JOB_MARK = Symbol.for("ucm.job");
+  const HASH_MARK = Symbol.for("tcm.hash");
+  const JOB_MARK = Symbol.for("tcm.job");
   type Fn = (...args: unknown[]) => unknown;
   interface JobRow {
     id: string;
@@ -267,7 +267,7 @@ export function createServerApi(deps: {
     const [mi, h, dom, mo, dow] = spec.cron!;
     return mi!.has(d.getUTCMinutes()) && h!.has(d.getUTCHours()) && dom!.has(d.getUTCDate()) && mo!.has(d.getUTCMonth() + 1) && dow!.has(d.getUTCDay()) ? d.getTime() : undefined;
   };
-  /** A recurring job: export it from the app's namespace and `ucm start` / `ucm dev` run it on schedule. */
+  /** A recurring job: export it from the app's namespace and `tcm start` / `tcm dev` run it on schedule. */
   const every = (spec: string, fn: Fn) => {
     parseSchedule(spec);
     if (typeof fn !== "function") throw new TypeError("every() needs a function");
@@ -315,7 +315,7 @@ export function createServerApi(deps: {
     }
   };
 
-  /** For the host: work the queue in .ucm/data, `concurrency` jobs at a time, loading functions by hash. */
+  /** For the host: work the queue in .tcm/data, `concurrency` jobs at a time, loading functions by hash. */
   const startWorker = (opts: { dataDir: string; load: (hash: string) => Promise<Fn>; log: (line: string) => void; concurrency?: number }) => {
     hostDataDir = opts.dataDir;
     const db = jobsDb(opts.dataDir);
@@ -387,14 +387,14 @@ export function createServerApi(deps: {
     tick();
   };
 
-  // ---- tables: typed, durable rows in .ucm/data/store.sqlite ----------------------------------------------------
-  // The row type is erased at runtime, but ucm knows it where the table is declared and attaches its schema (with a
+  // ---- tables: typed, durable rows in .tcm/data/store.sqlite ----------------------------------------------------
+  // The row type is erased at runtime, but tcm knows it where the table is declared and attaches its schema (with a
   // hash) to the table value. Every write is checked against it and records the schema it was written with. A read
   // of a row written under another schema checks that it still fits, else migrates it, else refuses: stored data
   // never silently disagrees with the code reading it. Rows from newer code mean the caller is a stale page (410).
-  const SCHEMA_MARK = Symbol.for("ucm.schema");
-  /** for the CLI (`ucm data migrate`): bring every stored row up to the current row type now */
-  const MIGRATE_ALL = Symbol.for("ucm.migrateAll");
+  const SCHEMA_MARK = Symbol.for("tcm.schema");
+  /** for the CLI (`tcm data migrate`): bring every stored row up to the current row type now */
+  const MIGRATE_ALL = Symbol.for("tcm.migrateAll");
   type Db = InstanceType<typeof DatabaseSync>;
   type Checked = { s: Parameters<typeof checkValue>[0]; defs: Parameters<typeof checkValue>[3] };
   interface RowSchema extends Checked {
@@ -493,7 +493,7 @@ export function createServerApi(deps: {
     if (outer && outer.db === db) {
       // a savepoint: its failure undoes only its own writes. Nested ones take turns (savepoints are a stack).
       return exclusive(outer, async () => {
-        const name = `ucm_tx_${++savepoints}`;
+        const name = `tcm_tx_${++savepoints}`;
         const inner: Txn = { db, open: true, afterCommit: [] };
         db.exec(`SAVEPOINT ${name}`);
         try {
@@ -556,6 +556,7 @@ export function createServerApi(deps: {
       if (this.#prepared !== db) {
         const s = this.#schema();
         db.prepare("INSERT OR IGNORE INTO schemas (tbl, hash, schema, first_seen) VALUES (?, ?, ?, ?)").run(this.name, s.hash, JSON.stringify({ s: s.s, defs: s.defs }), Date.now());
+        // stored in the data file: keeps the name it had before ucm-ts became tcm
         const id = (f: string, kind: string) => `ucm_${kind}_${this.name.replace(/[^A-Za-z0-9]/g, (c) => `_${c.charCodeAt(0).toString(16)}_`)}__${f}`;
         for (const f of this.#index) db.exec(`CREATE INDEX IF NOT EXISTS "${id(f, "index")}" ON rows (${fieldSql(f)}) WHERE tbl = '${this.name}'`);
         for (const f of this.#unique) {
@@ -584,14 +585,14 @@ export function createServerApi(deps: {
     }
     #atomically<R>(db: Db, fn: () => R): R {
       if (db.isTransaction) {
-        db.exec("SAVEPOINT ucm_atomic");
+        db.exec("SAVEPOINT tcm_atomic");
         try {
           const r = fn();
-          db.exec("RELEASE ucm_atomic");
+          db.exec("RELEASE tcm_atomic");
           return r;
         } catch (e) {
-          db.exec("ROLLBACK TO ucm_atomic");
-          db.exec("RELEASE ucm_atomic");
+          db.exec("ROLLBACK TO tcm_atomic");
+          db.exec("RELEASE tcm_atomic");
           throw e;
         }
       }
@@ -817,7 +818,7 @@ export function createServerApi(deps: {
     }
   };
 
-  /** Run `fn` as if answering a request: for tests of server functions (`ucm test`), no network involved. */
+  /** Run `fn` as if answering a request: for tests of server functions (`tcm test`), no network involved. */
   const withRequest = async <T>(
     init: { method?: string; url?: string; headers?: Record<string, string>; cookies?: Record<string, string>; ip?: string },
     fn: () => T | Promise<T>,
@@ -839,8 +840,8 @@ export function createServerApi(deps: {
   };
 }
 
-/** Types of `#ucm/server`, for editors and the checker (the runtime is generated from createServerApi above). */
-const DECLARATIONS = `// generated by ucm — do not edit
+/** Types of `#tcm/server`, for editors and the checker (the runtime is generated from createServerApi above). */
+const DECLARATIONS = `// generated by tcm — do not edit
 export interface ServerRequest {
   method: string;
   url: string;
@@ -876,7 +877,7 @@ export declare function deleteCookie(name: string, opts?: { path?: string }): vo
 export declare function session(): Record<string, unknown>;
 /**
  * Start a new session with this data for \`maxAge\` seconds (default 30 days). The data is stored server-side
- * (.ucm/data/sessions.sqlite); the cookie holds only a fresh, unguessable id.
+ * (.tcm/data/sessions.sqlite); the cookie holds only a fresh, unguessable id.
  */
 export declare function setSession(data: Record<string, unknown>, maxAge?: number): void;
 export declare function clearSession(): void;
@@ -898,20 +899,20 @@ export interface RecurringJob {
 }
 /**
  * A recurring job: \`export const nightly = every("0 3 * * *", cleanup)\` (five cron fields, UTC) or an interval
- * like \`every("15m", sync)\`. ucm start / ucm dev run the jobs in the app's namespace, once per slot.
+ * like \`every("15m", sync)\`. tcm start / tcm dev run the jobs in the app's namespace, once per slot.
  */
 export declare function every(spec: string, fn: () => unknown): RecurringJob;
 /**
- * A typed, durable table, declared at the top level: \`export const users = table<User>("users")\`. ucm attaches the
+ * A typed, durable table, declared at the top level: \`export const users = table<User>("users")\`. tcm attaches the
  * row type's schema: writes are checked against it, and rows written under an older type are checked, migrated
- * with \`migrate\` (if given) or refused when read. Data lives in .ucm/data/store.sqlite.
+ * with \`migrate\` (if given) or refused when read. Data lives in .tcm/data/store.sqlite.
  */
 export declare function table<T>(name: string, opts?: TableOptions<T>): Table<T>;
 export interface TableOptions<T> {
   /**
    * Upgrades rows stored as an earlier row type. One function, or one step per earlier type, oldest first:
    * \`[fromV1, fromV2]\`. A row goes through the first step whose parameter type it fits, then the later ones,
-   * until it fits \`T\`. The result is checked, and stored. \`ucm data migrate <table>\` upgrades every row now.
+   * until it fits \`T\`. The result is checked, and stored. \`tcm data migrate <table>\` upgrades every row now.
    */
   migrate?: ((old: any) => T | Promise<T>) | readonly ((old: any) => unknown)[];
   /** Fields no two rows may share: a write that would duplicate one fails with a 409. Indexed. */
@@ -962,9 +963,9 @@ export declare function withRequest<T>(
 ): Promise<{ value: T; setCookies: string[] }>;
 `;
 
-/** The generated `ucm-server.js` and `ucm-server.d.ts`. */
+/** The generated `tcm-server.js` and `tcm-server.d.ts`. */
 export function serverApiFiles(): { js: string; dts: string } {
-  const js = `// generated by ucm — do not edit: the #ucm/server runtime
+  const js = `// generated by tcm — do not edit: the #tcm/server runtime
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";

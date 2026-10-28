@@ -1,5 +1,5 @@
 {
-  "name": "ucm-ts",
+  "name": "tcm-ts",
   "private": true,
   "type": "module",
   "engines": {
@@ -22,10 +22,10 @@
     "typescript": "^6.0.3"
   },
   "bin": {
-    "ucm": "packages/cli/bin/ucm.js"
+    "tcm": "packages/cli/bin/tcm.js"
   },
   "dependencies": {
-    "@ucm/cli": "workspace:*"
+    "@tcm/cli": "workspace:*"
   },
   "version": "0.1.0"
 }

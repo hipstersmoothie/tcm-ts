@@ -6,8 +6,8 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 node "$REPO/scripts/build.ts"
 (cd "$REPO/dist/package" && npm pack --silent --pack-destination "$TMP" > /dev/null)
-(cd "$TMP" && npm init -y > /dev/null && npm install ./ucm-ts-*.tgz --no-audit --no-fund --loglevel=error > /dev/null)
-PKG="$TMP/node_modules/ucm-ts"
-echo "installed $(ls "$TMP"/ucm-ts-*.tgz | xargs basename) into $TMP"
+(cd "$TMP" && npm init -y > /dev/null && npm install ./tcm-ts-*.tgz --no-audit --no-fund --loglevel=error > /dev/null)
+PKG="$TMP/node_modules/tcm-ts"
+echo "installed $(ls "$TMP"/tcm-ts-*.tgz | xargs basename) into $TMP"
 cd "$REPO"
-UCM_BIN="$PKG/bin/ucm.js" UCM_CORE="$PKG/core/index.js" node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts' | grep -E '^ℹ (tests|pass|fail) '
+TCM_BIN="$PKG/bin/tcm.js" TCM_CORE="$PKG/core/index.js" node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts' | grep -E '^ℹ (tests|pass|fail) '

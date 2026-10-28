@@ -1,4 +1,4 @@
-// ucm: namespace notes
+// tcm: namespace notes
 // The page, as React components. None of them says where it runs:
 //
 // - NoteList, NotePreview and NoteEditorLoader read the notes table (they're async), so they render on the server;
@@ -278,7 +278,7 @@ export const testRouteRoundTrip = () => {
  * # Notes
  *
  * A notes app in the style of React's Server Components demo, without a single `"use client"` or `"use server"`:
- * ucm infers what renders where from what each component uses.
+ * tcm infers what renders where from what each component uses.
  *
  * | part | renders | why |
  * |---|---|---|
@@ -294,6 +294,6 @@ export const testRouteRoundTrip = () => {
  * excerpt(sampleNotes[1]!.body, 50)
  * ```
  *
- * Run it with **▶ Start** in the Apps view, or `ucm dev notes.App`.
+ * Run it with **▶ Start** in the Apps view, or `tcm dev notes.App`.
  */
 export type README = never;

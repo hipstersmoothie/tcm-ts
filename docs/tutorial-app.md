@@ -7,7 +7,7 @@ Start a codebase ([install](getting-started.md) first if you haven't):
 
 ```sh
 mkdir notes && cd notes
-ucm init
+tcm init
 ```
 
 ## Write the whole app
@@ -15,8 +15,8 @@ ucm init
 Put this in `scratch.ts`:
 
 ```ts
-// ucm: namespace notes
-import { table } from "#ucm/server";
+// tcm: namespace notes
+import { table } from "#tcm/server";
 
 export type Note = { text: string; at: Date };
 
@@ -56,7 +56,7 @@ A few things to notice:
 - `main` calls `listNotes()` and `addNote()` as if they were local functions.
 
 ```text
-$ ucm add
+$ tcm add
   + new       notes.Note type
   + new       notes.notes : Table<Note>
   + new       notes.addNote : (text: string) => Promise<void>
@@ -66,28 +66,28 @@ $ ucm add
 
 ## Where things run
 
-ucm works out where each function runs from what it uses:
+tcm works out where each function runs from what it uses:
 
 ```text
-$ ucm view notes.addNote
+$ tcm view notes.addNote
 // notes.addNote #2w6iz4qg : (text: string) => Promise<void>
-// runs on the server: it uses notes.notes, which uses #ucm/server (table); browser code calls it by hash
+// runs on the server: it uses notes.notes, which uses #tcm/server (table); browser code calls it by hash
 
-$ ucm view notes.main
+$ tcm view notes.main
 // notes.main #o2wxk6e6 : () => Promise<void>
 // runs in the browser: it uses document
 ```
 
-Code that uses the database, Node or `#ucm/server` runs on the server; code that uses the DOM runs in the
-browser; anything else runs wherever it's called from. When browser code calls a server function, ucm turns the
+Code that uses the database, Node or `#tcm/server` runs on the server; code that uses the DOM runs in the
+browser; anything else runs wherever it's called from. When browser code calls a server function, tcm turns the
 call into a request to that exact function, by hash. Server functions have to be `async`, since a call across the
-network can't return immediately; ucm tells you if one isn't.
+network can't return immediately; tcm tells you if one isn't.
 
 ## Run it
 
 ```text
-$ ucm dev notes.main
-ucm dev notes.main #o2wxk6e6
+$ tcm dev notes.main
+tcm dev notes.main #o2wxk6e6
   url      http://127.0.0.1:5173/
   browser  1 definition(s)
   server   2 function(s) the browser calls by hash: notes.addNote #2w6iz4qg, notes.listNotes #o3tcbfex
@@ -96,7 +96,7 @@ ucm dev notes.main #o2wxk6e6
 Open the URL, type a note and press Enter. Open it in a second tab and both show the same notes: they're in the
 table, on the server.
 
-`ucm dev` also told you exactly what the browser can reach: two functions. Those are the app's only endpoints.
+`tcm dev` also told you exactly what the browser can reach: two functions. Those are the app's only endpoints.
 Nothing else on the server can be called from outside, and each endpoint checks that its arguments match its
 parameter types before it runs.
 
@@ -105,10 +105,10 @@ code.
 
 ## Change it
 
-Leave `ucm dev` running. Show the newest note in capitals, by writing a new `listNotes` in `scratch.ts`:
+Leave `tcm dev` running. Show the newest note in capitals, by writing a new `listNotes` in `scratch.ts`:
 
 ```ts
-// ucm: namespace notes
+// tcm: namespace notes
 import { notes } from "#codebase/notes";
 
 export async function listNotes(): Promise<string[]> {
@@ -117,7 +117,7 @@ export async function listNotes(): Promise<string[]> {
 ```
 
 ```text
-$ ucm update
+$ tcm update
   ~ update    notes.listNotes : () => Promise<string[]>  (was #o3tcbfex)
   ~ updated   notes.main (dependent)
 ```
@@ -130,8 +130,8 @@ codebase.
 A production build is immutable and named by the app's hash:
 
 ```text
-$ ucm build notes.main
-built notes.main #o2wxk6e6 into .ucm/apps/o2wxk6e6ghnnvykwiutwzxn6fz33byqvl2jj672b6z5o4wwa57lq
+$ tcm build notes.main
+built notes.main #o2wxk6e6 into .tcm/apps/o2wxk6e6ghnnvykwiutwzxn6fz33byqvl2jj672b6z5o4wwa57lq
   browser  1 definition(s)
   server   2 function(s) the browser calls by hash: notes.addNote #2w6iz4qg, notes.listNotes #o3tcbfex
 ```
@@ -139,17 +139,17 @@ built notes.main #o2wxk6e6 into .ucm/apps/o2wxk6e6ghnnvykwiutwzxn6fz33byqvl2jj67
 To serve it:
 
 ```sh
-ucm start notes.main --port 8080
+tcm start notes.main --port 8080
 ```
 
-`ucm start` serves whatever `notes.main` names, and keeps watching that name. Run `ucm update` and it builds the
-new version and switches to it; `ucm reset` back and it switches back. Deploying and rolling back are both just
+`tcm start` serves whatever `notes.main` names, and keeps watching that name. Run `tcm update` and it builds the
+new version and switches to it; `tcm reset` back and it switches back. Deploying and rolling back are both just
 moving a name. Pages that were already open keep working against the version they loaded until they reload, so
 an update never breaks someone mid-session.
 
 ## What you've done
 
-You wrote one file with server and browser code mixed freely, and ucm split it, connected the two sides by hash,
+You wrote one file with server and browser code mixed freely, and tcm split it, connected the two sides by hash,
 stored the data in a typed table, and gave you a dev server and a production server.
 
 Next:

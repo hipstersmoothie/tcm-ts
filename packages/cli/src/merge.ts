@@ -1,5 +1,5 @@
-import type { NameRow } from "@ucm/store";
-import { shortHash } from "@ucm/core";
+import type { NameRow } from "@tcm/store";
+import { shortHash } from "@tcm/core";
 import type { Codebase } from "./codebase.ts";
 import { diffNamespaces, keyPath, printDiff, rewind, stateOf, type NameState } from "./diff.ts";
 import { bold, dim, green, red, yellow } from "./style.ts";
@@ -109,9 +109,9 @@ export function mergeBranch(cb: Codebase, theirs: string, command = `merge ${the
   for (const p of result.conflicts) {
     const hs = [...(after.get(p) ?? [])];
     if (hs.length < 2) continue;
-    console.log(`${red("  conflict")} ${bold(p)}: ${hs.map((h) => shortHash(h)).join(" vs ")}  ${dim(`ucm resolve ${p} ${shortHash(hs[0]!)}`)}`);
+    console.log(`${red("  conflict")} ${bold(p)}: ${hs.map((h) => shortHash(h)).join(" vs ")}  ${dim(`tcm resolve ${p} ${shortHash(hs[0]!)}`)}`);
   }
-  if (failed.length) console.log(red(`  ${failed.length} definition(s) no longer typecheck after the merge; see \`ucm todo\``));
+  if (failed.length) console.log(red(`  ${failed.length} definition(s) no longer typecheck after the merge; see \`tcm todo\``));
   if (!result.conflicts.length && !failed.length) console.log(green("\n  merged cleanly"));
   return result;
 }

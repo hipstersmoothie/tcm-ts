@@ -1,7 +1,7 @@
 {
-  "name": "ucm-ts-plugin",
+  "name": "tcm-ts-plugin",
   "version": "0.1.0",
-  "description": "TypeScript server plugin for ucm-ts: Go to Definition skips ucm's generated modules, so the ucm language server's source view is where it lands",
+  "description": "TypeScript server plugin for tcm-ts: Go to Definition skips tcm's generated modules, so the tcm language server's source view is where it lands",
   "main": "index.js",
   "license": "MIT"
 }

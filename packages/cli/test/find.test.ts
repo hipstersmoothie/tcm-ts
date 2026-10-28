@@ -7,17 +7,17 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
-const BIN = process.env.UCM_BIN ? path.resolve(process.env.UCM_BIN) : fileURLToPath(new URL("../bin/ucm.js", import.meta.url));
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ucm find "));
+const BIN = process.env.TCM_BIN ? path.resolve(process.env.TCM_BIN) : fileURLToPath(new URL("../bin/tcm.js", import.meta.url));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcm find "));
 const env = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" };
 
-function ucm(...args: string[]): { status: number | null; out: string } {
+function tcm(...args: string[]): { status: number | null; out: string } {
   const r = spawnSync(process.execPath, [BIN, ...args], { cwd: dir, encoding: "utf8", env });
   return { status: r.status, out: (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "") };
 }
 const ok = (...args: string[]) => {
-  const r = ucm(...args);
-  if (r.status !== 0) throw new Error(`ucm ${args.join(" ")} exited ${r.status}:\n${r.out}`);
+  const r = tcm(...args);
+  if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} exited ${r.status}:\n${r.out}`);
   return r.out;
 };
 /** The names `find` lists, in order. */
@@ -27,7 +27,7 @@ test("find by type: up to renaming, reordered, awaited, more general or specific
   ok("init");
   fs.writeFileSync(
     path.join(dir, "scratch.ts"),
-    `// ucm: namespace lib
+    `// tcm: namespace lib
 export type User = { name: string; age: number };
 export const head = <T>(xs: T[]): T | undefined => xs[0];
 export const first = <A>(xs: A[]): A | undefined => xs[0];
@@ -59,16 +59,16 @@ export async function loadUser(id: string): Promise<User> {
   assert.deepEqual(found(":(p: Person) => string"), ["lib.nameOf"]);
 
   // definitions stored without shapes get them on the first search
-  const db = new DatabaseSync(path.join(dir, ".ucm", "codebase.sqlite"));
+  const db = new DatabaseSync(path.join(dir, ".tcm", "codebase.sqlite"));
   db.prepare("DELETE FROM metadata WHERE key = 'shape'").run();
   db.close();
   assert.deepEqual(found(":(xs: T[]) => T | undefined"), ["lib.first", "lib.head"]);
 
   // a name the query can't pin down says so
-  fs.writeFileSync(path.join(dir, "scratch.ts"), `// ucm: namespace other\nexport type Person = { id: string };\n`);
+  fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace other\nexport type Person = { id: string };\n`);
   ok("add");
-  const ambiguous = ucm("find", ":(p: Person) => string");
+  const ambiguous = tcm("find", ":(p: Person) => string");
   assert.notEqual(ambiguous.status, 0);
   assert.match(ambiguous.out, /'Person' in the query could be lib\.Person, other\.Person/);
-  assert.match(ucm("find", ":(x: ").out, /isn't a TypeScript type/);
+  assert.match(tcm("find", ":(x: ").out, /isn't a TypeScript type/);
 });

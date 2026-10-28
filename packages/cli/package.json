@@ -1,17 +1,17 @@
 {
-  "name": "@ucm/cli",
+  "name": "@tcm/cli",
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "ucm": "./bin/ucm.js"
+    "tcm": "./bin/tcm.js"
   },
   "exports": {
     ".": "./src/main.ts"
   },
   "dependencies": {
-    "@ucm/core": "workspace:*",
-    "@ucm/store": "workspace:*",
-    "@ucm/loader": "workspace:*",
+    "@tcm/core": "workspace:*",
+    "@tcm/store": "workspace:*",
+    "@tcm/loader": "workspace:*",
     "vite": "^8.3.5"
   }
 }

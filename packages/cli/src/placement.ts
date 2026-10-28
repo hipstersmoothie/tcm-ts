@@ -18,8 +18,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isBuiltin } from "node:module";
-import type { IR } from "@ucm/core";
-import { npmAlias } from "@ucm/loader";
+import { SERVER_API_MODULE, type IR } from "@tcm/core";
+import { npmAlias } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 
 const NODE_GLOBALS = new Set(["process", "Buffer", "require", "__dirname", "__filename", "global", "setImmediate", "clearImmediate"]);
@@ -149,7 +149,7 @@ export class Placement {
 
   /**
    * An npm package needs the server if it doesn't declare a browser build and its entry imports Node builtins.
-   * A heuristic: packages are installed into .ucm/cache/node_modules under their pinned versions.
+   * A heuristic: packages are installed into .tcm/cache/node_modules under their pinned versions.
    */
   private isServerPackage(module: string): boolean {
     if (this.npmServerOnly.has(module)) return this.npmServerOnly.get(module)!;
@@ -181,7 +181,7 @@ export class Placement {
     for (const s of rec.spans) {
       if (!s.ext || s.pos !== "value") continue;
       if (s.ext.module.startsWith("node:")) return `uses ${s.ext.module}`;
-      if (s.ext.module === "ucm:server") return `uses #ucm/server (${s.ext.export})`;
+      if (s.ext.module === SERVER_API_MODULE) return `uses #tcm/server (${s.ext.export})`;
       if (s.ext.module.startsWith("npm:") && this.isServerPackage(s.ext.module)) return `uses ${s.ext.module.slice(4)}, a server-side package`;
     }
     for (const g of globalsIn(JSON.parse(rec.ir) as IR)) if (NODE_GLOBALS.has(g)) return `uses ${g}`;

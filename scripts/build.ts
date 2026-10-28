@@ -1,9 +1,9 @@
 // Build the publishable npm package in dist/package.
 //
-// Node refuses to strip types from files under node_modules, so an installed ucm can't ship its .ts source.
+// Node refuses to strip types from files under node_modules, so an installed tcm can't ship its .ts source.
 // This transpiles every workspace module to JavaScript in one package: relative `./x.ts` imports become
-// `./x.js` and workspace imports (`@ucm/core`, ...) become relative paths. Code ucm generates at runtime
-// (.ucm/cache) stays TypeScript; it lives in the user's project, not under node_modules.
+// `./x.js` and workspace imports (`@tcm/core`, ...) become relative paths. Code tcm generates at runtime
+// (.tcm/cache) stays TypeScript; it lives in the user's project, not under node_modules.
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
@@ -20,10 +20,10 @@ for (const pkg of ["core", "store", "loader", "cli"]) {
 
 // workspace package → its entry module within the built package
 const ENTRIES: Record<string, string> = {
-  "@ucm/core": "core/index.js",
-  "@ucm/store": "store/index.js",
-  "@ucm/loader": "loader/index.js",
-  "@ucm/cli": "cli/main.js",
+  "@tcm/core": "core/index.js",
+  "@tcm/store": "store/index.js",
+  "@tcm/loader": "loader/index.js",
+  "@tcm/cli": "cli/main.js",
 };
 
 fs.rmSync(out, { recursive: true, force: true });
@@ -44,7 +44,7 @@ for (const pkg of ["core", "store", "loader", "cli"]) {
     });
     if (diagnostics?.length) throw new Error(`${pkg}/${name}: ${ts.flattenDiagnosticMessageText(diagnostics[0]!.messageText, " ")}`);
     const fromDir = path.join(out, pkg);
-    const js = outputText.replace(/(from\s+|import\s*\(\s*)"(@ucm\/[a-z]+)"/g, (_m, lead: string, spec: string) => {
+    const js = outputText.replace(/(from\s+|import\s*\(\s*)"(@tcm\/[a-z]+)"/g, (_m, lead: string, spec: string) => {
       const target = ENTRIES[spec];
       if (!target) throw new Error(`${pkg}/${name}: unknown workspace import ${spec}`);
       const rel = path.relative(fromDir, path.join(out, target)).split(path.sep).join("/");
@@ -64,10 +64,10 @@ for (const pkg of ["core", "store", "loader", "cli"]) {
 
 fs.mkdirSync(path.join(out, "bin"));
 const bin = fs
-  .readFileSync(path.join(repo, "packages/cli/bin/ucm.js"), "utf8")
+  .readFileSync(path.join(repo, "packages/cli/bin/tcm.js"), "utf8")
   .replace('await import("../src/main.ts")', 'await import("../cli/main.js")');
 if (bin.includes(".ts")) throw new Error("bin still imports TypeScript source");
-fs.writeFileSync(path.join(out, "bin", "ucm.js"), bin, { mode: 0o755 });
+fs.writeFileSync(path.join(out, "bin", "tcm.js"), bin, { mode: 0o755 });
 fs.copyFileSync(path.join(repo, "README.md"), path.join(out, "README.md"));
 // the README links into docs/, so the package carries it too
 fs.cpSync(path.join(repo, "docs"), path.join(out, "docs"), { recursive: true });
@@ -75,12 +75,12 @@ fs.writeFileSync(
   path.join(out, "package.json"),
   JSON.stringify(
     {
-      name: "ucm-ts",
+      name: "tcm-ts",
       version: root.version ?? "0.1.0",
       description: "Unison's content-addressed codebase model for plain TypeScript",
       type: "module",
-      // `ucm-ts` too, since Unison's own CLI is also called `ucm`
-      bin: { ucm: "bin/ucm.js", "ucm-ts": "bin/ucm.js" },
+      // `tcm-ts` too, since Unison's own CLI is also called `tcm`
+      bin: { tcm: "bin/tcm.js", "tcm-ts": "bin/tcm.js" },
       engines: { node: ">=22.18" },
       dependencies,
       files: ["bin", "core", "store", "loader", "cli", "README.md", "docs"],

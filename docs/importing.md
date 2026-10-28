@@ -1,7 +1,7 @@
 # Importing existing projects
 
 ```sh
-ucm import <dir> --into ns [--exclude a,b] [--update] [--verbose]
+tcm import <dir> --into ns [--exclude a,b] [--update] [--verbose]
 ```
 
 Each file becomes a namespace: `core/src/analyze.ts` → `ns.core.analyze` (`src` path segments and `index` file
@@ -13,13 +13,13 @@ names are dropped). Imports between files, barrels and workspace packages resolv
   dependency.
 - **All problems at once.** Import reports every problem in the project in one pass and imports nothing until
   there are none.
-- **`--update`** re-imports a project whose files changed, as `ucm update` would.
+- **`--update`** re-imports a project whose files changed, as `tcm update` would.
 
 Compiler options for imports are described in [compiler options](compiler-options.md).
 
 ## Verified projects
 
-These have been imported, verified (`ucm verify`: every definition renders and re-hashes to itself) and run from
+These have been imported, verified (`tcm verify`: every definition renders and re-hashes to itself) and run from
 a scratch file:
 
 | project | definitions | notes |
@@ -27,12 +27,12 @@ a scratch file:
 | neverthrow | 51 | `strict: false`, kept as its check profile |
 | ts-pattern | 247 | namespace imports (`P.infer<…>`), `declare const` |
 | valibot (`library/src`, `--exclude vitest`) | 941 | 573 files in 4s; module state, `@ts-expect-error` above overloads |
-| ucm-ts itself | `packages/` | see [self-hosting](developing.md#self-hosting) |
+| tcm-ts itself | `packages/` | see [self-hosting](developing.md#self-hosting) |
 
 ## What import mode accepts beyond scratch files
 
 - **Enums, namespaces and parameter properties.** Node can't strip these, so their cache modules start with
-  `// ucm: transform` and are compiled by a module hook when loaded. They hash like any other syntax.
+  `// tcm: transform` and are compiled by a module hook when loaded. They hash like any other syntax.
 - **Namespace imports of project modules.** `import * as ns from "./mod"` with `ns.member` is a reference to
   `member`, hashed exactly as if it had been imported by name. Using `ns` itself as a value is still refused.
 - **`declare const x: unique symbol`**, the usual brand pattern, is a type-only definition. It's salted like a

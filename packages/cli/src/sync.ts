@@ -6,9 +6,9 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { randomBytes, timingSafeEqual, X509Certificate } from "node:crypto";
-import { shortHash, type DefRecord } from "@ucm/core";
-import type { NameRow } from "@ucm/store";
-import { runStreaming } from "@ucm/loader";
+import { shortHash, type DefRecord } from "@tcm/core";
+import type { NameRow } from "@tcm/store";
+import { runStreaming } from "@tcm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { diffNamespaces, printDiff, stateOf } from "./diff.ts";
 import { mergeBranch, recordMergeBase } from "./merge.ts";
@@ -126,7 +126,7 @@ class DirectoryRemote implements Remote {
   }
 }
 
-/** A `ucm serve` server. */
+/** A `tcm serve` server. */
 /** Normalize `AB:cd:…` / `abcd…` fingerprints for comparison. */
 const normalizeFingerprint = (f: string) => f.replace(/:/g, "").toUpperCase();
 
@@ -237,7 +237,7 @@ class HttpRemote implements Remote {
 interface RemoteConfig {
   url: string;
   token?: string;
-  /** pinned SHA-256 certificate fingerprint for a `ucm serve --tls` server */
+  /** pinned SHA-256 certificate fingerprint for a `tcm serve --tls` server */
   fingerprint?: string;
 }
 
@@ -259,7 +259,7 @@ export function openRemote(cb: Codebase, spec: string): { remote: Remote; name?:
     const c = JSON.parse(configured) as RemoteConfig;
     return { remote: c.url.startsWith("http") ? new HttpRemote(c.url, c.token, c.fingerprint) : new DirectoryRemote(c.url), name: spec };
   }
-  if (/^https?:\/\//.test(spec)) return { remote: new HttpRemote(spec, process.env.UCM_TOKEN, process.env.UCM_FINGERPRINT) };
+  if (/^https?:\/\//.test(spec)) return { remote: new HttpRemote(spec, process.env.TCM_TOKEN, process.env.TCM_FINGERPRINT) };
   return { remote: new DirectoryRemote(spec) };
 }
 
@@ -294,7 +294,7 @@ const syncKey = (remote: string, branch: string) => `sync.${remote}.${branch}`;
 
 export async function push(cb: Codebase, spec: string, remoteBranch: string | undefined, force: boolean) {
   const { remote, name } = openRemote(cb, spec);
-  if (!name) throw new Error(`push needs a configured remote: \`ucm remote add <name> ${spec}\``);
+  if (!name) throw new Error(`push needs a configured remote: \`tcm remote add <name> ${spec}\``);
   const branch = remoteBranch ?? cb.store.branch().name;
   const names = cb.store.names();
   const mine = cb.store.stateHash();
@@ -303,7 +303,7 @@ export async function push(cb: Codebase, spec: string, remoteBranch: string | un
   const lastSynced = cb.store.getSetting(syncKey(name, branch));
   // an empty remote branch (a fresh server) has nothing a push could overwrite
   if (theirs && theirs.names.length && theirs.stateHash !== mine && theirs.stateHash !== lastSynced && !force) {
-    throw new Error(`${name}/${branch} has changes you don't have: \`ucm pull ${name}\` first (or --force to overwrite them)`);
+    throw new Error(`${name}/${branch} has changes you don't have: \`tcm pull ${name}\` first (or --force to overwrite them)`);
   }
   if (theirs?.stateHash !== mine) await remote.setBranch(branch, names, theirs?.stateHash ?? null, `push from ${os.hostname()}:${cb.lay.root}`);
   cb.store.setSetting(syncKey(name, branch), mine);
@@ -316,7 +316,7 @@ export async function push(cb: Codebase, spec: string, remoteBranch: string | un
 
 export async function pull(cb: Codebase, spec: string, remoteBranch: string | undefined) {
   const { remote, name } = openRemote(cb, spec);
-  if (!name) throw new Error(`pull needs a configured remote: \`ucm remote add <name> ${spec}\``);
+  if (!name) throw new Error(`pull needs a configured remote: \`tcm remote add <name> ${spec}\``);
   const branch = remoteBranch ?? cb.store.branch().name;
   const theirs = await remote.branch(branch);
   if (!theirs) throw new Error(`${name} has no branch '${branch}'`);
@@ -338,7 +338,7 @@ export async function pull(cb: Codebase, spec: string, remoteBranch: string | un
     // both sides changed since the last sync: merge the remote's state in; `push` then publishes the result
     mergeBranch(cb, tracking, `pull ${name} (merge)`);
     cb.store.setSetting(syncKey(name, branch), theirs.stateHash);
-    console.log(dim(`  \`ucm push ${name}\` to publish the merge`));
+    console.log(dim(`  \`tcm push ${name}\` to publish the merge`));
     return;
   }
   const before = stateOf(cb.store.names());
@@ -370,19 +370,19 @@ export interface ServeOptions {
 const isLoopback = (host: string) => host === "localhost" || host === "::1" || host.startsWith("127.");
 
 /**
- * The certificate and key for `ucm serve --tls`: given files, or a self-signed pair created once with openssl
- * and kept in `.ucm/tls/`. Clients pin it by fingerprint.
+ * The certificate and key for `tcm serve --tls`: given files, or a self-signed pair created once with openssl
+ * and kept in `.tcm/tls/`. Clients pin it by fingerprint.
  */
 export function tlsMaterial(cb: Codebase, cert?: string, key?: string): { cert: string; key: string } {
   if (cert || key) {
     if (!cert || !key) throw new Error("--tls-cert and --tls-key go together");
     return { cert: fs.readFileSync(cert, "utf8"), key: fs.readFileSync(key, "utf8") };
   }
-  const dir = path.join(cb.lay.ucmDir, "tls");
+  const dir = path.join(cb.lay.tcmDir, "tls");
   const [c, k] = [path.join(dir, "cert.pem"), path.join(dir, "key.pem")];
   if (!fs.existsSync(c) || !fs.existsSync(k)) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const r = spawnSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", k, "-out", c, "-days", "825", "-subj", "/CN=ucm serve"], { encoding: "utf8" });
+    const r = spawnSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", k, "-out", c, "-days", "825", "-subj", "/CN=tcm serve"], { encoding: "utf8" });
     if (r.status !== 0) throw new Error(`could not create a certificate with openssl (${r.error?.message ?? r.stderr.trim()}); pass --tls-cert and --tls-key`);
     fs.chmodSync(k, 0o600);
   }
@@ -390,7 +390,7 @@ export function tlsMaterial(cb: Codebase, cert?: string, key?: string): { cert: 
 }
 
 /**
- * Serve this codebase to other ucm instances. Clients can store definitions, move branch names and — unless
+ * Serve this codebase to other tcm instances. Clients can store definitions, move branch names and — unless
  * `allowRun` is false — run code here, so the server requires a bearer token and listens on localhost by default.
  */
 export function serve(cb: Codebase, opts: ServeOptions, insecure = false): http.Server {
@@ -468,14 +468,14 @@ export function serve(cb: Codebase, opts: ServeOptions, insecure = false): http.
   const scheme = opts.tls ? "https" : "http";
   server.listen(opts.port, opts.host, () => {
     const { port } = server.address() as { port: number };
-    console.log(`${bold("ucm serve")} ${cb.lay.root}`);
+    console.log(`${bold("tcm serve")} ${cb.lay.root}`);
     console.log(`  url    ${scheme}://${opts.host}:${port}`);
     if (fingerprint) console.log(`  cert   sha256 ${fingerprint}`);
     console.log(`  token  ${opts.token}`);
     console.log(`  run    ${opts.allowRun ? yellow("enabled: clients with the token can execute code here") : "disabled"}`);
     if (!isLoopback(opts.host)) console.log(opts.tls ? yellow("  listening beyond localhost") : red("  warning: listening beyond localhost without TLS"));
     const pin = fingerprint ? ` --fingerprint ${fingerprint}` : "";
-    console.log(dim(`\n  on another machine: ucm remote add <name> ${scheme}://<this-host>:${port} --token ${opts.token}${pin}`));
+    console.log(dim(`\n  on another machine: tcm remote add <name> ${scheme}://<this-host>:${port} --token ${opts.token}${pin}`));
   });
   return server;
 }

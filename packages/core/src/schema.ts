@@ -1,5 +1,5 @@
 // Runtime schemas for function parameters, derived from their TypeScript types. A server function the browser
-// can call is a public endpoint, and TypeScript types are gone at runtime, so ucm checks arguments against these
+// can call is a public endpoint, and TypeScript types are gone at runtime, so tcm checks arguments against these
 // before calling it. Schemas describe plain data, the only thing that crosses the network (see the CLI's codec).
 import ts from "typescript";
 
@@ -296,8 +296,8 @@ function describe(v: unknown): string {
 }
 
 /**
- * The value checker as standalone source text, for runtimes that can't import ucm (the generated #ucm/server
- * module): built from these functions' own source, so it's the same code wherever ucm runs from.
+ * The value checker as standalone source text, for runtimes that can't import tcm (the generated #tcm/server
+ * module): built from these functions' own source, so it's the same code wherever tcm runs from.
  */
 export function schemaCheckerSource(): string {
   return `${checkValue}\n${summary}\n${describe}\n`;

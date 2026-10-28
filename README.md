@@ -1,7 +1,8 @@
-# ucm-ts
+# tcm-ts
 
-[Unison](https://www.unison-lang.org)'s codebase model for plain TypeScript. Definitions are stored by the
-hash of their syntax tree, and names are only pointers to hashes. So renames are free, nothing gets rebuilt,
+**tcm**, the TypeScript codebase manager: [Unison](https://www.unison-lang.org)'s codebase model (its `ucm`) for
+plain TypeScript. Definitions are stored by the hash of their syntax tree, and names are only pointers to
+hashes. So renames are free, nothing gets rebuilt,
 and two versions of a dependency can live side by side. You don't need new syntax: any erasable TypeScript
 file works as input, and Node runs the result directly through its built-in type stripping.
 
@@ -11,27 +12,27 @@ and typechecking.
 ```sh
 # from a checkout: build the npm package and install it globally
 pnpm install && pnpm build
-npm install -g "$(cd dist/package && npm pack --silent)"   # binaries: ucm and ucm-ts
+npm install -g "$(cd dist/package && npm pack --silent)"   # binaries: tcm and tcm-ts
 
 mkdir demo && cd demo
-ucm init          # .ucm/codebase.sqlite, package.json "#codebase" imports, tsconfig, scratch.ts
-ucm               # watch: typecheck + hash scratch files, evaluate bare expressions
-ucm add           # save new definitions from scratch.ts
+tcm init          # .tcm/codebase.sqlite, package.json "#codebase" imports, tsconfig, scratch.ts
+tcm               # watch: typecheck + hash scratch files, evaluate bare expressions
+tcm add           # save new definitions from scratch.ts
 ```
 
 ## What's in it
 
-- **A content-addressed codebase.** Scratch files are ordinary TypeScript. `ucm add`/`update` store
+- **A content-addressed codebase.** Scratch files are ordinary TypeScript. `tcm add`/`update` store
   definitions by hash; updates re-hash dependents automatically, and what stops typechecking goes to `todo`.
   [Getting started](docs/getting-started.md) · [hashing](docs/hashing.md) · [CLI](docs/cli.md)
 - **Editor integration.** The codebase in a VS Code sidebar, pages for definitions and namespaces (rendered docs,
   linked source, uses and used-by), one finder for names, docs and types, apps you can start, a table viewer;
-  in scratch files, each definition's status with Add/Update actions and watch values inline. `ucm lsp` serves
+  in scratch files, each definition's status with Add/Update actions and watch values inline. `tcm lsp` serves
   it (also for Neovim and Helix). [Editors](docs/editors.md)
 - **Docs that can't go stale.** JSDoc links, embeds and ```` ```ts ```` examples are resolved to hashes: they
   follow renames and updates, examples are evaluated, and `update` reports the ones that break.
   [Docs](docs/documentation.md)
-- **Search by type,** as in Unison: `ucm find ':(xs: T[]) => T'` finds matches up to renaming, reordered
+- **Search by type,** as in Unison: `tcm find ':(xs: T[]) => T'` finds matches up to renaming, reordered
   arguments, `async` results, and more general or specific types. [Search](docs/search.md)
 - **Real projects import as they are.** neverthrow, ts-pattern and valibot import, verify and run.
   [Importing](docs/importing.md)
@@ -48,7 +49,7 @@ ucm add           # save new definitions from scratch.ts
   atomic updates and transactions. [Data](docs/data.md)
 - **Background jobs pinned to the code that enqueued them,** plus cron schedules. [Jobs](docs/jobs.md)
 - **Deploy and roll back by moving a name;** old tabs keep working. [Production](docs/production.md)
-- **Self-hosting:** ucm-ts imports, verifies and runs its own source at a fixed point.
+- **Self-hosting:** tcm-ts imports, verifies and runs its own source at a fixed point.
   [Developing](docs/developing.md)
 
 New here? Read the [introduction](docs/introduction.md), then follow the tutorials:
@@ -56,4 +57,4 @@ New here? Read the [introduction](docs/introduction.md), then follow the tutoria
 [examples](examples/README.md): `examples/polls/setup.sh /tmp/polls`, or the React one,
 `examples/notes/setup.sh /tmp/notes`.
 
-All documentation: [docs/](docs/README.md), also at [hipstersmoothie.github.io/ucm-ts](https://hipstersmoothie.github.io/ucm-ts/). Open items: [limitations](docs/limitations.md).
+All documentation: [docs/](docs/README.md), also at [hipstersmoothie.github.io/tcm-ts](https://hipstersmoothie.github.io/tcm-ts/). Open items: [limitations](docs/limitations.md).

@@ -8,15 +8,15 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { CHROME, pageText, withPage } from "./browser.ts";
 
-const BIN = process.env.UCM_BIN ? path.resolve(process.env.UCM_BIN) : fileURLToPath(new URL("../bin/ucm.js", import.meta.url));
+const BIN = process.env.TCM_BIN ? path.resolve(process.env.TCM_BIN) : fileURLToPath(new URL("../bin/tcm.js", import.meta.url));
 const SETUP = fileURLToPath(new URL("../../../examples/polls/setup.sh", import.meta.url));
-const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ucm examples ")), "polls");
-const env = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", UCM_BIN: BIN };
+const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tcm examples ")), "polls");
+const env = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", TCM_BIN: BIN };
 const children: ChildProcess[] = [];
 after(() => children.forEach((c) => c.kill()));
 
 const hashOf = (name: string, root = dir) => {
-  const db = new DatabaseSync(path.join(root, ".ucm", "codebase.sqlite"), { readOnly: true });
+  const db = new DatabaseSync(path.join(root, ".tcm", "codebase.sqlite"), { readOnly: true });
   try {
     return (db.prepare("SELECT hash FROM names WHERE path = ?").get(name) as { hash: string }).hash;
   } finally {
@@ -41,7 +41,7 @@ test("the polls example builds, passes its tests, and runs in a browser", { skip
   assert.ok(url, log);
 
   const call = async (name: string, args: unknown[]) => {
-    const r = await fetch(new URL(`/__ucm/rpc/${hashOf(name)}`, url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) });
+    const r = await fetch(new URL(`/__tcm/rpc/${hashOf(name)}`, url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) });
     assert.equal(r.status, 200, await r.clone().text());
     return r.json();
   };
@@ -54,7 +54,7 @@ test("the polls example builds, passes its tests, and runs in a browser", { skip
   assert.match(text, /tabs\s+█+\s+100% \(1\)/);
 });
 
-/** Start `ucm start <app>` in `cwd` on a free port; resolves with its URL. */
+/** Start `tcm start <app>` in `cwd` on a free port; resolves with its URL. */
 async function startApp(cwd: string, app: string): Promise<string> {
   const child = spawn(process.execPath, [BIN, "start", app, "--port", "0"], { cwd, env });
   children.push(child);
@@ -74,10 +74,10 @@ test("the notes example: React server components with no directives, in a browse
   assert.equal(setup.status, 0, out);
   assert.match(out, /7 passed, 0 failed/);
   assert.doesNotMatch(out, /warning/, "the example's docs link only to what exists");
-  const ucm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: notesDir, env, encoding: "utf8" }).stdout;
-  assert.match(ucm("view", "notes.NoteList"), /renders on the server: it is an async component; the browser fetches its rendered tree by hash/);
-  assert.match(ucm("view", "notes.NoteEditor"), /renders in the browser: it uses useState/);
-  assert.match(ucm("view", "notes.Markdown"), /renders anywhere/);
+  const tcm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: notesDir, env, encoding: "utf8" }).stdout;
+  assert.match(tcm("view", "notes.NoteList"), /renders on the server: it is an async component; the browser fetches its rendered tree by hash/);
+  assert.match(tcm("view", "notes.NoteEditor"), /renders in the browser: it uses useState/);
+  assert.match(tcm("view", "notes.Markdown"), /renders anywhere/);
 
   const url = await startApp(notesDir, "notes.App");
   const text = (sel: string) => `document.querySelector(${JSON.stringify(sel)})?.textContent ?? ""`;
@@ -104,7 +104,7 @@ test("the notes example: React server components with no directives, in a browse
     assert.doesNotMatch(await p.waitFor<string>(text(".list"), (t) => !/Markdown/.test(t ?? "")), /Markdown/);
   });
   // what the browser received: no server code
-  const assets = path.join(notesDir, ".ucm", "apps", hashOf("notes.App", notesDir), "assets");
+  const assets = path.join(notesDir, ".tcm", "apps", hashOf("notes.App", notesDir), "assets");
   const shipped = fs.readdirSync(assets).map((f) => fs.readFileSync(path.join(assets, f), "utf8")).join("\n");
   for (const secret of ["orderBy", "store.sqlite", "that note was deleted"]) assert.ok(!shipped.includes(secret), `${secret} must not reach the browser`);
 });

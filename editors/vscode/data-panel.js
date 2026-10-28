@@ -12,7 +12,7 @@ function showTable(table, request, openUri, icon) {
     existing.panel.reveal();
     return;
   }
-  const panel = vscode.window.createWebviewPanel("ucm.table", `${table} (table)`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
+  const panel = vscode.window.createWebviewPanel("tcm.table", `${table} (table)`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
   const state = { table, panel, query: { offset: 0, limit: PAGE, search: "", sort: undefined } };
   panels.set(table, state);
   if (icon) panel.iconPath = icon;
@@ -20,7 +20,7 @@ function showTable(table, request, openUri, icon) {
 
   const load = async () => {
     try {
-      const [tables, page] = await Promise.all([request("ucm/data", {}), request("ucm/rows", { table, ...state.query })]);
+      const [tables, page] = await Promise.all([request("tcm/data", {}), request("tcm/rows", { table, ...state.query })]);
       panel.webview.postMessage({ type: "data", info: tables.find((t) => t.table === table) ?? { table, rows: 0, older: 0 }, page, query: state.query });
     } catch (e) {
       panel.webview.postMessage({ type: "error", message: e.message });
@@ -33,7 +33,7 @@ function showTable(table, request, openUri, icon) {
       await load();
     } else if (m.type === "openDefinition" && m.uri) openUri(m.uri);
     else if (m.type === "migrate") {
-      await vscode.commands.executeCommand("ucm.migrateTable", { table });
+      await vscode.commands.executeCommand("tcm.migrateTable", { table });
       await load();
     }
   });

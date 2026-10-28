@@ -1,6 +1,6 @@
 import ts from "typescript";
 import type { IR } from "./hash.ts";
-import { isAnonymousFunction, UcmError, type DefSite } from "./extract.ts";
+import { isAnonymousFunction, TcmError, type DefSite } from "./extract.ts";
 import type { DefKind, ExtRef, RefPos } from "./types.ts";
 
 /**
@@ -26,7 +26,7 @@ function slotOf(node: ts.Node, child: ts.Node | ts.NodeArray<ts.Node>): string {
   for (const key of Object.keys(node)) {
     if (!NON_SLOT_KEYS.has(key) && (node as unknown as Record<string, unknown>)[key] === child) return key;
   }
-  throw new UcmError(`internal: cannot find the slot of a ${kindName[node.kind]} child`, node);
+  throw new TcmError(`internal: cannot find the slot of a ${kindName[node.kind]} child`, node);
 }
 
 const REJECTED: Partial<Record<ts.SyntaxKind, string>> = {
@@ -263,7 +263,7 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
     let m = checker.getSymbolAtLocation(right);
     if (m && m.flags & ts.SymbolFlags.Alias) m = checker.getAliasedSymbol(m);
     const d = m?.declarations?.length ? pickDef(m.declarations, right) : undefined;
-    if (d === undefined) throw new UcmError(`'${left.text}.${right.text}' is not a top-level definition of ${decl.fileName}`, right);
+    if (d === undefined) throw new TcmError(`'${left.text}.${right.text}' is not a top-level definition of ${decl.fileName}`, right);
     return d;
   };
 
@@ -288,7 +288,7 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
       if (td && ctx.projectFiles.has(td.getSourceFile())) {
         const def = pickDef(target.declarations!, at);
         if (def !== undefined) return { kind: "def", def };
-        throw new UcmError(
+        throw new TcmError(
           ts.isSourceFile(td)
             ? `'${text}' is a namespace import of a project module; import the definitions you use by name`
             : `'${text}' is not a top-level definition of ${td.getSourceFile().fileName}`,
@@ -301,10 +301,10 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
       const def = pickDef(decls, at);
       if (def !== undefined) return { kind: "def", def };
       if (dsf === sf && site.nodes.some((n) => d0.pos >= n.pos && d0.end <= n.end)) return { kind: "local", symbol: sym };
-      throw new UcmError(`cannot resolve '${text}'`, at);
+      throw new TcmError(`cannot resolve '${text}'`, at);
     }
     if (dsf.isDeclarationFile) return { kind: "global", name: text };
-    throw new UcmError(
+    throw new TcmError(
       `'${text}' refers to a declaration in ${dsf.fileName}; import codebase definitions from '#codebase/...' instead of local files`,
       at,
     );
@@ -370,7 +370,7 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
     const k = node.kind;
     const transformable = k === ts.SyntaxKind.EnumDeclaration || k === ts.SyntaxKind.ModuleDeclaration;
     const rejected = REJECTED[k];
-    if (rejected && !(transformable && ctx.allowTransformed)) throw new UcmError(rejected, node);
+    if (rejected && !(transformable && ctx.allowTransformed)) throw new TcmError(rejected, node);
     if (transformable) transform = true;
     if (ts.isParameter(node) && ts.isConstructorDeclaration(node.parent) && (ts.getModifiers(node) ?? []).some((m) => ACCESSIBILITY.has(m.kind))) transform = true;
 
@@ -493,7 +493,7 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
     else if (ts.isMetaProperty(node)) {
       out.push(ts.tokenToString(node.keywordToken)!);
       if (node.keywordToken === ts.SyntaxKind.ImportKeyword) {
-        ctx.warn(`'${node.getText(sf)}' depends on where the module lives; in the codebase it is evaluated inside .ucm/cache`, node);
+        ctx.warn(`'${node.getText(sf)}' depends on where the module lives; in the codebase it is evaluated inside .tcm/cache`, node);
       }
     }
     else if (ts.isVariableDeclarationList(node)) {

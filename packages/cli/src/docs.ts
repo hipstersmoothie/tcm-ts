@@ -4,8 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { docExamples, docTags, shortHash, type DefRecord, type DocRef } from "@ucm/core";
-import { evaluateWatches, render } from "@ucm/loader";
+import { docExamples, docTags, SERVER_API_MODULE, shortHash, type DefRecord, type DocRef } from "@tcm/core";
+import { evaluateWatches, render } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 
 const ANSI = /\x1b\[[0-9;]*m/g;
@@ -87,7 +87,7 @@ function exampleModule(cb: Codebase, code: string, refs: DocRef[]) {
     if (external.has(local)) continue;
     const e = r.ext;
     const from =
-      e.module === "ucm:server" ? "#ucm/server"
+      e.module === SERVER_API_MODULE ? "#tcm/server"
       : e.module.startsWith("npm:") ? e.module.replace(/^npm:(@?[^@]+)@.*$/, "$1") + (e.subpath ? `/${e.subpath}` : "")
       : e.module + (e.subpath ? `/${e.subpath}` : "");
     external.set(local, from);
@@ -119,7 +119,7 @@ function exampleModule(cb: Codebase, code: string, refs: DocRef[]) {
 /** Typecheck an example, and evaluate it unless `evaluate` is false. */
 export function runExample(cb: Codebase, code: string, refs: DocRef[], evaluate: boolean): ExampleResult & { code: string } {
   const m = exampleModule(cb, code, refs);
-  const dir = path.join(cb.lay.ucmDir, "examples");
+  const dir = path.join(cb.lay.tcmDir, "examples");
   fs.mkdirSync(dir, { recursive: true });
   const text = (m.header.length ? m.header.join("\n") + "\n" : "") + m.code;
   const file = path.join(dir, `${createHash("sha1").update(text).digest("hex").slice(0, 16)}.ts`);

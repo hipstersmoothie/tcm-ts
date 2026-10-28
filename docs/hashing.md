@@ -12,7 +12,7 @@ Definitions are top-level `function`s (overloads included), `const`s, `class`es,
 - **Classes hash as one unit.** Methods aren't split out: `this`, `#private`, `super` and initialization order
   make per-method hashing meaningless.
 - **Rejected in scratch files, with a reason:** top-level `let`/`var`, enums, namespaces, decorators, `declare`,
-  and top-level statements other than watch expressions. [`ucm import`](importing.md) accepts most of these,
+  and top-level statements other than watch expressions. [`tcm import`](importing.md) accepts most of these,
   because existing code uses them.
 - **Dynamic `import("pkg")`** of a package or Node builtin is pinned like a static import, so it's still
   content-addressed. Lazy imports of local files or codebase modules are rejected. A computed specifier
@@ -49,7 +49,7 @@ never skipped, so two different programs can't collide.
   an ambient `declare const x: unique symbol`, which is salted: each one is a distinct symbol.
 - **Names are hashed exactly where JavaScript can observe them** (`.name`): function and class declarations,
   `const f = () => …`, and local functions or bindings that name an anonymous function (`function helper()
-  {}`, `(cb = () => {}) =>`). Generated code keeps these names, so `ucm mv` changes the codebase path but not
+  {}`, `(cb = () => {}) =>`). Generated code keeps these names, so `tcm mv` changes the codebase path but not
   `.name`. All other locals and parameters stay alpha-renamable.
 
 ## A frozen format
@@ -58,8 +58,8 @@ never skipped, so two different programs can't collide.
   covers most syntax.
 - **Hashes don't depend on the TypeScript version.** `pnpm compare-ts 5.8` re-hashes the repo and the corpus
   on another TypeScript version: 5.8.3, 5.9.3 and 6.0.3 produce identical hashes.
-- **`ucm migrate`** rebuilds a codebase written with an older format: every stored definition is re-rendered
+- **`tcm migrate`** rebuilds a codebase written with an older format: every stored definition is re-rendered
   against its migrated dependencies and re-hashed.
-- **`ucm verify`** re-renders every live definition from the store and re-hashes it. Rendering is supposed to
+- **`tcm verify`** re-renders every live definition from the store and re-hashes it. Rendering is supposed to
   be the inverse of hashing, so any mismatch means stored source, splicing or canonicalization lost
-  information. `UCM_KEEP_VERIFY=1` leaves the rendered files in `.ucm/cache` for debugging a failing re-check.
+  information. `TCM_KEEP_VERIFY=1` leaves the rendered files in `.tcm/cache` for debugging a failing re-check.

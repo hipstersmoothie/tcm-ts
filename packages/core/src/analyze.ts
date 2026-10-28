@@ -3,17 +3,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { isBuiltin } from "node:module";
 import { hashFromExportId, hashIR, serializeIR, type IR } from "./hash.ts";
-import { extract, UcmError, type DefSite, type ExtractMode, type Piece } from "./extract.ts";
+import { extract, TcmError, type DefSite, type ExtractMode, type Piece } from "./extract.ts";
 import { canonicalizeSite, type CanonContext, type Resolved, type SiteResult } from "./canonicalize.ts";
 import { checkProfile, compilerOptions, createProgram, fileDiagnostics, type Compile, type Diagnostic } from "./program.ts";
-import { depRef, type DefRecord, type Dep, type DocRef, type ExtRef, type Span } from "./types.ts";
+import { depRef, SERVER_API_MODULE, type DefRecord, type Dep, type DocRef, type ExtRef, type Span } from "./types.ts";
 import { paramsSchema, typeSchema, type ParamsSchema, type TableSchema } from "./schema.ts";
 import { createHash } from "node:crypto";
 import { cacheRefOf, shapeBuilder, type TypeShape } from "./shape.ts";
 import { docExamples, docTags, exampleNames } from "./docs.ts";
 
 export interface AnalyzeHost {
-  /** absolute path of `.ucm/cache`; relative imports into it address definitions by hash */
+  /** absolute path of `.tcm/cache`; relative imports into it address definitions by hash */
   cacheDir: string;
   /**
    * Resolve a dotted codebase name (from `#codebase/...` imports) to a definition hash; throw if unknown.
@@ -24,7 +24,7 @@ export interface AnalyzeHost {
   oldProgram?: ts.Program;
   /** builds the program instead of a fresh `createProgram` (the watcher's incremental compiler) */
   compile?: Compile;
-  /** the project's compiler options (see projectCompilerOptions); ucm's defaults otherwise */
+  /** the project's compiler options (see projectCompilerOptions); tcm's defaults otherwise */
   compilerOptions?: ts.CompilerOptions;
   /**
    * Lineage salt for a term or class declared as `name` in `file`. JavaScript gives every declaration its own
@@ -46,7 +46,7 @@ export interface Analysis {
   warnings: string[];
   defs: ProjectDef[];
   watches: WatchRecord[];
-  /** from a `// ucm: namespace a.b` pragma */
+  /** from a `// tcm: namespace a.b` pragma */
   namespace?: string;
 }
 
@@ -66,7 +66,8 @@ export interface ProjectAnalysis {
   watches: (WatchRecord & { file: string })[];
 }
 
-const NAMESPACE_PRAGMA = /^\s*\/\/\s*ucm:\s*namespace\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*$/m;
+// `// ucm:` is the spelling from before the rename to tcm
+const NAMESPACE_PRAGMA = /^\s*\/\/\s*[tu]cm:\s*namespace\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*$/m;
 
 /** Analyze one scratch file: bare expressions are watch expressions. */
 export function analyzeFile(file: string, host: AnalyzeHost): Analysis {
@@ -74,7 +75,7 @@ export function analyzeFile(file: string, host: AnalyzeHost): Analysis {
   return { ...a, namespace: scratchNamespace(a.program.getSourceFile(file)!.text) };
 }
 
-/** The target namespace of a scratch file, from a `// ucm: namespace a.b` pragma in its first lines. */
+/** The target namespace of a scratch file, from a `// tcm: namespace a.b` pragma in its first lines. */
 export function scratchNamespace(text: string): string | undefined {
   return NAMESPACE_PRAGMA.exec(text.split("\n").slice(0, 5).join("\n"))?.[1];
 }
@@ -106,7 +107,7 @@ export function analyzeProject(files: string[], host: AnalyzeHost, mode: Extract
       try {
         extract(sf, mode);
       } catch (e) {
-        if (!(e instanceof UcmError)) throw e;
+        if (!(e instanceof TcmError)) throw e;
         errors.push(e.message);
       }
     }
@@ -144,22 +145,22 @@ function importClassifier(file: string, host: AnalyzeHost) {
     const exportName = ts.isImportSpecifier(d) ? (d.propertyName ?? d.name).text : ts.isImportClause(d) ? "default" : "*";
     let r: Resolved;
     if (spec === SERVER_API || isServerApiFile(spec, file, host)) {
-      r = { kind: "ext", ext: { module: "ucm:server", subpath: "", export: exportName } };
+      r = { kind: "ext", ext: { module: SERVER_API_MODULE, subpath: "", export: exportName } };
     } else if (spec === "#codebase" || spec.startsWith("#codebase/")) {
       if (exportName === "*" || exportName === "default") {
-        throw new UcmError('import codebase definitions by name: `import { sort } from "#codebase/lib"`', d);
+        throw new TcmError('import codebase definitions by name: `import { sort } from "#codebase/lib"`', d);
       }
       const ns = spec.slice("#codebase".length).replace(/^\//, "").replaceAll("/", ".");
       try {
         r = { kind: "hash", hash: host.resolveName(ns ? `${ns}.${exportName}` : exportName, meaning) };
       } catch (e) {
-        throw new UcmError((e as Error).message, d);
+        throw new TcmError((e as Error).message, d);
       }
     } else if (spec.startsWith(".") || spec.startsWith("/")) {
       const abs = path.resolve(path.dirname(file), spec);
       const hash = hashFromExportId(exportName);
       if (path.dirname(abs) !== host.cacheDir || !hash) {
-        throw new UcmError(`cannot import local file '${spec}': add it to the codebase and import it from '#codebase/...'`, d);
+        throw new TcmError(`cannot import local file '${spec}': add it to the codebase and import it from '#codebase/...'`, d);
       }
       r = { kind: "hash", hash };
     } else {
@@ -170,23 +171,23 @@ function importClassifier(file: string, host: AnalyzeHost) {
   };
 }
 
-/** ucm's own server API (request context, cookies, sessions): unversioned, like a Node builtin. */
-const SERVER_API = "#ucm/server";
+/** tcm's own server API (request context, cookies, sessions): unversioned, like a Node builtin. */
+const SERVER_API = "#tcm/server";
 
-/** The generated runtime of `#ucm/server`, as cache modules and re-analyzed definitions import it. */
+/** The generated runtime of `#tcm/server`, as cache modules and re-analyzed definitions import it. */
 function isServerApiFile(spec: string, file: string, host: AnalyzeHost): boolean {
-  return /^\.\.?\//.test(spec) && path.resolve(path.dirname(file), spec) === path.join(host.cacheDir, "ucm-server.js");
+  return /^\.\.?\//.test(spec) && path.resolve(path.dirname(file), spec) === path.join(host.cacheDir, "tcm-server.js");
 }
 
 /** A Node builtin or an npm package (version pinned from node_modules), as imported from `file`. */
 function externalModule(spec: string, file: string, at: ts.Node, exportName: string): ExtRef {
-  if (spec === SERVER_API) return { module: "ucm:server", subpath: "", export: exportName };
+  if (spec === SERVER_API) return { module: SERVER_API_MODULE, subpath: "", export: exportName };
   if (isBuiltin(spec)) return { module: spec.startsWith("node:") ? spec : `node:${spec}`, subpath: "", export: exportName };
   const parts = spec.split("/");
   const pkgName = spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
   const subpath = parts.slice(pkgName.split("/").length).join("/");
   const pkg = findPackage(pkgName, path.dirname(file));
-  if (!pkg) throw new UcmError(`cannot find package '${pkgName}' in node_modules`, at);
+  if (!pkg) throw new TcmError(`cannot find package '${pkgName}' in node_modules`, at);
   return { module: `npm:${pkg.name}@${pkg.version}`, subpath, export: exportName };
 }
 
@@ -194,7 +195,7 @@ function externalModule(spec: string, file: string, at: ts.Node, exportName: str
 function dynamicImportClassifier(file: string) {
   return (spec: string, at: ts.Node): ExtRef => {
     if (spec === "#codebase" || spec.startsWith("#codebase/") || spec.startsWith(".") || spec.startsWith("/")) {
-      throw new UcmError("dynamic `import()` of codebase or local modules isn't supported; import definitions statically", at);
+      throw new TcmError("dynamic `import()` of codebase or local modules isn't supported; import definitions statically", at);
     }
     return externalModule(spec, file, at, "*");
   };
@@ -270,7 +271,7 @@ function paramsOf(site: DefSite, checker: ts.TypeChecker): ParamsSchema | undefi
 }
 
 /**
- * `const users = table<User>("users")` with `table` from #ucm/server: the row type is erased at runtime, but it's
+ * `const users = table<User>("users")` with `table` from #tcm/server: the row type is erased at runtime, but it's
  * known here, so its schema (and that schema's hash) travel with the definition.
  */
 function tableOf(site: DefSite, checker: ts.TypeChecker): TableSchema | undefined {
@@ -281,7 +282,7 @@ function tableOf(site: DefSite, checker: ts.TypeChecker): TableSchema | undefine
   const d = checker.getSymbolAtLocation(init.expression)?.declarations?.[0];
   if (!d || !ts.isImportSpecifier(d) || (d.propertyName ?? d.name).text !== "table") return undefined;
   const spec = (d.parent.parent.parent.moduleSpecifier as ts.StringLiteral).text;
-  if (spec !== "#ucm/server" && !spec.endsWith("/ucm-server.js")) return undefined;
+  if (spec !== "#tcm/server" && !spec.endsWith("/tcm-server.js")) return undefined;
   const { s, defs } = typeSchema(checker, checker.getTypeFromTypeNode(init.typeArguments[0]!));
   const arg = init.arguments[0];
   const hash = createHash("sha256").update(JSON.stringify({ s, defs })).digest("hex").slice(0, 32);
@@ -330,7 +331,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
       watchSites.push(...x.watches);
       warnings.push(...x.warnings);
     } catch (e) {
-      if (!(e instanceof UcmError)) throw e;
+      if (!(e instanceof TcmError)) throw e;
       errors.push(e.message);
     }
   }
@@ -354,7 +355,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
     },
     kindOf: (def) => sites[def]!.kind,
     isLet: (def) => sites[def]!.tag === "Let",
-    warn: (message, node) => warnings.push(new UcmError(message, node).message),
+    warn: (message, node) => warnings.push(new TcmError(message, node).message),
   };
 
   // collect every problem in one pass, so importing a project reports all of them at once
@@ -362,7 +363,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
     try {
       return canonicalizeSite(s, ctx);
     } catch (e) {
-      if (!(e instanceof UcmError)) throw e;
+      if (!(e instanceof TcmError)) throw e;
       errors.push(e.message);
       return undefined;
     }

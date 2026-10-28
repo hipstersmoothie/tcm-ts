@@ -1,7 +1,7 @@
 # Web apps: no network boundary to write
 
 ```ts
-// ucm: namespace app
+// tcm: namespace app
 import { readFileSync } from "node:fs";
 
 export async function hostCount(): Promise<number> {       // uses node:fs → runs on the server
@@ -13,21 +13,21 @@ export async function main() {                             // uses document → 
 }
 ```
 
-`ucm dev app.main` serves this through Vite 8. Nothing is annotated: there's no `"use server"`, no routes, no
+`tcm dev app.main` serves this through Vite 8. Nothing is annotated: there's no `"use server"`, no routes, no
 fetch calls and no API layer. React components are placed the same way, server components included
-([React](react.md)). `ucm update` in another shell hot-reloads the browser. For production, see
+([React](react.md)). `tcm update` in another shell hot-reloads the browser. For production, see
 [production](production.md).
 
 ## How placement is inferred
 
-`ucm view` shows the placement of every definition, and why.
+`tcm view` shows the placement of every definition, and why.
 
 - A definition runs **on the server** if it uses Node (`node:*`, `process`, `Buffer`, a server-only npm
-  package), uses [`#ucm/server`](server-api.md), or uses something that does and can't be called remotely.
+  package), uses [`#tcm/server`](server-api.md), or uses something that does and can't be called remotely.
 - It runs **in the browser** if it uses the DOM.
 - Otherwise it runs **anywhere**: pure code runs where it's called.
 - An **async** server function is a cut point. Browser code calling it gets a stub that calls it by hash
-  (`POST /__ucm/rpc/<hash>`), and the code around the call stays in the browser.
+  (`POST /__tcm/rpc/<hash>`), and the code around the call stays in the browser.
 - A **synchronous** server function used from the browser is an error that names it ("Make app.machine
   async"), because a network call can't be synchronous.
 - Server-only npm packages are found by a heuristic: no browser build, and an entry that imports Node builtins.
@@ -37,10 +37,10 @@ fetch calls and no API layer. React components are placed the same way, server c
 - **Server code never reaches the browser.** The Vite plugin swaps whole server components for stubs before
   they're resolved.
 - **The browser can call only the app's own server functions.** The endpoint surface is exactly the server
-  functions the app calls, listed when `ucm dev` starts. Anything else, and cross-origin calls, are refused.
+  functions the app calls, listed when `tcm dev` starts. Anything else, and cross-origin calls, are refused.
 - **No client/server version skew.** Calls go by hash, as Unison's typed service calls do, and a hash never
   changes meaning.
-- **Testable in one process:** under `ucm test` everything runs locally ([testing](testing.md)).
+- **Testable in one process:** under `tcm test` everything runs locally ([testing](testing.md)).
 
 ## Plain data crosses the wire
 
@@ -50,7 +50,7 @@ symbols and cycles are refused with a message saying what couldn't be sent, rath
 
 ## Arguments are checked against the parameter types
 
-A server function the browser can call is a public endpoint, and TypeScript types are gone at runtime. So ucm
+A server function the browser can call is a public endpoint, and TypeScript types are gone at runtime. So tcm
 derives a runtime schema from each server function's parameters (objects, arrays, tuples, unions, literals,
 dates, maps, sets, recursive types). Calls with wrong types, missing fields, unexpected extra fields, or too many
 arguments are refused with a 400 that says what's wrong, before the function runs.
@@ -68,7 +68,7 @@ That follows from inference, not annotation, and every app report shows it:
 - **Server state:** `const visits = new Map()` used only by server functions has one copy, shared by every
   client.
 - **Browser state:** used only by browser code, each tab has its own copy.
-- **Used by both sides:** the server and every tab silently get separate copies, so ucm warns.
+- **Used by both sides:** the server and every tab silently get separate copies, so tcm warns.
 
 Only fresh mutable objects count (`new …`, `[]`, `{}`); `as const`, frozen and computed values don't. For state
 that must survive restarts, use a [table](data.md).

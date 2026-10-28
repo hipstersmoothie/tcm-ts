@@ -1,5 +1,5 @@
 node_modules/
-.ucm/
+.tcm/
 dist/
 selfhost/tsconfig.json
 selfhost/scratch.ts

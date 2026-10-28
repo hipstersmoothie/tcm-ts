@@ -22,7 +22,7 @@ class Pages {
       open.panel.reveal();
       return;
     }
-    const panel = vscode.window.createWebviewPanel("ucm.page", target.title ?? "…", vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, enableCommandUris: false });
+    const panel = vscode.window.createWebviewPanel("tcm.page", target.title ?? "…", vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, enableCommandUris: false });
     panel.iconPath = this.icon;
     this.panels.set(key, { panel, target });
     panel.onDidDispose(() => this.panels.delete(key));
@@ -41,12 +41,12 @@ class Pages {
     const { panel, target } = open;
     try {
       if (target.hash) {
-        const page = await this.request("ucm/page", { hash: target.hash });
+        const page = await this.request("tcm/page", { hash: target.hash });
         const name = page.names[0] ?? page.short;
         panel.title = name.slice(name.lastIndexOf(".") + 1);
         panel.webview.postMessage({ type: "page", card: { kind: "def", page, docHtml: page.docMarkdown ? await markdown(page.docMarkdown) : "" } });
       } else {
-        const page = await this.request("ucm/namespace", { namespace: target.namespace });
+        const page = await this.request("tcm/namespace", { namespace: target.namespace });
         panel.title = `${target.namespace || "(root)"} (namespace)`;
         panel.webview.postMessage({ type: "page", card: { kind: "namespace", page, readmeHtml: page.readme ? await markdown(page.readme) : "" } });
       }
@@ -183,7 +183,7 @@ window.addEventListener("message", (e) => {
     if (a.dataset.hash) return vscode.postMessage({ type: "open", hash: a.dataset.hash });
     if (a.dataset.namespace !== undefined) return vscode.postMessage({ type: "open", namespace: a.dataset.namespace });
     const href = a.getAttribute("href") || "";
-    if (href.startsWith("ucm-page:")) { ev.preventDefault(); return vscode.postMessage({ type: "open", hash: href.slice(9) }); }
+    if (href.startsWith("tcm-page:")) { ev.preventDefault(); return vscode.postMessage({ type: "open", hash: href.slice(9) }); }
     if (a.dataset.action) return vscode.postMessage({ type: "action", action: a.dataset.action, page: c.page });
   });
 });

@@ -7,19 +7,19 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
-const BIN = process.env.UCM_BIN ? path.resolve(process.env.UCM_BIN) : fileURLToPath(new URL("../bin/ucm.js", import.meta.url));
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ucm import "));
-const lib = fs.mkdtempSync(path.join(os.tmpdir(), "ucm import lib "));
+const BIN = process.env.TCM_BIN ? path.resolve(process.env.TCM_BIN) : fileURLToPath(new URL("../bin/tcm.js", import.meta.url));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcm import "));
+const lib = fs.mkdtempSync(path.join(os.tmpdir(), "tcm import lib "));
 const env = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" };
 
-function ucm(...args: string[]): string {
+function tcm(...args: string[]): string {
   const r = spawnSync(process.execPath, [BIN, ...args], { cwd: dir, encoding: "utf8", env });
   const out = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "");
-  if (r.status !== 0) throw new Error(`ucm ${args.join(" ")} exited ${r.status}:\n${out}`);
+  if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} exited ${r.status}:\n${out}`);
   return out;
 }
 function hashOf(name: string): string {
-  const db = new DatabaseSync(path.join(dir, ".ucm", "codebase.sqlite"), { readOnly: true });
+  const db = new DatabaseSync(path.join(dir, ".tcm", "codebase.sqlite"), { readOnly: true });
   try {
     return (db.prepare("SELECT hash FROM names WHERE path = ?").get(name) as { hash: string }).hash;
   } finally {
@@ -27,7 +27,7 @@ function hashOf(name: string): string {
   }
 }
 function componentOf(name: string): string {
-  const db = new DatabaseSync(path.join(dir, ".ucm", "codebase.sqlite"), { readOnly: true });
+  const db = new DatabaseSync(path.join(dir, ".tcm", "codebase.sqlite"), { readOnly: true });
   try {
     return (db.prepare("SELECT component_hash AS c FROM definitions WHERE hash = ?").get(hashOf(name)) as { c: string }).c;
   } finally {
@@ -114,11 +114,11 @@ export function pick(x: string | boolean): string {
 }
 
 test("import a library that uses enums, namespaces, parameter properties, namespace imports, module state and ts directives", () => {
-  ucm("init");
+  tcm("init");
   writeLibrary();
-  const imported = ucm("import", path.join(lib, "src"), "--into", "lib", "--exclude", "testing");
+  const imported = tcm("import", path.join(lib, "src"), "--into", "lib", "--exclude", "testing");
   assert.match(imported, /\+ new/);
-  assert.doesNotMatch(imported, /warning/, "module resolution and emit options are ucm's business in import mode");
+  assert.doesNotMatch(imported, /warning/, "module resolution and emit options are tcm's business in import mode");
 
   // ambient unique symbols with the same text stay distinct
   assert.notEqual(hashOf("lib.symbols.BrandA"), hashOf("lib.symbols.BrandB"));
@@ -126,11 +126,11 @@ test("import a library that uses enums, namespaces, parameter properties, namesp
   assert.equal(componentOf("lib.config.setConfig"), componentOf("lib.config.config"));
   assert.notEqual(componentOf("lib.config.getConfig"), componentOf("lib.config.config"), "readers just import it");
 
-  assert.match(ucm("verify"), /verified \d+ definitions: rendering and re-hashing is the identity/);
+  assert.match(tcm("verify"), /verified \d+ definitions: rendering and re-hashing is the identity/);
 
   fs.writeFileSync(
     path.join(dir, "scratch.ts"),
-    `// ucm: namespace app
+    `// tcm: namespace app
 import { Shape, Kind, unwrap } from "#codebase/lib/shapes";
 import { setConfig, getConfig, callCount, pick } from "#codebase/lib/config";
 
@@ -141,6 +141,6 @@ export function main() {
 }
 `,
   );
-  ucm("add");
-  assert.match(ucm("run", "app.main"), /9 square 43 true 1 p/);
+  tcm("add");
+  assert.match(tcm("run", "app.main"), /9 square 43 true 1 p/);
 });

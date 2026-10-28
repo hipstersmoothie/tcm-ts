@@ -1,11 +1,11 @@
-# #ucm/server reference
+# #tcm/server reference
 
-Everything server code can import from `#ucm/server`. Importing any of it makes a function run on the server
+Everything server code can import from `#tcm/server`. Importing any of it makes a function run on the server
 (see [web apps](apps.md)). For how these fit together, see the guides: [server functions](server-api.md),
 [data](data.md), [background jobs](jobs.md).
 
 ```ts
-import { request, session, setSession, table, enqueue, HttpError } from "#ucm/server";
+import { request, session, setSession, table, enqueue, HttpError } from "#tcm/server";
 ```
 
 ## Requests
@@ -53,7 +53,7 @@ function revokeSessions(match: (data: Record<string, unknown>) => boolean): numb
 
 - `session()` is the caller's session data: empty if they have none, or it expired or was revoked.
 - `setSession(data)` starts a new session (default 30 days). The data stays on the server
-  (`.ucm/data/sessions.sqlite`); the cookie holds only a fresh, unguessable id, so a new id on every sign-in
+  (`.tcm/data/sessions.sqlite`); the cookie holds only a fresh, unguessable id, so a new id on every sign-in
   prevents session fixation.
 - `revokeSessions(match)` ends every session whose data matches, e.g. `revokeSessions((s) => s.user === "ada")`
   signs Ada out everywhere. Returns how many ended.
@@ -72,7 +72,7 @@ function rateLimit(key: string, opts: { max: number; per: number }): void;
 
 - Throw an `HttpError` to fail a call on purpose: the browser's promise rejects with its `status` and `message`.
   Any other error reaches the browser as "internal error" in production (it's logged on the server), and in full
-  under `ucm dev`.
+  under `tcm dev`.
 - `rateLimit(key, { max, per })` allows `max` calls per `per` seconds for `key` (e.g. `"login:" + request().ip`),
   and throws a 429 with `Retry-After` beyond that.
 
@@ -136,7 +136,7 @@ function every(spec: string, fn: () => unknown): RecurringJob;
   version that queued it), and the arguments plain data.
 - `enqueueAfter(seconds, fn, ...args)` waits first.
 - `export const nightly = every("0 3 * * *", cleanup)` is a recurring job: five cron fields in UTC, or an interval
-  like `"15m"` (`s`, `m`, `h`, `d`). `ucm start` and `ucm dev` run the recurring jobs in the app's namespace, once
+  like `"15m"` (`s`, `m`, `h`, `d`). `tcm start` and `tcm dev` run the recurring jobs in the app's namespace, once
   per slot however many servers there are.
 
 ## For tests
@@ -154,4 +154,4 @@ function runJobs(opts?: { all?: boolean }): Promise<{ done: number; failed: numb
   the cookies it set come back in `setCookies` (pass them in `cookies` to continue the session).
 - `runJobs()` runs the queued jobs that are due, inline; `{ all: true }` runs every queued job.
 
-Under `ucm test`, tables and jobs live in memory. See [testing](testing.md).
+Under `tcm test`, tables and jobs live in memory. See [testing](testing.md).

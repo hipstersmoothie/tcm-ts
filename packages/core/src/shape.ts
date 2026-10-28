@@ -1,4 +1,4 @@
-// Type shapes: a term's type as structure, for searching by type (`ucm find ':(xs: T[]) => T'`), the way Unison
+// Type shapes: a term's type as structure, for searching by type (`tcm find ':(xs: T[]) => T'`), the way Unison
 // searches by type. References to codebase types are hashes, so a rename doesn't change a shape; type
 // parameters are variables, so `<A>(xs: A[]) => A` and `<T>(xs: T[]) => T` are the same shape.
 import ts from "typescript";
@@ -34,7 +34,7 @@ export function cacheRefOf(checker: ts.TypeChecker): (sym: ts.Symbol) => string 
   return (sym) => {
     const decl = sym.declarations?.[0];
     const sf = decl?.getSourceFile();
-    if (!sf || !/[\\/]\.ucm[\\/]cache[\\/][a-z2-7]{52}\.tsx?$/.test(sf.fileName)) return undefined;
+    if (!sf || !/[\\/]\.tcm[\\/]cache[\\/][a-z2-7]{52}\.tsx?$/.test(sf.fileName)) return undefined;
     let byLocal = exports.get(sf);
     if (!byLocal) {
       byLocal = new Map();

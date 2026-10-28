@@ -1,6 +1,6 @@
-// Searching the codebase by type, as Unison does: `ucm find ':(xs: T[]) => T'`, and the editor's "Find by type".
+// Searching the codebase by type, as Unison does: `tcm find ':(xs: T[]) => T'`, and the editor's "Find by type".
 import path from "node:path";
-import { matchShapes, queryShape } from "@ucm/core";
+import { matchShapes, queryShape } from "@tcm/core";
 import type { Codebase } from "./codebase.ts";
 
 /** The most distant match worth listing: a few reorderings, specializations or awaits away. */
@@ -21,7 +21,7 @@ export interface TypeHit {
  * result, or a more general or more specific type.
  */
 export function searchByType(cb: Codebase, text: string): { variables: string[]; hits: TypeHit[] } {
-  if (!text.trim()) throw new Error("find :<type>, e.g. ucm find ':(xs: T[]) => T'");
+  if (!text.trim()) throw new Error("find :<type>, e.g. tcm find ':(xs: T[]) => T'");
   const names = cb.store.names();
   const types = names.filter((n) => n.kind !== "term");
   const resolve = (name: string) => {
@@ -34,7 +34,7 @@ export function searchByType(cb: Codebase, text: string): { variables: string[];
     return { module: ["#codebase", ...segs.slice(0, -1)].join("/"), export: segs.at(-1)! };
   };
   cb.refreshShim();
-  const q = queryShape(text, path.join(cb.lay.ucmDir, "query.ts"), cb.compilerOptions(), resolve);
+  const q = queryShape(text, path.join(cb.lay.tcmDir, "query.ts"), cb.compilerOptions(), resolve);
   const terms = names.filter((n) => n.kind === "term");
   cb.ensureShapes(terms.map((n) => n.hash));
   const hits = terms

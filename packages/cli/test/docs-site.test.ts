@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const SCRIPT = fileURLToPath(new URL("../../../scripts/docs-site.ts", import.meta.url));
 
 test("the docs site builds, every link and anchor resolves", () => {
-  const out = fs.mkdtempSync(path.join(os.tmpdir(), "ucm docs site "));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "tcm docs site "));
   const r = spawnSync(process.execPath, [SCRIPT, out], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   const index = fs.readFileSync(path.join(out, "index.html"), "utf8");

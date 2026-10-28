@@ -4,7 +4,7 @@ import { renderServerComponent } from "../src/rsc.ts";
 
 // elements as React's jsx() makes them, so no React is needed here
 const el = (type: unknown, props: Record<string, unknown> = {}, key: string | null = null) => ({ $$typeof: Symbol.for("react.transitional.element"), type, key, props });
-const hashed = <F extends (...a: never[]) => unknown>(f: F, hash: string) => Object.defineProperty(f, Symbol.for("ucm.hash"), { value: hash });
+const hashed = <F extends (...a: never[]) => unknown>(f: F, hash: string) => Object.defineProperty(f, Symbol.for("tcm.hash"), { value: hash });
 const ctx = (refs: string[]) => ({ isClientRef: (h: string) => refs.includes(h), name: (h: string) => `#${h}` });
 
 test("server components render to plain data; browser components become references by hash", async () => {
@@ -18,9 +18,9 @@ test("server components render to plain data; browser components become referenc
   };
   const tree = await renderServerComponent(List as never, { items: ["a", "b"] }, ctx(["counter"]));
   assert.deepEqual(tree, [
-    { $ucm: "e", type: "ul", key: null, props: { className: "list", children: [{ $ucm: "e", type: "li", key: null, props: { children: "a" } }, { $ucm: "e", type: "li", key: null, props: { children: "b" } }] } },
+    { $tcm: "e", type: "ul", key: null, props: { className: "list", children: [{ $tcm: "e", type: "li", key: null, props: { children: "a" } }, { $tcm: "e", type: "li", key: null, props: { children: "b" } }] } },
     // the server renders the elements it passes as props; the browser renders the component itself
-    { $ucm: "c", ref: "counter", key: null, props: { start: 2, children: { $ucm: "e", type: "b", key: null, props: { children: "♥" } } } },
+    { $tcm: "c", ref: "counter", key: null, props: { start: 2, children: { $tcm: "e", type: "b", key: null, props: { children: "♥" } } } },
   ]);
 });
 

@@ -3,7 +3,7 @@
 Typed tables never silently disagree with your code.
 
 ```ts
-import { table, transaction } from "#ucm/server";
+import { table, transaction } from "#tcm/server";
 
 export type User = { name: string; email: string; joined: Date; plan: "free" | "pro"; logins: number };
 export const users = table<User>("users");          // declared at the top level
@@ -12,11 +12,11 @@ await users.insert({ name: "ada", email: "ada@x", joined: new Date(), plan: "fre
 await users.find({ name: "ada" });                    // also get / put / delete / count
 ```
 
-TypeScript erases `User` at runtime, but ucm sees it where the table is declared. It derives a schema from it
+TypeScript erases `User` at runtime, but tcm sees it where the table is declared. It derives a schema from it
 and attaches that schema, with its hash, to the table. A table declared anywhere but the top level, or without
 a row type, explains how to declare one when used.
 
-Data lives in `.ucm/data/store.sqlite`, apart from the codebase. Under `ucm test`, tables live in memory.
+Data lives in `.tcm/data/store.sqlite`, apart from the codebase. Under `tcm test`, tables live in memory.
 
 ## Options
 
@@ -54,16 +54,16 @@ export function fromV2(old: { text: string; tags: string[] }): Note {
 export const notes = table<Note>("notes", { migrate: [fromV1, fromV2] });
 ```
 
-ucm records each step's parameter type. A row goes through the first step whose parameter it fits, then the
+tcm records each step's parameter type. A row goes through the first step whose parameter it fits, then the
 later ones, until it fits the row type, so a v1 row goes through both steps here and a v2 row through the second.
 Type changes accumulate without one function having to handle every past shape. A row no step takes fails with
 each step's reason ("step 1 (fromV1): row.body is missing; …").
 
-**`ucm update` reports this up front.** When a row type changes, it checks the stored rows and says whether they
+**`tcm update` reports this up front.** When a row type changes, it checks the stored rows and says whether they
 fit, will be migrated (some step takes them), or need a step first. It also reports stored duplicates that would
 break a new `unique` field, and rows waiting to move from a `renamedFrom` table.
 
-**`ucm data migrate <table>` migrates every row now**, through the current code, instead of as rows are read.
+**`tcm data migrate <table>` migrates every row now**, through the current code, instead of as rows are read.
 `<table>` is a table name or the name of the definition declaring it. Afterwards it says whether `migrate` still
 has work: once every row has the current type, it can be removed. Keep it while an older build that writes the
 old type is still serving.
@@ -77,7 +77,7 @@ written by newer code gets a 410, and its browser reloads onto the current versi
   oldest first unless ordered. **`findOne(where, opts)`** returns the first, **`count(where)`** how many.
 - **`unique` and `index` fields get SQLite expression indexes.** A write that would duplicate a `unique` field
   fails with `HttpError(409)` naming the other row; writes never replace another row to satisfy uniqueness.
-- **When every row has the current type** (e.g. after `ucm data migrate`), filtering, ordering and paging run in
+- **When every row has the current type** (e.g. after `tcm data migrate`), filtering, ordering and paging run in
   SQL, using the indexes. Otherwise rows of older types are read through `migrate` first, so results never
   depend on whether a row was migrated yet.
 
@@ -123,11 +123,11 @@ Trade-offs:
 - **Keep transactions short.** While one runs, every other table call in the process waits.
 - **Don't await anything inside a transaction that itself needs a table from outside it**, such as a request
   to your own server. It would wait forever.
-- **The lock is per process.** Another process using the same store, such as `ucm data migrate` while the app
+- **The lock is per process.** Another process using the same store, such as `tcm data migrate` while the app
   serves, is kept out by SQLite's write lock instead: it waits up to 5 seconds for a transaction to finish,
   then fails with "database is locked".
 
-## `ucm data`
+## `tcm data`
 
-`ucm data` lists tables and row counts, and notes tables whose rows span several row types. `ucm data <table>
+`tcm data` lists tables and row counts, and notes tables whose rows span several row types. `tcm data <table>
 [n]` shows the newest rows, each with the schema it was written with.

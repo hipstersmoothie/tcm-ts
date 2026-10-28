@@ -1,4 +1,4 @@
-// Wire format for calls between the browser and the server. Shared verbatim by both sides: ucm dev sends these
+// Wire format for calls between the browser and the server. Shared verbatim by both sides: tcm dev sends these
 // functions' own source to the browser (see codecSource), so they must not use anything outside this file.
 //
 // Plain data crosses: JSON values plus undefined, Date, BigInt, Map, Set, NaN/±Infinity and -0. Functions, class
@@ -61,8 +61,8 @@ export function decode(text: string): unknown {
 }
 
 /**
- * The codec as a browser module, built from the functions' own source text, so it is the same code wherever ucm
- * itself runs from (its source, a built package, or a codebase's .ucm/cache).
+ * The codec as a browser module, built from the functions' own source text, so it is the same code wherever tcm
+ * itself runs from (its source, a built package, or a codebase's .tcm/cache).
  */
 export function codecSource(): string {
   return `${toWire}\n${fromWire}\nexport ${encode}\nexport ${decode}\n`;

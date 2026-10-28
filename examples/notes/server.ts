@@ -1,8 +1,8 @@
-// ucm: namespace notes
-// The server half: a typed table, and the functions that change it. They use #ucm/server, so ucm places them on
+// tcm: namespace notes
+// The server half: a typed table, and the functions that change it. They use #tcm/server, so tcm places them on
 // the server; browser components call them by hash, like local async functions.
 import assert from "node:assert/strict";
-import { HttpError, table } from "#ucm/server";
+import { HttpError, table } from "#tcm/server";
 import { matches, sampleNotes, summarize, type Note, type NoteSummary } from "#codebase/notes";
 
 /** Every note, by id. Rows are checked against {@link Note} when written. */

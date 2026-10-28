@@ -1,10 +1,10 @@
 # Server functions
 
-Server functions know who's calling. Importing anything from `#ucm/server` is also what puts a function on the
+Server functions know who's calling. Importing anything from `#tcm/server` is also what puts a function on the
 server; placement still needs no annotation.
 
 ```ts
-import { session, setSession, clearSession, rateLimit, HttpError, request } from "#ucm/server";
+import { session, setSession, clearSession, rateLimit, HttpError, request } from "#tcm/server";
 
 export async function login(name: string, password: string): Promise<string> {
   if (!(await checkPassword(name, password))) throw new HttpError(401, "wrong name or password");
@@ -32,7 +32,7 @@ The same module provides [tables and transactions](data.md) and [jobs](jobs.md).
 
 `session()`, `setSession(data)`, `clearSession()` and `revokeSessions(match)`.
 
-- Session data lives server-side in `.ucm/data/sessions.sqlite`, apart from the codebase, and the cookie holds
+- Session data lives server-side in `.tcm/data/sessions.sqlite`, apart from the codebase, and the cookie holds
   only an unguessable id.
 - `setSession` issues a fresh id every time, which blocks session fixation.
 - Sessions can be revoked: `revokeSessions((s) => s.user === "ada")` signs Ada out everywhere and returns how
@@ -43,8 +43,8 @@ The same module provides [tables and transactions](data.md) and [jobs](jobs.md).
 - **`rateLimit(key, { max, per })`** is a sliding window per key. Beyond the limit it throws a 429 with
   `Retry-After`.
 - **`HttpError(status, message)` reaches the browser** as a rejected promise carrying `status` and the message.
-- **Other errors are hidden in production.** Under `ucm start` the browser gets "internal error" and the server
-  logs the full stack, so database errors and paths don't leak. `ucm dev` shows everything.
+- **Other errors are hidden in production.** Under `tcm start` the browser gets "internal error" and the server
+  logs the full stack, so database errors and paths don't leak. `tcm dev` shows everything.
 
 ## Streaming
 
@@ -57,12 +57,12 @@ local:
 
 ## Plain HTTP endpoints
 
-`ucm start <app> --http app.api` (or `ucm dev`) serves every function under `app.api` at `/api/…`, e.g.
+`tcm start <app> --http app.api` (or `tcm dev`) serves every function under `app.api` at `/api/…`, e.g.
 `app.api.hooks.stripe` at `/api/hooks/stripe`, for webhooks and outside API clients. `--http ns=/prefix` picks
 another prefix.
 
 - A handler takes a standard `Request` and returns a `Response`, plain data (sent as JSON) or nothing (204).
-- Names resolve on each request, so `ucm mv` moves a URL without a restart.
+- Names resolve on each request, so `tcm mv` moves a URL without a restart.
 - These routes are for other callers, so they skip the CSRF checks. Check signatures (e.g. a webhook secret)
   in the handler.
 

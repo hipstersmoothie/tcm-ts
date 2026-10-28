@@ -7,20 +7,20 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
-const BIN = process.env.UCM_BIN ? path.resolve(process.env.UCM_BIN) : fileURLToPath(new URL("../bin/ucm.js", import.meta.url));
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ucm data "));
+const BIN = process.env.TCM_BIN ? path.resolve(process.env.TCM_BIN) : fileURLToPath(new URL("../bin/tcm.js", import.meta.url));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcm data "));
 const env = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" };
 const children: ChildProcess[] = [];
 after(() => children.forEach((c) => c.kill()));
 
-function ucm(...args: string[]): string {
+function tcm(...args: string[]): string {
   const r = spawnSync(process.execPath, [BIN, ...args], { cwd: dir, encoding: "utf8", env });
   const out = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "");
-  if (r.status !== 0) throw new Error(`ucm ${args.join(" ")} exited ${r.status}:\n${out}`);
+  if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} exited ${r.status}:\n${out}`);
   return out;
 }
 function hashOf(name: string): string {
-  const db = new DatabaseSync(path.join(dir, ".ucm", "codebase.sqlite"), { readOnly: true });
+  const db = new DatabaseSync(path.join(dir, ".tcm", "codebase.sqlite"), { readOnly: true });
   try {
     return (db.prepare("SELECT hash FROM names WHERE path = ?").get(name) as { hash: string }).hash;
   } finally {
@@ -36,9 +36,9 @@ const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 20000) => {
 const crm = (o: { field?: string; opts?: string; value?: string }) =>
   fs.writeFileSync(
     path.join(dir, "scratch.ts"),
-    `// ucm: namespace crm
+    `// tcm: namespace crm
 import assert from "node:assert/strict";
-import { table, request } from "#ucm/server";
+import { table, request } from "#tcm/server";
 
 export type User = { name: string; email: string; joined: Date${o.field ?? ""} };
 export const users = table<User>("users"${o.opts ?? ""});
@@ -74,20 +74,20 @@ const call = async (url: string, hash: string, args: unknown[]): Promise<{ statu
   const init = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) };
   let r: Response;
   try {
-    r = await fetch(new URL(`/__ucm/rpc/${hash}`, url), init);
+    r = await fetch(new URL(`/__tcm/rpc/${hash}`, url), init);
   } catch (e) {
     if ((e as { cause?: { code?: string } }).cause?.code !== "ECONNRESET") throw e;
-    r = await fetch(new URL(`/__ucm/rpc/${hash}`, url), init);
+    r = await fetch(new URL(`/__tcm/rpc/${hash}`, url), init);
   }
   return { status: r.status, body: await r.text() };
 };
 
 test("typed tables: writes are checked; changed row types are verified, migrated, or refused; old pages reload", async () => {
-  ucm("init");
+  tcm("init");
   crm({});
-  ucm("add");
-  assert.match(ucm("test", "crm"), /1 passed, 0 failed/);
-  assert.match(ucm("view", "crm.users"), /runs on the server: it uses #ucm\/server \(table\)/);
+  tcm("add");
+  assert.match(tcm("test", "crm"), /1 passed, 0 failed/);
+  assert.match(tcm("view", "crm.users"), /runs on the server: it uses #tcm\/server \(table\)/);
 
   const child = spawn(process.execPath, [BIN, "start", "crm.main", "--port", "0"], { cwd: dir, env });
   children.push(child);
@@ -103,16 +103,16 @@ test("typed tables: writes are checked; changed row types are verified, migrated
   assert.equal((await call(url, v1List, [])).body, `["ada","grace"]`);
   assert.equal((await call(url, hashOf("crm.badInsert"), [])).status, 500);
   await waitFor(() => /table "users": value\.email is missing/.test(out));
-  assert.match(ucm("data"), /users\s+2 row\(s\)/);
+  assert.match(tcm("data"), /users\s+2 row\(s\)/);
 
   // a compatible change: the stored rows still fit, so they just work
   crm({ field: `; plan?: "free" | "pro"`, value: `, plan: "pro" as const` });
-  assert.match(ucm("update"), /table "users": 2 stored row\(s\) were written as an earlier type and still fit the new one/);
+  assert.match(tcm("update"), /table "users": 2 stored row\(s\) were written as an earlier type and still fit the new one/);
   await waitFor(async () => (await call(url, hashOf("crm.listUsers"), [])).body === `["ada","grace"]`);
 
-  // an incompatible change: ucm says so at update time, and reads refuse rather than return the wrong shape
+  // an incompatible change: tcm says so at update time, and reads refuse rather than return the wrong shape
   crm({ field: `; plan?: "free" | "pro"; active: boolean`, value: `, plan: "pro" as const, active: true` });
-  const update = ucm("update");
+  const update = tcm("update");
   assert.match(update, /table "users": 2 stored row\(s\) don't fit the new type, e\.g\. \S+: row\.active is missing/);
   assert.match(update, /reading them will fail until table\(\) gets a migrate function/);
   await waitFor(async () => (await call(url, hashOf("crm.listUsers"), [])).status === 500);
@@ -120,9 +120,9 @@ test("typed tables: writes are checked; changed row types are verified, migrated
 
   // with a migration: rows are upgraded as they're read, and the result is checked too
   crm({ field: `; plan?: "free" | "pro"; active: boolean`, opts: `, { migrate: (old: Omit<User, "active">) => ({ ...old, active: true }) }`, value: `, plan: "pro" as const, active: true` });
-  assert.match(ucm("update"), /migrate takes them as they.re read \(or all now: ucm data migrate users\)/);
+  assert.match(tcm("update"), /migrate takes them as they.re read \(or all now: tcm data migrate users\)/);
   await waitFor(async () => (await call(url, hashOf("crm.listUsers"), [])).body === `["ada","grace"]`);
-  assert.doesNotMatch(ucm("data"), /written under \d+ row types/, "every row now has the current row type");
+  assert.doesNotMatch(tcm("data"), /written under \d+ row types/, "every row now has the current row type");
 
   // a page still on v1 reads rows written by newer code: 410, so it reloads instead of misreading them
   const stale = await call(url, v1List, []);
@@ -133,34 +133,34 @@ test("typed tables: writes are checked; changed row types are verified, migrated
 test("a table without a row type explains how to declare one", () => {
   fs.writeFileSync(
     path.join(dir, "scratch.ts"),
-    `// ucm: namespace loose
+    `// tcm: namespace loose
 import assert from "node:assert/strict";
-import { table } from "#ucm/server";
+import { table } from "#tcm/server";
 export const testUntyped = async () => {
   const t = table("anything");
   await assert.rejects(t.insert({}), /declare it at the top level with one, e\\.g\\. export const anything = table<Row>\\("anything"\\)/);
 };
 `,
   );
-  ucm("add");
-  assert.match(ucm("test", "loose"), /1 passed, 0 failed/);
+  tcm("add");
+  assert.match(tcm("test", "loose"), /1 passed, 0 failed/);
 });
 
 test("migration chains, eager migration, renames, unique and indexed fields, atomic updates", () => {
-  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "ucm data2 "));
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "tcm data2 "));
   const run = (...args: string[]) => {
     const r = spawnSync(process.execPath, [BIN, ...args], { cwd: dir2, encoding: "utf8", env });
     return { status: r.status, out: (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "") };
   };
   const ok = (...args: string[]) => {
     const r = run(...args);
-    if (r.status !== 0) throw new Error(`ucm ${args.join(" ")} exited ${r.status}:\n${r.out}`);
+    if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} exited ${r.status}:\n${r.out}`);
     return r.out;
   };
   ok("init");
   // rows an earlier app wrote under the table's old name, as two earlier row types (and one no step takes)
-  fs.mkdirSync(path.join(dir2, ".ucm", "data"), { recursive: true });
-  const store = new DatabaseSync(path.join(dir2, ".ucm", "data", "store.sqlite"));
+  fs.mkdirSync(path.join(dir2, ".tcm", "data"), { recursive: true });
+  const store = new DatabaseSync(path.join(dir2, ".tcm", "data", "store.sqlite"));
   store.exec(`CREATE TABLE rows (tbl TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, schema_hash TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (tbl, id));
     CREATE TABLE schemas (tbl TEXT NOT NULL, hash TEXT NOT NULL, schema TEXT NOT NULL, first_seen INTEGER NOT NULL, PRIMARY KEY (tbl, hash));`);
   const seed = store.prepare("INSERT INTO rows VALUES ('memos', ?, ?, ?, ?)");
@@ -171,9 +171,9 @@ test("migration chains, eager migration, renames, unique and indexed fields, ato
 
   fs.writeFileSync(
     path.join(dir2, "scratch.ts"),
-    `// ucm: namespace notes
+    `// tcm: namespace notes
 import assert from "node:assert/strict";
-import { table } from "#ucm/server";
+import { table } from "#tcm/server";
 
 export type Note = { text: string; tags: string[]; pinned: boolean; at: number };
 export function fromV1(old: { body: string }) {
@@ -221,7 +221,7 @@ export const testAtomicUpdate = async () => {
   assert.match(first.out, /table "notes": 3 row\(s\): 0 already current, 2 migrated, 0 still fit as stored/);
   assert.match(first.out, /r3: .*no migrate step takes \(step 1 \(fromV1\): row\.body is missing; step 2 \(fromV2\): row\.text is missing\)/);
 
-  const db = new DatabaseSync(path.join(dir2, ".ucm", "data", "store.sqlite"));
+  const db = new DatabaseSync(path.join(dir2, ".tcm", "data", "store.sqlite"));
   db.prepare("DELETE FROM rows WHERE id = 'r3'").run();
   const rows = db.prepare("SELECT tbl, id, data FROM rows ORDER BY id").all() as { tbl: string; id: string; data: string }[];
   assert.deepEqual(rows.map((r) => [r.tbl, r.id, JSON.parse(r.data)]), [
@@ -229,6 +229,7 @@ export const testAtomicUpdate = async () => {
     ["notes", "r2", { text: "second", tags: ["x"], pinned: false, at: 0 }],
   ]);
   // the declared fields are indexed, and find's queries use them
+  // index names are stored in the data file, so they keep the prefix from before ucm-ts became tcm
   const indexes = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'ucm_%' ORDER BY name").all() as { name: string }[]).map((r) => r.name);
   assert.deepEqual(indexes, ["ucm_index_notes__pinned", `ucm_unique_notes__text`]);
   const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT id FROM rows WHERE tbl = 'notes' AND schema_hash = ? AND json_extract(data, '$."pinned"') = ?`).all("h", 1) as { detail: string }[];
@@ -242,19 +243,19 @@ export const testAtomicUpdate = async () => {
 });
 
 test("transactions: all or nothing, isolated from other requests, savepoints, jobs on commit", () => {
-  const dir3 = fs.mkdtempSync(path.join(os.tmpdir(), "ucm data3 "));
+  const dir3 = fs.mkdtempSync(path.join(os.tmpdir(), "tcm data3 "));
   const run = (...args: string[]) => {
     const r = spawnSync(process.execPath, [BIN, ...args], { cwd: dir3, encoding: "utf8", env });
     const out = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "");
-    if (r.status !== 0) throw new Error(`ucm ${args.join(" ")} exited ${r.status}:\n${out}`);
+    if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} exited ${r.status}:\n${out}`);
     return out;
   };
   run("init");
   fs.writeFileSync(
     path.join(dir3, "scratch.ts"),
-    `// ucm: namespace bank
+    `// tcm: namespace bank
 import assert from "node:assert/strict";
-import { table, transaction, enqueue, runJobs } from "#ucm/server";
+import { table, transaction, enqueue, runJobs } from "#tcm/server";
 
 export type Account = { owner: string; balance: number };
 export const accounts = table<Account>("accounts");
@@ -330,5 +331,5 @@ export const testJobsOnCommit = async () => {
   );
   run("add");
   assert.match(run("test", "bank"), /4 passed, 0 failed/);
-  assert.match(run("view", "bank.transfer"), /runs on the server: it uses #ucm\/server/);
+  assert.match(run("view", "bank.transfer"), /runs on the server: it uses #tcm\/server/);
 });

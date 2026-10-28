@@ -4,6 +4,8 @@ import { createHash } from "node:crypto";
 export type IR = string | IR[];
 
 export const IR_VERSION = 5;
+// Frozen: every hash depends on it. (tcm was called ucm-ts when the format was fixed; renaming the domain would
+// change every hash, which needs a format bump and `tcm migrate`.)
 const DOMAIN = `ucm-ir-v${IR_VERSION}\0`;
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
 

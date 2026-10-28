@@ -1,12 +1,12 @@
 {
-  "name": "@ucm/loader",
+  "name": "@tcm/loader",
   "version": "0.1.0",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@ucm/core": "workspace:*",
-    "@ucm/store": "workspace:*"
+    "@tcm/core": "workspace:*",
+    "@tcm/store": "workspace:*"
   }
 }

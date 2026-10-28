@@ -1,7 +1,7 @@
-// `ucm lsp`: a Language Server for editors, alongside TypeScript's own. TypeScript keeps doing completions, type
-// errors and go-to-definition; this adds what only ucm knows. For each definition in a scratch file: what it is
+// `tcm lsp`: a Language Server for editors, alongside TypeScript's own. TypeScript keeps doing completions, type
+// errors and go-to-definition; this adds what only tcm knows. For each definition in a scratch file: what it is
 // to the codebase (new, an update, identical, an alias, a conflict), its hash and placement, with commands that
-// save it. Watch values and test results inline, hovers on codebase names, and ucm's own errors.
+// save it. Watch values and test results inline, hovers on codebase names, and tcm's own errors.
 //
 // It speaks JSON-RPC over stdin/stdout, so nothing else may write to stdout: console output goes to stderr, and
 // test and watch runners are told to do the same.
@@ -11,8 +11,8 @@ import { format, inspect } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
-import { cacheRefOf, schemaText, shortHash, type Analysis, type DefRecord, type ProjectDef } from "@ucm/core";
-import { render, type Rendered } from "@ucm/loader";
+import { cacheRefOf, schemaText, SERVER_API_MODULE, shortHash, type Analysis, type DefRecord, type ProjectDef } from "@tcm/core";
+import { render, type Rendered } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 import { Placement } from "./placement.ts";
 import { evaluateCached, isTestPath, runCached } from "./tests.ts";
@@ -123,11 +123,11 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       handle(m);
     } catch (e) {
       if (m.id !== undefined && m.method) send({ id: m.id, error: { code: -32603, message: (e as Error)?.message ?? String(e) } });
-      else process.stderr.write(`ucm lsp: ${(e as Error)?.stack ?? e}\n`);
+      else process.stderr.write(`tcm lsp: ${(e as Error)?.stack ?? e}\n`);
     }
   });
   const notify = (method: string, params: unknown) => send({ method, params });
-  const request = (method: string, params?: unknown) => send({ id: `ucm-${nextId++}`, method, params });
+  const request = (method: string, params?: unknown) => send({ id: `tcm-${nextId++}`, method, params });
   const message = (type: 1 | 2 | 3, text: string) => notify("window/showMessage", { type, message: text });
 
   /** Only top-level `.ts`/`.tsx` files of the codebase are scratch files, as for the watcher. */
@@ -183,12 +183,12 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     const s = fresh(doc);
     const { pos, lineEnd } = lines(doc.text);
     const diagnostics = s.problems.map((p) => {
-      // ucm's errors start with `file:line:col: `
+      // tcm's errors start with `file:line:col: `
       const m = /^(.*?):(\d+):(\d+): ([\s\S]*)$/.exec(p.message);
       const here = m && path.resolve(m[1]!) === doc.file;
       const line = here ? Number(m[2]) - 1 : 0;
       const start = { line, character: here ? Number(m[3]) - 1 : 0 };
-      return { range: { start, end: pos(lineEnd(line)) }, severity: p.severity, source: "ucm", message: here ? m[4]! : p.message };
+      return { range: { start, end: pos(lineEnd(line)) }, severity: p.severity, source: "tcm", message: here ? m[4]! : p.message };
     });
     notify("textDocument/publishDiagnostics", { uri: doc.uri, version: doc.version, diagnostics });
     if (canRefresh.lens) request("workspace/codeLens/refresh");
@@ -205,7 +205,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
           analyze(doc, run);
           publish(doc);
         } catch (e) {
-          process.stderr.write(`ucm lsp: ${(e as Error)?.stack ?? e}\n`);
+          process.stderr.write(`tcm lsp: ${(e as Error)?.stack ?? e}\n`);
         }
       }, run ? 0 : 200),
     );
@@ -218,21 +218,21 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       const p = pos(offset);
       return { range: { start: p, end: p }, command: { title, command, arguments: args } };
     };
-    if (s.typeErrors) return [lens(0, `ucm: ${s.typeErrors} type error${s.typeErrors > 1 ? "s" : ""}; nothing hashed until they're fixed`)];
+    if (s.typeErrors) return [lens(0, `tcm: ${s.typeErrors} type error${s.typeErrors > 1 ? "s" : ""}; nothing hashed until they're fixed`)];
     const placement = cb ? new Placement(cb) : undefined;
     return s.rows.flatMap((r) => {
       const at = r.def.range.start;
       const short = shortHash(r.def.hash);
       const out = [];
-      if (r.status === "new") out.push(lens(at, `+ new ${r.path}`), lens(at, "Add to codebase", "ucm.add", [doc.uri]));
-      else if (r.status === "update") out.push(lens(at, `~ update ${r.path} (${r.note})`), lens(at, "Update codebase", "ucm.update", [doc.uri]));
-      else if (r.status === "alias") out.push(lens(at, `& ${r.path}: ${r.note}`), lens(at, "Add name", "ucm.add", [doc.uri]));
-      else if (r.status === "doc") out.push(lens(at, `~ ${r.path}: ${r.note}`), lens(at, "Update codebase", "ucm.update", [doc.uri]));
-      else if (r.status === "conflict") out.push(lens(at, `! ${r.path} is conflicted (${r.note}): ucm todo`));
+      if (r.status === "new") out.push(lens(at, `+ new ${r.path}`), lens(at, "Add to codebase", "tcm.add", [doc.uri]));
+      else if (r.status === "update") out.push(lens(at, `~ update ${r.path} (${r.note})`), lens(at, "Update codebase", "tcm.update", [doc.uri]));
+      else if (r.status === "alias") out.push(lens(at, `& ${r.path}: ${r.note}`), lens(at, "Add name", "tcm.add", [doc.uri]));
+      else if (r.status === "doc") out.push(lens(at, `~ ${r.path}: ${r.note}`), lens(at, "Update codebase", "tcm.update", [doc.uri]));
+      else if (r.status === "conflict") out.push(lens(at, `! ${r.path} is conflicted (${r.note}): tcm todo`));
       else {
         const where = r.def.kind === "term" ? placement?.label(r.def.hash) : undefined;
         out.push(lens(at, `${r.path} ${short}${where ? ` · ${where}` : ""}`));
-        if (isVsCode) out.push(lens(at, "Rename", "ucm.rename", [r.path]));
+        if (isVsCode) out.push(lens(at, "Rename", "tcm.rename", [r.path]));
       }
       const t = s.tests.get(r.path);
       if (t) out.push(lens(at, t.ok ? `✓ passed${t.cached ? " (cached)" : ""}` : `✗ failed: ${plain(t.message).split("\n")[0]}`));
@@ -323,7 +323,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
   };
 
   /**
-   * The codebase changes under us too: `ucm add` in a terminal, a pull. Re-check open files then (without running
+   * The codebase changes under us too: `tcm add` in a terminal, a pull. Re-check open files then (without running
    * anything: they're only re-classified), and tell the client so its sidebar and views refresh.
    */
   let changeTimer: NodeJS.Timeout | undefined;
@@ -331,10 +331,10 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     try {
       // rows change while an app runs: tell the client (it refreshes its data view), separately from code changes
       let dataTimer: NodeJS.Timeout | undefined;
-      fs.watch(cb!.lay.ucmDir, { recursive: true }, (_e, name) => {
+      fs.watch(cb!.lay.tcmDir, { recursive: true }, (_e, name) => {
         if (name && /^data[\\/]store\.sqlite/.test(name)) {
           clearTimeout(dataTimer);
-          dataTimer = setTimeout(() => notify("ucm/dataChanged", {}), 500);
+          dataTimer = setTimeout(() => notify("tcm/dataChanged", {}), 500);
           return;
         }
         if (!name?.startsWith("codebase.sqlite")) return;
@@ -344,11 +344,11 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
             d.analyzed = undefined;
             schedule(d, false);
           }
-          notify("ucm/changed", {});
+          notify("tcm/changed", {});
         }, 300);
       });
     } catch (e) {
-      process.stderr.write(`ucm lsp: not watching the codebase: ${(e as Error).message}\n`);
+      process.stderr.write(`tcm lsp: not watching the codebase: ${(e as Error).message}\n`);
     }
   };
 
@@ -361,26 +361,26 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
 
   const execute = (command: string, args: unknown[]) => {
     const c = cb!;
-    if (command === "ucm.add" || command === "ucm.update") {
+    if (command === "tcm.add" || command === "tcm.update") {
       const doc = docs.get(String(args[0]));
       const file = doc?.file ?? fileURLToPath(String(args[0]));
       if (doc && fs.existsSync(file) && fs.readFileSync(file, "utf8") !== doc.text) {
-        message(2, `Save ${path.basename(file)} first: ucm ${command.slice(4)} saves what's on disk.`);
+        message(2, `Save ${path.basename(file)} first: tcm ${command.slice(4)} saves what's on disk.`);
         return null;
       }
-      const r = capture(() => tools.save(c, file, command === "ucm.add" ? "add" : "update"));
+      const r = capture(() => tools.save(c, file, command === "tcm.add" ? "add" : "update"));
       message(r.ok ? 3 : 1, r.output || (r.ok ? "saved" : "failed"));
       refreshAll();
       return r.ok;
     }
-    if (command === "ucm.edit") {
+    if (command === "tcm.edit") {
       const jsx = args.some((a) => { try { return c.lookup(String(a)).some((h) => c.store.getDef(h)?.jsx); } catch { return false; } });
       const file = editFile(jsx ? ".tsx" : ".ts");
       const r = capture(() => tools.edit(c, args.map(String), file, false));
       if (!r.ok) message(1, r.output);
       return r.ok ? pathToFileURL(file).href : null;
     }
-    if (command === "ucm.dataMigrate") {
+    if (command === "tcm.dataMigrate") {
       return (async () => {
         const out: string[] = [];
         const log = console.log;
@@ -394,11 +394,11 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
           console.log = log;
         }
         message(ok ? 3 : 1, out.join("\n").trim() || (ok ? "migrated" : "failed"));
-        notify("ucm/dataChanged", {});
+        notify("tcm/dataChanged", {});
         return ok;
       })();
     }
-    if (command === "ucm.mv") {
+    if (command === "tcm.mv") {
       const r = capture(() => tools.mv(c, String(args[0]), String(args[1])));
       message(r.ok ? 3 : 1, r.output || (r.ok ? "renamed" : "failed"));
       refreshAll();
@@ -408,17 +408,17 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
   };
 
   // ---- the codebase as documents ------------------------------------------------------------------------------
-  // `ucm:/lib/square.ts` is lib.square rendered with current names (`ucm:/@<hash>.ts` for an unnamed one). Its
+  // `tcm:/lib/square.ts` is lib.square rendered with current names (`tcm:/@<hash>.ts` for an unnamed one). Its
   // references are known exactly (render reports where each lands), so they navigate like links.
 
   const viewUri = (hash: string) => {
     const p = cb!.store.pathsOf(hash)[0];
     // JSX is only parsed (and highlighted) in a .tsx document
     const ext = cb!.lookup(p ?? `#${hash}`).some((h) => cb!.store.getDef(h)?.jsx) ? ".tsx" : ".ts";
-    return p ? `ucm:/${p.replaceAll(".", "/")}${ext}` : `ucm:/@${hash}${ext}`;
+    return p ? `tcm:/${p.replaceAll(".", "/")}${ext}` : `tcm:/@${hash}${ext}`;
   };
   const hashesOf = (uri: string): string[] => {
-    const p = decodeURIComponent(uri.replace(/^ucm:\/*/, "").replace(/[?#].*$/, "")).replace(/\.tsx?$/, "");
+    const p = decodeURIComponent(uri.replace(/^tcm:\/*/, "").replace(/[?#].*$/, "")).replace(/\.tsx?$/, "");
     try {
       return p.startsWith("@") ? cb!.lookup(`#${p.slice(1)}`) : cb!.lookup(p.replaceAll("/", "."));
     } catch {
@@ -483,7 +483,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
   const namedDependents = (hash: string) => new Set(cb!.store.dependents(hash).filter((d) => d !== hash && cb!.store.pathsOf(d).length)).size;
   /** The codebase definition at a position: a reference or declaration in a view, or a codebase name in a scratch file. */
   const hashAt = (uri: string, p: Position): string | undefined => {
-    if (uri.startsWith("ucm:")) {
+    if (uri.startsWith("tcm:")) {
       const v = view(uri);
       if (!v) return undefined;
       const offset = lines(v.text).offset(p);
@@ -561,9 +561,9 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
   };
 
   /** A function made by `every(...)`: a recurring job. */
-  const isSchedule = (rec: DefRecord) => rec.spans.some((s) => s.ext?.module === "ucm:server" && s.ext.export === "every");
+  const isSchedule = (rec: DefRecord) => rec.spans.some((s) => s.ext?.module === SERVER_API_MODULE && s.ext.export === "every");
   /**
-   * An app's entry point: it runs in the browser, takes no arguments, and nothing named calls it (what `ucm dev`
+   * An app's entry point: it runs in the browser, takes no arguments, and nothing named calls it (what `tcm dev`
    * is pointed at, like `app.main`).
    */
   const isApp = (hash: string, rec: DefRecord, placement: Placement) =>
@@ -603,9 +603,9 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     };
   };
 
-  /** Rows per table, from the app data store (what `ucm data` lists). */
+  /** Rows per table, from the app data store (what `tcm data` lists). */
   const rowCounts = (): Map<string, number> => {
-    const file = path.join(cb!.lay.ucmDir, "data", "store.sqlite");
+    const file = path.join(cb!.lay.tcmDir, "data", "store.sqlite");
     if (!fs.existsSync(file)) return new Map();
     const db = new DatabaseSync(file, { readOnly: true });
     try {
@@ -616,7 +616,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
   };
 
   /**
-   * The apps in the codebase, each with what it's made of: the plan `ucm build` makes (browser code, endpoints),
+   * The apps in the codebase, each with what it's made of: the plan `tcm build` makes (browser code, endpoints),
    * the tables its server code uses, and the jobs and tests in its namespace.
    */
   const apps = () => {
@@ -662,7 +662,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
 
   /** Open the app data store read-only, or undefined while there's no data yet. */
   const withStore = <T>(fn: (db: InstanceType<typeof DatabaseSync>) => T): T | undefined => {
-    const file = path.join(cb!.lay.ucmDir, "data", "store.sqlite");
+    const file = path.join(cb!.lay.tcmDir, "data", "store.sqlite");
     if (!fs.existsSync(file)) return undefined;
     const db = new DatabaseSync(file, { readOnly: true });
     try {
@@ -742,14 +742,14 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
               cells: Object.fromEntries(fields.map((fl) => [fl.name, cell(v && typeof v === "object" ? v[fl.name] : undefined)])),
               detail: inspect(v, { depth: null, breakLength: 80 }),
               summary: summary(v),
-              uri: `ucm:/.data/${encodeURIComponent(table)}/${encodeURIComponent(r.id)}.txt`,
+              uri: `tcm:/.data/${encodeURIComponent(table)}/${encodeURIComponent(r.id)}.txt`,
             };
           }),
         };
       }) ?? { total: 0, fields: d?.fields ?? [], rows: [] }
     );
   };
-  /** One row, in full (`ucm:/.data/<table>/<id>.txt`). */
+  /** One row, in full (`tcm:/.data/<table>/<id>.txt`). */
   const rowText = (table: string, id: string) =>
     withStore((db) => {
       const r = db.prepare("SELECT data, schema_hash, updated FROM rows WHERE tbl = ? AND id = ?").get(table, id) as { data: string; schema_hash: string; updated: number } | undefined;
@@ -757,9 +757,9 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       return `// table "${table}", row ${id}: written ${new Date(r.updated).toISOString()} as row type #${r.schema_hash.slice(0, 8)}\n\n${inspect(decode(r.data), { depth: null, breakLength: 100 })}\n`;
     }) ?? `// no data yet\n`;
 
-  /** A table's newest rows, as text (`ucm:/.data/<table>.txt`). */
+  /** A table's newest rows, as text (`tcm:/.data/<table>.txt`). */
   const tableText = (table: string) => {
-    const file = path.join(cb!.lay.ucmDir, "data", "store.sqlite");
+    const file = path.join(cb!.lay.tcmDir, "data", "store.sqlite");
     if (!fs.existsSync(file)) return `// table "${table}": no data yet\n`;
     const db = new DatabaseSync(file, { readOnly: true });
     try {
@@ -790,10 +790,10 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       const range = { start: p, end: p };
       const users = namedDependents(hash);
       const name = cb!.store.pathsOf(hash)[0];
-      const out: Json[] = [{ range, command: { title: `${users} dependent${users === 1 ? "" : "s"}`, command: isVsCode ? "ucm.findUsages" : "", arguments: [uri, p.line, p.character] } }];
+      const out: Json[] = [{ range, command: { title: `${users} dependent${users === 1 ? "" : "s"}`, command: isVsCode ? "tcm.findUsages" : "", arguments: [uri, p.line, p.character] } }];
       if (isVsCode && name) {
-        out.push({ range, command: { title: "Edit", command: "ucm.editDefinition", arguments: [name] } });
-        out.push({ range, command: { title: "Rename", command: "ucm.rename", arguments: [name] } });
+        out.push({ range, command: { title: "Edit", command: "tcm.editDefinition", arguments: [name] } });
+        out.push({ range, command: { title: "Rename", command: "tcm.rename", arguments: [name] } });
       }
       return out;
     });
@@ -816,7 +816,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         try {
           cb = findCodebase(dir);
         } catch (e) {
-          process.stderr.write(`ucm lsp: ${(e as Error).message}\n`);
+          process.stderr.write(`tcm lsp: ${(e as Error).message}\n`);
         }
         isVsCode = /visual studio code/i.test(String((p?.clientInfo as Json | undefined)?.name ?? ""));
         const ws = ((p?.capabilities as Json | undefined)?.workspace ?? {}) as Json;
@@ -829,19 +829,19 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
               hoverProvider: true,
               codeLensProvider: { resolveProvider: false },
               inlayHintProvider: true,
-              executeCommandProvider: { commands: ["ucm.add", "ucm.update", "ucm.mv", "ucm.edit", "ucm.dataMigrate"] },
+              executeCommandProvider: { commands: ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.dataMigrate"] },
               definitionProvider: true,
               referencesProvider: true,
               documentSymbolProvider: true,
               workspaceSymbolProvider: true,
             },
-            serverInfo: { name: "ucm", version: "1" },
+            serverInfo: { name: "tcm", version: "1" },
           },
         });
         return;
       }
       case "initialized":
-        if (!cb) message(2, "ucm: no codebase in this workspace (run `ucm init`)");
+        if (!cb) message(2, "tcm: no codebase in this workspace (run `tcm init`)");
         else watchCodebase();
         return;
       case "shutdown":
@@ -881,18 +881,18 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       }
       case "textDocument/codeLens": {
         const uri = uriOf(p);
-        if (cb && uri.startsWith("ucm:")) return send({ id: m.id, result: viewLenses(uri) });
+        if (cb && uri.startsWith("tcm:")) return send({ id: m.id, result: viewLenses(uri) });
         const doc = docAt(p);
         send({ id: m.id, result: doc ? codeLenses(doc) : [] });
         return;
       }
       case "textDocument/definition": {
-        // a codebase name goes to its source (a ucm: document): in a view, references are links; in a scratch file,
+        // a codebase name goes to its source (a tcm: document): in a view, references are links; in a scratch file,
         // names from #codebase (TypeScript would answer with the generated module; the VS Code extension's
         // TypeScript plugin drops that answer). Everything else is TypeScript's.
         const uri = uriOf(p);
         let target: string | undefined;
-        if (cb && uri.startsWith("ucm:")) {
+        if (cb && uri.startsWith("tcm:")) {
           const v = view(uri);
           const offset = v ? lines(v.text).offset(p!.position as Position) : -1;
           target = v?.refs.find((r) => offset >= r.start && offset <= r.end)?.hash;
@@ -912,20 +912,20 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       }
       case "textDocument/documentSymbol": {
         const uri = uriOf(p);
-        send({ id: m.id, result: cb && uri.startsWith("ucm:") ? viewSymbols(uri) : [] });
+        send({ id: m.id, result: cb && uri.startsWith("tcm:") ? viewSymbols(uri) : [] });
         return;
       }
       case "workspace/symbol":
         send({ id: m.id, result: cb ? workspaceSymbols(String(p?.query ?? "")) : [] });
         return;
       // for clients that show the codebase itself (the VS Code extension's sidebar and views)
-      case "ucm/tree":
+      case "tcm/tree":
         send({ id: m.id, result: cb ? tree(String(p?.namespace ?? "")) : { namespaces: [], definitions: [] } });
         return;
-      case "ucm/data":
+      case "tcm/data":
         send({ id: m.id, result: cb ? dataTables() : [] });
         return;
-      case "ucm/rows":
+      case "tcm/rows":
         send({
           id: m.id,
           result: cb
@@ -939,13 +939,13 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         });
         return;
       // pages, as in Unison's codebase UI
-      case "ucm/page": {
+      case "tcm/page": {
         const target = p?.hash ? String(p.hash) : p?.uri ? hashesOf(String(p.uri))[0] : p?.path ? cb?.lookup(String(p.path))[0] : undefined;
         const page = cb && target ? definitionPage(cb, target, new Placement(cb), { viewUri }) : undefined;
         send(page ? { id: m.id, result: page } : { id: m.id, error: { code: -32602, message: "no such definition" } });
         return;
       }
-      case "ucm/namespace": {
+      case "tcm/namespace": {
         if (!cb) return send({ id: m.id, result: null });
         const ns = String(p?.namespace ?? "");
         const t = tree(ns);
@@ -956,29 +956,29 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
           id: m.id,
           result: {
             namespace: ns,
-            readme: rec ? renderDoc(cb, rec, { evaluate: true, link: (h) => `ucm-page:${h}` })?.markdown : undefined,
+            readme: rec ? renderDoc(cb, rec, { evaluate: true, link: (h) => `tcm-page:${h}` })?.markdown : undefined,
             namespaces: t.namespaces,
             definitions: t.definitions.filter((d) => d !== readme).map((d) => ({ ...d, summary: docSummary(cb!.store.getDef(d.hash)!) })),
           },
         });
         return;
       }
-      case "ucm/find":
+      case "tcm/find":
         send({ id: m.id, result: cb ? find(cb, String(p?.query ?? ""), viewUri) : [] });
         return;
-      case "ucm/apps":
+      case "tcm/apps":
         send({ id: m.id, result: cb ? apps() : [] });
         return;
-      case "ucm/source": {
-        const row = /^ucm:\/*\.data\/([^/]+)\/([^/]+)\.txt$/.exec(String(p?.uri));
+      case "tcm/source": {
+        const row = /^tcm:\/*\.data\/([^/]+)\/([^/]+)\.txt$/.exec(String(p?.uri));
         if (cb && row) return send({ id: m.id, result: { text: rowText(decodeURIComponent(row[1]!), decodeURIComponent(row[2]!)) } });
-        const data = /^ucm:\/*\.data\/([^/]+)\.txt$/.exec(String(p?.uri));
+        const data = /^tcm:\/*\.data\/([^/]+)\.txt$/.exec(String(p?.uri));
         if (cb && data) return send({ id: m.id, result: { text: tableText(decodeURIComponent(data[1]!)) } });
         const v = cb ? view(String(p?.uri)) : undefined;
         send(v ? { id: m.id, result: { text: v.text } } : { id: m.id, error: { code: -32602, message: `${p?.uri} is not in the codebase` } });
         return;
       }
-      case "ucm/findByType": {
+      case "tcm/findByType": {
         const r = searchByType(cb!, String(p?.query ?? ""));
         send({ id: m.id, result: { variables: r.variables, hits: r.hits.map((h) => ({ ...h, uri: viewUri(h.hash) })) } });
         return;
@@ -990,7 +990,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       }
       case "textDocument/hover": {
         const uri = uriOf(p);
-        if (cb && uri.startsWith("ucm:")) {
+        if (cb && uri.startsWith("tcm:")) {
           const hash = hashAt(uri, p!.position as Position);
           const value = hash && describe(hash);
           return send({ id: m.id, result: value ? { contents: { kind: "markdown", value } } : null });

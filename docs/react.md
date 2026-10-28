@@ -1,11 +1,11 @@
 # React and server components
 
-Write React components in `.tsx` scratch files. ucm works out which ones render on the server and which in the
+Write React components in `.tsx` scratch files. tcm works out which ones render on the server and which in the
 browser, the way it places all code ([web apps](apps.md)): there's no `"use client"` and no `"use server"`.
 
 ```tsx
-// ucm: namespace notes
-import { table } from "#ucm/server";
+// tcm: namespace notes
+import { table } from "#tcm/server";
 import { useState } from "react";
 
 export const notes = table<{ text: string }>("notes");
@@ -35,25 +35,25 @@ export function App() {                                           // renders any
 
 ```sh
 npm install react react-dom @types/react @types/react-dom
-ucm add notes.tsx
-ucm dev notes.App
+tcm add notes.tsx
+tcm dev notes.App
 ```
 
-`ucm dev` (and `ucm build`/`ucm start`) accept a component as the app: ucm renders it into the page with React
+`tcm dev` (and `tcm build`/`tcm start`) accept a component as the app: tcm renders it into the page with React
 DOM. A `main` function that calls `createRoot` itself works too.
 
 ## Where a component renders
 
-`ucm view` says, for every component, where it renders and why:
+`tcm view` says, for every component, where it renders and why:
 
 | a component that | renders |
 |---|---|
 | uses a hook (`useState`, `useEffect`, …), an event handler (`onClick={…}`), or the DOM | in the browser |
-| is `async`, or uses the server (a [table](data.md), `node:*`, `#ucm/server`) | on the server |
+| is `async`, or uses the server (a [table](data.md), `node:*`, `#tcm/server`) | on the server |
 | does neither | anywhere: where it's used |
 
 ```
-$ ucm view notes.NoteList
+$ tcm view notes.NoteList
 // notes.NoteList #umd74guw : () => Promise<Element>
 // renders on the server: it is an async component; the browser fetches its rendered tree by hash
 ```
@@ -63,16 +63,16 @@ renders it. A server component can render `<NewNote />`, and a browser component
 Each renders where it has to.
 
 - **A server component used by browser code** becomes a stub in the browser. The stub fetches the component's
-  rendered tree by hash (`POST /__ucm/rpc/<hash>`, with its props as the argument) and renders that. Its props
+  rendered tree by hash (`POST /__tcm/rpc/<hash>`, with its props as the argument) and renders that. Its props
   are checked against its parameter types, as a server function's arguments are.
 - **A browser component inside a server component** is sent as a reference to its hash, with the props the
-  server gave it. The browser already has its code: `ucm dev` lists these as "rendered in the browser inside
+  server gave it. The browser already has its code: `tcm dev` lists these as "rendered in the browser inside
   server components".
 - **A component that renders anywhere** (plain markup, like a `Markdown` renderer) renders on the server inside
   a server component and in the browser inside a browser component. It's the same definition and the same hash.
 - **Server functions** are called from browser components as usual: import them and `await` them.
 
-`ucm dev` prints the split:
+`tcm dev` prints the split:
 
 ```
   server   1 component(s) rendered on the server, fetched by hash: notes.NoteList #umd74guw
@@ -92,7 +92,7 @@ with `q` in state) and it fetches the tree for the new props.
 
 Props sent between the two sides are plain data, the same as server function arguments
 ([web apps](apps.md#plain-data-crosses-the-wire)). Elements in the props a server component passes (`children`,
-or `sidebar={<Nav />}`) are rendered on the server first. A function can't be sent; ucm refuses it and says
+or `sidebar={<Nav />}`) are rendered on the server first. A function can't be sent; tcm refuses it and says
 where it was:
 
 ```
@@ -104,7 +104,7 @@ the browser component can import what it needs itself
 
 JSX compiles to calls into `react/jsx-runtime` (or your tsconfig's `jsxImportSource`). That runtime is pinned
 like an import: a component's hash includes the React version it was written against, and its generated module
-imports that version. ucm also installs the project's `@types/react` for it, and makes the packages React
+imports that version. tcm also installs the project's `@types/react` for it, and makes the packages React
 installs beside it (React DOM's `react`) use the same copy, so there's one React.
 
 ## Trying components out
@@ -128,5 +128,5 @@ note page rendered on the server, an editor with a live preview in the browser, 
 - **A server component's tree arrives whole.** There's no streaming, and `<Suspense>` inside a server
   component doesn't show its fallback.
 - **Context providers, `lazy` and class components render only in the browser.**
-- **Import hooks by name** (`import { useState } from "react"`). ucm can't tell that `React.useState` makes a
+- **Import hooks by name** (`import { useState } from "react"`). tcm can't tell that `React.useState` makes a
   component a browser component, and a hook called on the server fails.

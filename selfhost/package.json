@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "imports": {
-    "#codebase": "./.ucm/codebase/index.ts",
-    "#codebase/*": "./.ucm/codebase/*.ts",
-    "#ucm/server": "./.ucm/cache/ucm-server.js"
+    "#codebase": "./.tcm/codebase/index.ts",
+    "#codebase/*": "./.tcm/codebase/*.ts",
+    "#tcm/server": "./.tcm/cache/tcm-server.js"
   }
 }

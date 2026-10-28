@@ -7,22 +7,22 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
-const BIN = process.env.UCM_BIN ? path.resolve(process.env.UCM_BIN) : fileURLToPath(new URL("../bin/ucm.js", import.meta.url));
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ucm jobs "));
+const BIN = process.env.TCM_BIN ? path.resolve(process.env.TCM_BIN) : fileURLToPath(new URL("../bin/tcm.js", import.meta.url));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcm jobs "));
 const outbox = path.join(dir, "outbox.log");
 const env = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" };
 const children: ChildProcess[] = [];
 after(() => children.forEach((c) => c.kill()));
 
-function ucm(...args: string[]): string {
+function tcm(...args: string[]): string {
   const r = spawnSync(process.execPath, [BIN, ...args], { cwd: dir, encoding: "utf8", env });
   const out = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "");
-  if (r.status !== 0) throw new Error(`ucm ${args.join(" ")} exited ${r.status}:\n${out}`);
+  if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} exited ${r.status}:\n${out}`);
   return out;
 }
 const scratch = (text: string) => fs.writeFileSync(path.join(dir, "scratch.ts"), text);
 function hashOf(name: string): string {
-  const db = new DatabaseSync(path.join(dir, ".ucm", "codebase.sqlite"), { readOnly: true });
+  const db = new DatabaseSync(path.join(dir, ".tcm", "codebase.sqlite"), { readOnly: true });
   try {
     return (db.prepare("SELECT hash FROM names WHERE path = ?").get(name) as { hash: string }).hash;
   } finally {
@@ -39,18 +39,18 @@ const call = async (url: string, name: string, args: unknown[]): Promise<{ statu
   const init = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) };
   let res: Response;
   try {
-    res = await fetch(new URL(`/__ucm/rpc/${hashOf(name)}`, url), init);
+    res = await fetch(new URL(`/__tcm/rpc/${hashOf(name)}`, url), init);
   } catch (e) {
     if ((e as { cause?: { code?: string } }).cause?.code !== "ECONNRESET") throw e;
-    res = await fetch(new URL(`/__ucm/rpc/${hashOf(name)}`, url), init);
+    res = await fetch(new URL(`/__tcm/rpc/${hashOf(name)}`, url), init);
   }
   return { status: res.status, body: await res.text() };
 };
 
-const SHOP = (version: string) => `// ucm: namespace shop
+const SHOP = (version: string) => `// tcm: namespace shop
 import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
-import { enqueue, enqueueAfter, every, request, runJobs } from "#ucm/server";
+import { enqueue, enqueueAfter, every, request, runJobs } from "#tcm/server";
 
 const OUTBOX = ${JSON.stringify(outbox)};
 const tries = new Map<string, number>();
@@ -100,11 +100,11 @@ export const testJobsRunInline = async () => {
 `;
 
 test("background jobs: durable, retried, pinned to the code that enqueued them; schedules run once per slot", async () => {
-  ucm("init");
+  tcm("init");
   fs.rmSync(path.join(dir, "scratch.ts"));
   scratch(SHOP("v1"));
-  ucm("add");
-  assert.match(ucm("test", "shop"), /1 passed, 0 failed/, "runJobs() drains the queue inside ucm test");
+  tcm("add");
+  assert.match(tcm("test", "shop"), /1 passed, 0 failed/, "runJobs() drains the queue inside tcm test");
 
   const child = spawn(process.execPath, [BIN, "start", "shop.main", "--port", "0"], { cwd: dir, env });
   children.push(child);
@@ -127,7 +127,7 @@ test("background jobs: durable, retried, pinned to the code that enqueued them; 
   // a job runs the code version that enqueued it, even if a deploy happens before it runs
   await call(url, "shop.signupLater", ["grace"]);
   scratch(SHOP("v2"));
-  ucm("update");
+  tcm("update");
   await waitFor(() => lines().includes("welcome grace (v1)"));
   // the new signup is callable once the server has rebuilt for the update
   await waitFor(async () => (await call(url, "shop.signup", ["linus"])).status === 200);
@@ -140,16 +140,16 @@ test("background jobs: durable, retried, pinned to the code that enqueued them; 
 
   // recurring: one run per slot
   await waitFor(() => lines().filter((l) => l === "tick").length >= 2);
-  const db = new DatabaseSync(path.join(dir, ".ucm", "data", "jobs.sqlite"), { readOnly: true });
+  const db = new DatabaseSync(path.join(dir, ".tcm", "data", "jobs.sqlite"), { readOnly: true });
   const dupes = db.prepare("SELECT count(*) AS n FROM (SELECT slot FROM jobs WHERE slot IS NOT NULL GROUP BY slot HAVING count(*) > 1)").get() as { n: number };
   db.close();
   assert.equal(dupes.n, 0);
 
-  // ucm jobs: the queue, and acting on it
-  const listing = ucm("jobs", "50");
+  // tcm jobs: the queue, and acting on it
+  const listing = tcm("jobs", "50");
   assert.match(listing, /done\s+flaky\s+2\/5/);
   assert.match(listing, /done\s+shop\.heartbeat/);
   const id = /^(\S{8})\s+done\s+sendWelcome/m.exec(listing)![1]!;
-  assert.match(ucm("jobs", "retry", id), /queued again/);
+  assert.match(tcm("jobs", "retry", id), /queued again/);
   await waitFor(() => lines().filter((l) => l.startsWith("welcome")).length >= 4, 15000);
 });

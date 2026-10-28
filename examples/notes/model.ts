@@ -1,6 +1,6 @@
-// ucm: namespace notes
+// tcm: namespace notes
 // The model: notes as plain data, and plain functions over them. Nothing here touches Node, the DOM or React, so
-// ucm places all of it "anywhere": server components, browser components and tests share the same hashes.
+// tcm places all of it "anywhere": server components, browser components and tests share the same hashes.
 import assert from "node:assert/strict";
 
 /**
@@ -86,7 +86,7 @@ export const sampleNotes: readonly Note[] = Object.freeze([
       "# No directives\n\n" +
       "The sidebar and this page are **server components**: they read the notes table, so they render on the " +
       "server. The search box and the editor keep *state*, so they run in the browser.\n\n" +
-      "Nothing says which is which: ucm infers it from what each component uses. See `ucm view notes.NoteList`.",
+      "Nothing says which is which: tcm infers it from what each component uses. See `tcm view notes.NoteList`.",
     updatedAt: new Date("2026-10-21T14:30:00Z"),
   },
   {
