@@ -174,15 +174,16 @@ fetch calls and no API layer.
 **Server functions know who's calling.** `#ucm/server` gives them their request's context:
 
 ```ts
-import { session, setSession, clearSession, HttpError, request } from "#ucm/server";
+import { session, setSession, clearSession, rateLimit, HttpError, request } from "#ucm/server";
 
 export async function login(name: string, password: string): Promise<string> {
   if (!(await checkPassword(name, password))) throw new HttpError(401, "wrong name or password");
-  setSession({ user: name });                    // a signed, HttpOnly cookie
+  rateLimit("login:" + request().ip, { max: 5, per: 60 });   // a 429 with Retry-After beyond that
+  setSession({ user: name });                    // stored server-side; the cookie is just an id
   return name;
 }
 export async function me(): Promise<string> {
-  const user = session().user;                   // forged or expired sessions come back empty
+  const user = session().user;                   // unknown, expired or revoked sessions come back empty
   if (typeof user !== "string") throw new HttpError(401, "sign in first");
   return user;
 }
@@ -191,8 +192,12 @@ export async function me(): Promise<string> {
 - **`request()`** gives the method, URL, `Headers`, cookies, client IP, and an `AbortSignal` that fires if
   the client disconnects. The context follows the call through any depth of `await`s.
 - **`setCookie` / `deleteCookie`.** Cookies default to `HttpOnly` and `SameSite=Lax`, and to `Secure` over TLS.
-- **`session` / `setSession` / `clearSession`.** Session data lives in a cookie signed with `UCM_SECRET` or a
-  secret generated into `.ucm/secret`. A tampered cookie reads as no session.
+- **`session` / `setSession` / `clearSession` / `revokeSessions(match)`.** Session data lives server-side in
+  `.ucm/data/sessions.sqlite`, apart from the codebase, and the cookie holds only an unguessable id.
+  `setSession` issues a fresh id every time, which blocks session fixation. Sessions can be revoked, e.g.
+  `revokeSessions((s) => s.user === "ada")` signs Ada out everywhere. `.ucm/data` and secrets are gitignored.
+- **`rateLimit(key, { max, per })`** is a sliding window per key. Beyond the limit it throws a 429 with
+  `Retry-After`.
 - **`HttpError(status, message)` reaches the browser** as a rejected promise carrying `status` and the
   message.
 - **Other errors are hidden in production.** Under `ucm start` the browser gets "internal error" and the server
@@ -200,6 +205,18 @@ export async function me(): Promise<string> {
 - **`withRequest(init, fn)` runs a server function as if answering a request,** so `ucm test` can test login
   flows with no server running.
 - **Placement still needs no annotation.** Using `#ucm/server` is what puts a function on the server.
+- **Streaming.** A server function can be an `async function*`, and browser code iterates it with
+  `for await`, as if it were local:
+  - chunks arrive as they're produced (newline-delimited JSON over one response);
+  - the request context, session included, lasts for the whole stream;
+  - `break` in the browser aborts the request, which stops the generator on the server.
+- **Plain HTTP endpoints, routed by name.** `ucm start <app> --http app.api` (or `ucm dev`) serves every
+  function under `app.api` at `/api/…`, e.g. `app.api.hooks.stripe` at `/api/hooks/stripe`, for webhooks and
+  outside API clients:
+  - a handler takes a standard `Request` and returns a `Response`, plain data (sent as JSON) or nothing (204);
+  - names resolve on each request, so `ucm mv` moves a URL without a restart;
+  - these routes are for other callers, so they skip the CSRF checks. Check signatures (e.g. a webhook secret)
+    in the handler.
 - **CSRF.** Server functions read cookies, so calls must be same-origin, must not be cross-site
   (`Sec-Fetch-Site`), and must send JSON, which rules out plain HTML form posts.
 

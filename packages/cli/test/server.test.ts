@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { CHROME, pageText } from "./browser.ts";
 
 const BIN = process.env.UCM_BIN ? path.resolve(process.env.UCM_BIN) : fileURLToPath(new URL("../bin/ucm.js", import.meta.url));
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ucm server "));
@@ -60,7 +61,7 @@ async function call(url: string, name: string, args: unknown[], jar: Map<string,
 
 const AUTH = `// ucm: namespace auth
 import assert from "node:assert/strict";
-import { session, setSession, clearSession, HttpError, request, withRequest } from "#ucm/server";
+import { session, setSession, clearSession, revokeSessions, rateLimit, HttpError, request, withRequest } from "#ucm/server";
 
 const USERS: Record<string, string> = { ada: "lovelace" };
 
@@ -77,6 +78,22 @@ export async function me(): Promise<string> {
 export async function logout(): Promise<void> {
   clearSession();
 }
+export async function signOutEverywhere(): Promise<number> {
+  const user = session().user;
+  return revokeSessions((s) => s.user === user);
+}
+export async function ping(): Promise<string> {
+  rateLimit("ping:" + request().ip, { max: 2, per: 60 });
+  return "pong";
+}
+/** Streams to the browser; the request context lasts as long as the stream. */
+export async function* ticks(n: number): AsyncGenerator<string> {
+  const who = session().user ?? "anon";
+  for (let i = 1; i <= n; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    yield i + ":" + who;
+  }
+}
 export async function crash(): Promise<number> {
   if (request()) throw new Error("db password is hunter2");
   return 0;
@@ -92,13 +109,37 @@ export async function main() {
   button("who am I", () => me());
   button("log out", () => logout());
   button("crash", () => crash());
+  button("sign out everywhere", () => signOutEverywhere());
+  button("ping", () => ping());
+  button("ticks", async () => {
+    const got: string[] = [];
+    for await (const t of ticks(3)) got.push(t);
+    return got.join(",");
+  });
+}
+
+/** In a real browser: log in, then iterate a server-side stream with for-await. */
+export async function streamApp() {
+  await login("ada", "lovelace");
+  const got: string[] = [];
+  for await (const t of ticks(3)) got.push(t);
+  document.querySelector("#app")!.textContent = got.join(",");
+}
+
+// plain HTTP endpoints, routed by name (served with --http auth.api)
+// ucm: path auth.api.health
+export const health = (req: Request) => ({ ok: true, method: req.method });
+// ucm: path auth.api.hooks.payment
+export async function paymentHook(req: Request): Promise<Response> {
+  const event = (await req.json()) as { type: string };
+  return new Response(JSON.stringify({ received: event.type }), { status: 202, headers: { "x-handled-by": "ucm" } });
 }
 
 // server functions are testable without a server: withRequest simulates the call
 export const testLoginThenMe = async () => {
   const { setCookies } = await withRequest({}, () => login("ada", "lovelace"));
-  const cookie = setCookies[0]!.split(";")[0]!.slice("ucm_session=".length);
-  const who = await withRequest({ cookies: { ucm_session: decodeURIComponent(cookie) }, headers: { "x-client": "test" } }, () => me());
+  const sid = setCookies[0]!.split(";")[0]!.slice("ucm_sid=".length);
+  const who = await withRequest({ cookies: { ucm_sid: decodeURIComponent(sid) }, headers: { "x-client": "test" } }, () => me());
   assert.equal(who.value, "ada via test");
 };
 export const testWrongPassword = async () => {
@@ -114,7 +155,7 @@ test("server functions: request context, sessions, deliberate and hidden errors,
   assert.match(ucm("view", "auth.me"), /runs on the server: it uses #ucm\/server \(session\)/);
   assert.match(ucm("test", "auth"), /2 passed, 0 failed/, "withRequest runs server functions in tests, no network");
 
-  const { url, output } = await serve("start", "auth.main");
+  const { url, output } = await serve("start", "auth.main", "--http", "auth.api");
   const jar = new Map<string, string>();
   const anon = await call(url, "auth.me", [], jar);
   assert.equal(anon.status, 401);
@@ -123,15 +164,54 @@ test("server functions: request context, sessions, deliberate and hidden errors,
 
   const login = await call(url, "auth.login", ["ada", "lovelace"], jar);
   assert.equal(login.status, 200);
-  assert.match(login.setCookie[0]!, /^ucm_session=[^;]+; Path=\/; SameSite=Lax; Max-Age=\d+; HttpOnly$/);
+  assert.match(login.setCookie[0]!, /^ucm_sid=[^;]+; Path=\/; SameSite=Lax; Max-Age=\d+; HttpOnly$/);
   assert.equal((await call(url, "auth.me", [], jar, { "x-client": "test" })).body, `"ada via test"`);
+  assert.ok(fs.existsSync(path.join(dir, ".ucm", "data", "sessions.sqlite")), "session data lives server-side, apart from the codebase");
+  assert.match(fs.readFileSync(path.join(dir, ".ucm", ".gitignore"), "utf8"), /^data\/$[\s\S]*^secret$/m, "app data and secrets are never committed");
 
-  // a forged session (same signature, different user) is no session
-  const [payload, mac] = jar.get("ucm_session")!.split(".");
-  const data = JSON.parse(Buffer.from(payload!, "base64url").toString());
-  data.d.user = "admin";
-  const forged = new Map([["ucm_session", `${Buffer.from(JSON.stringify(data)).toString("base64url")}.${mac}`]]);
-  assert.equal((await call(url, "auth.me", [], forged)).status, 401);
+  // the cookie is only an id: a made-up one is no session
+  assert.equal((await call(url, "auth.me", [], new Map([["ucm_sid", "made-up-session-id"]]))).status, 401);
+
+  // revocation: sign in on a second device, sign out everywhere from it; the first device is signed out too
+  const phone = new Map<string, string>();
+  await call(url, "auth.login", ["ada", "lovelace"], phone);
+  assert.match((await call(url, "auth.signOutEverywhere", [], phone)).body, /^[1-9]\d*$/);
+  assert.equal((await call(url, "auth.me", [], jar)).status, 401, "the laptop's session was revoked");
+  await call(url, "auth.login", ["ada", "lovelace"], jar);
+
+  // rate limits: a 429 with Retry-After once the window is full
+  assert.equal((await call(url, "auth.ping", [], jar)).status, 200);
+  assert.equal((await call(url, "auth.ping", [], jar)).status, 200);
+  const limited = await fetch(new URL(`/__ucm/rpc/${hashOf("auth.ping")}`, url), { method: "POST", headers: { "content-type": "application/json" }, body: "[]" });
+  assert.equal(limited.status, 429);
+  assert.match(limited.headers.get("retry-after") ?? "", /^\d+$/);
+
+  // streaming: chunks as they're produced, with the caller's session; stopping early stops the server side
+  const stream = await fetch(new URL(`/__ucm/rpc/${hashOf("auth.ticks")}`, url), {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: `ucm_sid=${jar.get("ucm_sid")}` },
+    body: "[3]",
+  });
+  assert.equal(stream.headers.get("content-type"), "application/x-ndjson");
+  assert.equal(await stream.text(), ['{"v":"1:ada"}', '{"v":"2:ada"}', '{"v":"3:ada"}', '{"done":true}', ""].join("\n"));
+  const ctl = new AbortController();
+  const partial = await fetch(new URL(`/__ucm/rpc/${hashOf("auth.ticks")}`, url), { method: "POST", headers: { "content-type": "application/json" }, body: "[50]", signal: ctl.signal });
+  const reader = partial.body!.getReader();
+  await reader.read();
+  ctl.abort();
+  for (const end = Date.now() + 5000; Date.now() < end && !/auth\.ticks stream \d+ chunk\(s\), \d+ms, stopped by the client/.test(output()); ) await new Promise((r) => setTimeout(r, 50));
+  assert.match(output(), /auth\.ticks stream \d+ chunk\(s\), \d+ms, stopped by the client/);
+
+  // plain HTTP endpoints: routes are names
+  assert.deepEqual(await (await fetch(new URL("/api/health", url))).json(), { ok: true, method: "GET" });
+  const hook = await fetch(new URL("/api/hooks/payment", url), { method: "POST", headers: { "content-type": "application/json" }, body: '{"type":"invoice.paid"}' });
+  assert.equal(hook.status, 202);
+  assert.equal(hook.headers.get("x-handled-by"), "ucm");
+  assert.deepEqual(await hook.json(), { received: "invoice.paid" });
+  assert.equal((await fetch(new URL("/api/nope", url))).status, 404);
+  ucm("mv", "auth.api.health", "auth.api.status");
+  assert.equal((await fetch(new URL("/api/status", url))).status, 200, "renaming moves the URL, no restart");
+  assert.equal((await fetch(new URL("/api/health", url))).status, 404);
 
   // in production, unexpected errors are logged on the server and hidden from the browser
   const crash = await call(url, "auth.crash", [], jar);
@@ -153,4 +233,10 @@ test("server functions: request context, sessions, deliberate and hidden errors,
   for (const end = Date.now() + 15000; Date.now() < end && !/server\s+\d+ function/.test(devServer.output()); ) await new Promise((r) => setTimeout(r, 100));
   const devCrash = await fetch(new URL(`/__ucm/rpc/${hashOf("auth.crash")}`, devServer.url), { method: "POST", headers: { "content-type": "application/json" }, body: "[]" });
   assert.match(await devCrash.text(), /hunter2/, "dev shows the real error");
+
+  if (CHROME) {
+    const live = await serve("dev", "auth.streamApp");
+    const text = await pageText(live.url, "#app", (t) => t.split(",").length === 3);
+    assert.equal(text, "1:ada,2:ada,3:ada", "a real browser streams a server generator, with the session");
+  }
 });

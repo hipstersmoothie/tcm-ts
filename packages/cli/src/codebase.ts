@@ -63,7 +63,10 @@ export class Codebase {
 
   static init(root: string): Codebase {
     fs.mkdirSync(path.join(root, ".ucm", "cache"), { recursive: true });
-    fs.writeFileSync(path.join(root, ".ucm", ".gitignore"), "# derived from codebase.sqlite\ncache/\ncodebase/\n");
+    fs.writeFileSync(
+      path.join(root, ".ucm", ".gitignore"),
+      "# derived from codebase.sqlite\ncache/\ncodebase/\nweb/\nbuild/\napps/\n# app data and secrets: never commit these\ndata/\nsecret\ntls/\n",
+    );
     const pkgFile = path.join(root, "package.json");
     const pkg = fs.existsSync(pkgFile) ? JSON.parse(fs.readFileSync(pkgFile, "utf8")) : { name: path.basename(root).toLowerCase().replace(/[^a-z0-9-]/g, "-"), private: true };
     pkg.type = "module";

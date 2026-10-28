@@ -4,7 +4,7 @@ import { isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from
 import { evaluateWatches, render, run } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { migrate } from "./migrate.ts";
-import { build, dev, listBuilds, pruneBuilds, start } from "./web.ts";
+import { build, dev, listBuilds, parseHttpFlag, pruneBuilds, start } from "./web.ts";
 import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
 import { isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
@@ -15,7 +15,7 @@ import { addRemote, listRemotes, newToken, pull, push, runOn, serve, tlsMaterial
 
 class UsageError extends Error {}
 
-const VALUE_FLAGS = new Set(["into", "file", "on", "as", "port", "host", "token", "fingerprint", "tls-cert", "tls-key", "keep"]);
+const VALUE_FLAGS = new Set(["into", "file", "on", "as", "port", "host", "token", "fingerprint", "tls-cert", "tls-key", "keep", "http"]);
 
 function parseArgs(argv: string[]) {
   const positional: string[] = [];
@@ -510,11 +510,12 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
                                  changes since a history entry, to another branch, or between branches
   ucm history [n] / reset <id>   name changes on this branch / undo back to an entry
   ucm branch [name] / switch <name>
-  ucm dev <app> [--port 5173]    serve a browser app from the codebase; what needs the server runs there, called by hash
+  ucm dev <app> [--port 5173] [--http <namespace>[=/prefix]]
+                                 serve a browser app from the codebase; what needs the server runs there, called by hash
   ucm build <app> [--force]      production build into .ucm/apps/<hash>/ (immutable; reused if it exists)
   ucm apps [prune [--keep 3]]    list builds (* = current); prune keeps the current build plus the newest N others
                                  (tabs on a pruned build reload themselves onto the current one)
-  ucm start <app> [--port 8080] [--host] [--tls] [--keep N]
+  ucm start <app> [--port 8080] [--host] [--tls] [--keep N] [--http <namespace>[=/prefix]]
                                  serve the app in production; follows its name (deploy and rollback = moving the
                                  name) and keeps earlier builds' assets and server functions working for open tabs
   ucm merge <branch>             three-way merge into this branch; dependents follow the other side's updates
@@ -583,7 +584,7 @@ square(12);
       return verify(cb) ? 0 : 1;
     case "dev":
       need(1, "dev <app> [--port 5173]");
-      await dev(cb, args[0]!, Number(typeof flags.port === "string" ? flags.port : 5173));
+      await dev(cb, args[0]!, Number(typeof flags.port === "string" ? flags.port : 5173), typeof flags.http === "string" ? parseHttpFlag(flags.http) : undefined);
       return -1; // keep serving
     case "apps": {
       if (args[0] === "prune") {
@@ -609,7 +610,13 @@ square(12);
       need(1, "start <app> [--port 8080] [--host 127.0.0.1] [--tls [--tls-cert f --tls-key f]]");
       const str = (k: string) => (typeof flags[k] === "string" ? (flags[k] as string) : undefined);
       const tls = flags.tls || str("tls-cert") ? tlsMaterial(cb, str("tls-cert"), str("tls-key")) : undefined;
-      await start(cb, args[0]!, { port: Number(str("port") ?? 8080), host: str("host") ?? "127.0.0.1", tls, keep: str("keep") === undefined ? undefined : Number(str("keep")) });
+      await start(cb, args[0]!, {
+        port: Number(str("port") ?? 8080),
+        host: str("host") ?? "127.0.0.1",
+        tls,
+        keep: str("keep") === undefined ? undefined : Number(str("keep")),
+        http: str("http") === undefined ? undefined : parseHttpFlag(str("http")!),
+      });
       return -1; // keep serving
     }
     case "test": {

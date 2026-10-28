@@ -64,6 +64,8 @@ export interface AppPlan {
   endpoints: Set<string>;
   /** components the browser receives as stubs instead of code */
   stubbed: Set<string>;
+  /** endpoints that are async generators, streamed chunk by chunk */
+  streaming: Set<string>;
   errors: string[];
   state: AppState;
 }
@@ -134,10 +136,19 @@ export class Placement {
     return undefined;
   }
 
-  /** An async function: callable across the network, since its callers already expect a promise. */
+  /**
+   * Callable across the network: an async function (its callers already expect a promise) or an async generator
+   * (they already expect to await each item).
+   */
   crossable(h: string): boolean {
     const rec = this.cb.store.getDef(h);
-    return !!rec && rec.kind === "term" && /^(<[^>]*>)?\(.*\) => Promise<.*>$/s.test(rec.signature);
+    return !!rec && rec.kind === "term" && /^(<[^>]*>)?\(.*\) => (Promise|AsyncGenerator|AsyncIterable|AsyncIterableIterator)<.*>$/s.test(rec.signature);
+  }
+
+  /** An async generator: streamed to the browser chunk by chunk. */
+  streams(h: string): boolean {
+    const rec = this.cb.store.getDef(h);
+    return !!rec && /^(<[^>]*>)?\(.*\) => (AsyncGenerator|AsyncIterable|AsyncIterableIterator)<.*>$/s.test(rec.signature);
   }
 
   private closure(h: string): string[] {
@@ -212,7 +223,7 @@ export class Placement {
 
   /** What a browser app rooted at `entry` ships, which server functions it calls, and what's wrong with it. */
   planApp(entry: string): AppPlan {
-    const plan: AppPlan = { browser: new Set(), endpoints: new Set(), stubbed: new Set(), errors: [], state: { server: [], browser: [], both: [] } };
+    const plan: AppPlan = { browser: new Set(), endpoints: new Set(), stubbed: new Set(), streaming: new Set(), errors: [], state: { server: [], browser: [], both: [] } };
     const visit = (h: string, chain: string[]) => {
       if (plan.browser.has(h) || plan.endpoints.has(h)) return;
       const via = [...chain, this.name(h)].join(" → ");
@@ -231,6 +242,7 @@ export class Placement {
           return;
         }
         plan.endpoints.add(h);
+        if (this.streams(h)) plan.streaming.add(h);
         plan.stubbed.add(this.cb.store.getDef(h)!.componentHash);
         return;
       }

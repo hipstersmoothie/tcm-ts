@@ -6,11 +6,11 @@ import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { CHROME, pageText } from "./browser.ts";
 
 const BIN = process.env.UCM_BIN ? path.resolve(process.env.UCM_BIN) : fileURLToPath(new URL("../bin/ucm.js", import.meta.url));
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ucm web "));
 const env = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" };
-const CHROME = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => fs.existsSync(p));
 const children: ChildProcess[] = [];
 after(() => children.forEach((c) => c.kill()));
 
@@ -87,15 +87,6 @@ async function crawl(url: string, attempts = 6): Promise<Map<string, string>> {
   return seen;
 }
 
-/** The page after its scripts ran, from headless Chrome; retried, since a loaded machine can cut a snapshot short. */
-function renderedPage(url: string, expect: RegExp): string {
-  let dom = "";
-  for (let i = 0; i < 3 && !expect.test(dom); i++) {
-    dom = spawnSync(CHROME!, ["--headless=new", "--disable-gpu", "--no-first-run", "--virtual-time-budget=8000", "--dump-dom", url], { encoding: "utf8" }).stdout;
-  }
-  return dom;
-}
-
 const waitFor = async (cond: () => boolean, ms = 8000) => {
   for (const end = Date.now() + ms; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) if (cond()) return;
   throw new Error("timed out waiting");
@@ -148,8 +139,8 @@ export async function main() {
 
   if (CHROME) {
     // the visit count depends on how often the headless page reloads; that it came from the server is what matters
-    const expect = /<div id="app">lines \d+, visit \d+<\/div>/;
-    assert.match(renderedPage(url, expect), expect, "the app ran in a real browser and called the server");
+    const text = await pageText(url, "#app", (t) => /^lines \d+, visit \d+$/.test(t));
+    assert.match(text, /^lines \d+, visit \d+$/, "the app ran in a real browser and called the server");
   }
 
   // an update in another process reloads the app
@@ -163,8 +154,8 @@ export async function main() {
   assert.ok(entry.includes(updated), "the entry now imports the updated app");
   assert.match(output(), /reloaded app\.main/);
   if (CHROME) {
-    const expect = /<div id="app">\d+ lines \(visit \d+\)<\/div>/;
-    assert.match(renderedPage(url, expect), expect, "the reloaded app renders with the updated code");
+    const text = await pageText(url, "#app", (t) => /^\d+ lines \(visit \d+\)$/.test(t));
+    assert.match(text, /^\d+ lines \(visit \d+\)$/, "the reloaded app renders with the updated code");
   }
 
   // a synchronous server function can't be called across the network; the error names it
