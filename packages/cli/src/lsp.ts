@@ -7,15 +7,17 @@
 // test and watch runners are told to do the same.
 import fs from "node:fs";
 import path from "node:path";
-import { format } from "node:util";
+import { format, inspect } from "node:util";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
-import { cacheRefOf, shortHash, type Analysis, type DefRecord, type ProjectDef } from "@ucm/core";
+import { cacheRefOf, schemaText, shortHash, type Analysis, type DefRecord, type ProjectDef } from "@ucm/core";
 import { render, type Rendered } from "@ucm/loader";
 import type { Codebase } from "./codebase.ts";
 import { Placement } from "./placement.ts";
 import { evaluateCached, isTestPath, runCached } from "./tests.ts";
 import { searchByType } from "./search.ts";
+import { decode } from "./codec.ts";
 
 /** What the language server needs from the CLI (passed in, so this module doesn't import the CLI's entry). */
 export interface LspTools {
@@ -23,6 +25,7 @@ export interface LspTools {
   save(cb: Codebase, file: string, mode: "add" | "update"): boolean;
   mv(cb: Codebase, from: string, to: string): void;
   edit(cb: Codebase, targets: string[], file: string, force: boolean): void;
+  migrateTable(cb: Codebase, table: string): Promise<boolean>;
 }
 
 type Json = Record<string, unknown>;
@@ -321,7 +324,14 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
   let changeTimer: NodeJS.Timeout | undefined;
   const watchCodebase = () => {
     try {
-      fs.watch(cb!.lay.ucmDir, (_e, name) => {
+      // rows change while an app runs: tell the client (it refreshes its data view), separately from code changes
+      let dataTimer: NodeJS.Timeout | undefined;
+      fs.watch(cb!.lay.ucmDir, { recursive: true }, (_e, name) => {
+        if (name && /^data[\\/]store\.sqlite/.test(name)) {
+          clearTimeout(dataTimer);
+          dataTimer = setTimeout(() => notify("ucm/dataChanged", {}), 500);
+          return;
+        }
         if (!name?.startsWith("codebase.sqlite")) return;
         clearTimeout(changeTimer);
         changeTimer = setTimeout(() => {
@@ -363,6 +373,24 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       const r = capture(() => tools.edit(c, args.map(String), file, false));
       if (!r.ok) message(1, r.output);
       return r.ok ? pathToFileURL(file).href : null;
+    }
+    if (command === "ucm.dataMigrate") {
+      return (async () => {
+        const out: string[] = [];
+        const log = console.log;
+        console.log = (...a: unknown[]) => void out.push(plain(format(...a)));
+        let ok = false;
+        try {
+          ok = await tools.migrateTable(c, String(args[0]));
+        } catch (e) {
+          out.push((e as Error)?.message ?? String(e));
+        } finally {
+          console.log = log;
+        }
+        message(ok ? 3 : 1, out.join("\n").trim() || (ok ? "migrated" : "failed"));
+        notify("ucm/dataChanged", {});
+        return ok;
+      })();
     }
     if (command === "ucm.mv") {
       const r = capture(() => tools.mv(c, String(args[0]), String(args[1])));
@@ -516,28 +544,224 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       else defs.push(n);
     }
     const placement = new Placement(c);
-    const node = process.version;
     return {
       namespaces: [...namespaces].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([name, count]) => ({ name, path: prefix + name, count })),
       definitions: defs
         .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.kind < b.kind ? -1 : 1))
-        .map((n) => {
-          const rec = c.store.getDef(n.hash)!;
-          const test = rec.kind !== "type" && isTestPath(n.path) ? c.store.testResult(n.hash, node) : undefined;
-          return {
-            name: n.path.slice(prefix.length),
-            path: n.path,
-            hash: n.hash,
-            kind: rec.kind,
-            symbolKind: SYMBOL_KIND(rec),
-            signature: rec.signature,
-            place: rec.kind === "term" ? placement.placeOf(n.hash).place : undefined,
-            test: isTestPath(n.path) && rec.kind !== "type" ? (test ? (test.ok ? "passed" : "failed") : "not run") : undefined,
-            doc: rec.doc?.split("\n")[0],
-            uri: viewUri(n.hash),
-          };
-        }),
+        .map((n) => ({ ...entry(n.path, n.hash, placement), name: n.path.slice(prefix.length) })),
     };
+  };
+
+  /** A function made by `every(...)`: a recurring job. */
+  const isSchedule = (rec: DefRecord) => rec.spans.some((s) => s.ext?.module === "ucm:server" && s.ext.export === "every");
+  /**
+   * An app's entry point: it runs in the browser, takes no arguments, and nothing named calls it (what `ucm dev`
+   * is pointed at, like `app.main`).
+   */
+  const isApp = (hash: string, rec: DefRecord, placement: Placement) =>
+    rec.kind === "term" &&
+    placement.placeOf(hash).place === "browser" &&
+    namedDependents(hash) === 0 &&
+    (rec.params ? rec.params.params.every((p) => p.optional || p.rest) : /^\(\)\s*=>/.test(rec.signature));
+  /** One definition as the sidebar shows it: what it is, where it runs, what it's for. */
+  const entry = (p: string, hash: string, placement: Placement) => {
+    const c = cb!;
+    const rec = c.store.getDef(hash)!;
+    const isTest = rec.kind !== "type" && isTestPath(p);
+    const place = rec.kind === "term" ? placement.placeOf(hash).place : undefined;
+    const test = isTest ? c.store.testResult(hash, process.version) : undefined;
+    const role = isTest ? "test"
+      : rec.kind !== "term" ? "type"
+      : rec.table ? "table"
+      : isSchedule(rec) ? "schedule"
+      : isApp(hash, rec, placement) ? "app"
+      : place === "server" ? "server"
+      : place === "browser" ? "browser"
+      : "shared";
+    const endpoint = place === "server" && placement.crossable(hash);
+    return {
+      name: p,
+      path: p,
+      hash,
+      kind: rec.kind,
+      role,
+      symbolKind: SYMBOL_KIND(rec),
+      signature: rec.signature,
+      ...(isTest ? {} : { place }),
+      ...(endpoint ? { endpoint: true, ...(placement.streams(hash) ? { streaming: true } : {}) } : {}),
+      test: isTest ? (test ? (test.ok ? "passed" : "failed") : "not run") : undefined,
+      doc: rec.doc?.split("\n")[0],
+      uri: viewUri(hash),
+    };
+  };
+
+  /** Rows per table, from the app data store (what `ucm data` lists). */
+  const rowCounts = (): Map<string, number> => {
+    const file = path.join(cb!.lay.ucmDir, "data", "store.sqlite");
+    if (!fs.existsSync(file)) return new Map();
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      return new Map((db.prepare("SELECT tbl, count(*) AS n FROM rows GROUP BY tbl").all() as { tbl: string; n: number }[]).map((r) => [r.tbl, r.n]));
+    } finally {
+      db.close();
+    }
+  };
+
+  /**
+   * The apps in the codebase, each with what it's made of: the plan `ucm build` makes (browser code, endpoints),
+   * the tables its server code uses, and the jobs and tests in its namespace.
+   */
+  const apps = () => {
+    const c = cb!;
+    const placement = new Placement(c);
+    const names = c.store.names();
+    const rows = rowCounts();
+    return names
+      .filter((n) => n.kind === "term" && isApp(n.hash, c.store.getDef(n.hash)!, placement))
+      .map((app) => {
+        const plan = placement.planApp(app.hash);
+        const named = (hs: Iterable<string>) => [...hs].flatMap((h) => (c.store.pathsOf(h)[0] ? [entry(c.store.pathsOf(h)[0]!, h, placement)] : [])).sort((a, b) => (a.path < b.path ? -1 : 1));
+        // the tables the endpoints' code reaches
+        const tables = new Map<string, string>();
+        const seen = new Set<string>();
+        const queue = [...plan.endpoints];
+        while (queue.length) {
+          const h = queue.pop()!;
+          if (seen.has(h)) continue;
+          seen.add(h);
+          const rec = c.store.getDef(h);
+          if (!rec) continue;
+          if (rec.table && c.store.pathsOf(h).length) tables.set(h, rec.table.name ?? c.store.pathsOf(h)[0]!);
+          for (const d of rec.deps) if (d.ref.startsWith("#")) queue.push(d.ref.slice(1));
+        }
+        const ns = app.path.includes(".") ? app.path.slice(0, app.path.lastIndexOf(".") + 1) : "";
+        const inNs = names.filter((n) => n.path.startsWith(ns) && !n.path.slice(ns.length).includes("."));
+        return {
+          path: app.path,
+          hash: app.hash,
+          uri: viewUri(app.hash),
+          endpoints: named(plan.endpoints),
+          browser: named(plan.browser),
+          tables: named(tables.keys()).map((t) => ({ ...t, table: tables.get(t.hash)!, rows: rows.get(tables.get(t.hash)!) ?? 0 })),
+          schedules: inNs
+            .filter((n) => n.kind === "term" && isSchedule(c.store.getDef(n.hash)!))
+            .map((n) => ({ ...entry(n.path, n.hash, placement), spec: /every\(\s*(["'`])(.*?)\1/.exec(c.store.getDef(n.hash)!.sourceText)?.[2] ?? "" })),
+          tests: inNs.filter((n) => n.kind !== "type" && isTestPath(n.path)).map((n) => entry(n.path, n.hash, placement)),
+          errors: plan.errors,
+        };
+      });
+  };
+
+  /** Open the app data store read-only, or undefined while there's no data yet. */
+  const withStore = <T>(fn: (db: InstanceType<typeof DatabaseSync>) => T): T | undefined => {
+    const file = path.join(cb!.lay.ucmDir, "data", "store.sqlite");
+    if (!fs.existsSync(file)) return undefined;
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      return fn(db);
+    } finally {
+      db.close();
+    }
+  };
+  const summary = (v: unknown) => inspect(v, { depth: 2, breakLength: Infinity, maxArrayLength: 5, maxStringLength: 60 });
+
+  /**
+   * Every table with data, and every table the codebase declares: rows, how many are stored as an older row type
+   * than the declaring definition's, and that definition.
+   */
+  const dataTables = () => {
+    const c = cb!;
+    const declared = declaredTables();
+    const stored = withStore((db) => db.prepare("SELECT tbl, schema_hash, count(*) AS n FROM rows GROUP BY tbl, schema_hash").all() as { tbl: string; schema_hash: string; n: number }[]) ?? [];
+    const names = [...new Set([...declared.keys(), ...stored.map((r) => r.tbl)])].sort();
+    return names.map((name) => {
+      const d = declared.get(name);
+      const rows = stored.filter((r) => r.tbl === name);
+      const total = rows.reduce((n, r) => n + r.n, 0);
+      const older = d ? rows.filter((r) => r.schema_hash !== d.schema).reduce((n, r) => n + r.n, 0) : 0;
+      return { table: name, rows: total, older, ...(d ? { path: d.path, hash: d.hash, uri: viewUri(d.hash), fields: d.fields } : {}) };
+    });
+  };
+  /** Tables the codebase declares: their definition, row schema, and the row type's fields (columns). */
+  const declaredTables = () => {
+    const c = cb!;
+    const out = new Map<string, { path: string; hash: string; schema: string; fields: { name: string; type: string }[] }>();
+    for (const n of c.store.names()) {
+      const t = n.kind === "term" ? c.store.getDef(n.hash)?.table : undefined;
+      if (!t?.name) continue;
+      const row = t.s.t === "ref" ? t.defs[t.s.id] : t.s;
+      const fields = row?.t === "object" ? Object.entries(row.props).map(([name, p]) => ({ name, type: schemaText(p.s, t.defs) + (p.optional ? "?" : "") })) : [];
+      out.set(t.name, { path: n.path, hash: n.hash, schema: t.hash, fields });
+    }
+    return out;
+  };
+  const FIELD = /^[A-Za-z_$][\w$]*$/;
+  /** A cell: strings as they are, dates as ISO, small things inline, objects as one short line. */
+  const cell = (v: unknown): string =>
+    v === undefined || v === null ? "" : typeof v === "string" ? v : v instanceof Date ? v.toISOString() : typeof v === "object" ? summary(v) : String(v);
+  /**
+   * A page of a table's rows for the viewer: searched (anywhere in the row), sorted (by a field, the id or when it
+   * was written; newest first by default) and paged in SQLite.
+   */
+  const dataPage = (table: string, q: { offset: number; limit: number; search?: string; sort?: { field: string; desc?: boolean } }) => {
+    const d = declaredTables().get(table);
+    return (
+      withStore((db) => {
+        const where = `tbl = ?${q.search ? " AND instr(lower(data), lower(?)) > 0" : ""}`;
+        const args = q.search ? [table, q.search] : [table];
+        const total = (db.prepare(`SELECT count(*) AS n FROM rows WHERE ${where}`).get(...args) as { n: number }).n;
+        const f = q.sort?.field;
+        const by = f === "id" ? "id" : f === "updated" || !f || !FIELD.test(f) ? "updated" : `json_extract(data, '$."${f}"')`;
+        const dir = f ? (q.sort?.desc ? "DESC" : "ASC") : "DESC";
+        const rows = db.prepare(`SELECT id, data, schema_hash, updated FROM rows WHERE ${where} ORDER BY ${by} ${dir}, id LIMIT ? OFFSET ?`).all(...args, q.limit, q.offset) as {
+          id: string;
+          data: string;
+          schema_hash: string;
+          updated: number;
+        }[];
+        const values = rows.map((r) => decode(r.data) as Record<string, unknown>);
+        // an undeclared table's columns are whatever its rows have
+        const fields = d?.fields.length ? d.fields : [...new Set(values.flatMap((v) => (v && typeof v === "object" ? Object.keys(v) : [])))].map((name) => ({ name, type: "" }));
+        return {
+          total,
+          fields,
+          rows: rows.map((r, i) => {
+            const v = values[i]!;
+            return {
+              id: r.id,
+              updated: r.updated,
+              older: !!d && r.schema_hash !== d.schema,
+              cells: Object.fromEntries(fields.map((fl) => [fl.name, cell(v && typeof v === "object" ? v[fl.name] : undefined)])),
+              detail: inspect(v, { depth: null, breakLength: 80 }),
+              summary: summary(v),
+              uri: `ucm:/.data/${encodeURIComponent(table)}/${encodeURIComponent(r.id)}.txt`,
+            };
+          }),
+        };
+      }) ?? { total: 0, fields: d?.fields ?? [], rows: [] }
+    );
+  };
+  /** One row, in full (`ucm:/.data/<table>/<id>.txt`). */
+  const rowText = (table: string, id: string) =>
+    withStore((db) => {
+      const r = db.prepare("SELECT data, schema_hash, updated FROM rows WHERE tbl = ? AND id = ?").get(table, id) as { data: string; schema_hash: string; updated: number } | undefined;
+      if (!r) return `// table "${table}" has no row ${id} (any more)\n`;
+      return `// table "${table}", row ${id}: written ${new Date(r.updated).toISOString()} as row type #${r.schema_hash.slice(0, 8)}\n\n${inspect(decode(r.data), { depth: null, breakLength: 100 })}\n`;
+    }) ?? `// no data yet\n`;
+
+  /** A table's newest rows, as text (`ucm:/.data/<table>.txt`). */
+  const tableText = (table: string) => {
+    const file = path.join(cb!.lay.ucmDir, "data", "store.sqlite");
+    if (!fs.existsSync(file)) return `// table "${table}": no data yet\n`;
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      const total = (db.prepare("SELECT count(*) AS n FROM rows WHERE tbl = ?").get(table) as { n: number }).n;
+      const rows = db.prepare("SELECT id, data, schema_hash FROM rows WHERE tbl = ? ORDER BY updated DESC LIMIT 200").all(table) as { id: string; data: string; schema_hash: string }[];
+      const lines = rows.map((r) => `${r.id}  ${inspect(decode(r.data), { depth: 4, breakLength: 120 })}`);
+      return `// table "${table}": ${total} row${total === 1 ? "" : "s"}${total > rows.length ? `, newest ${rows.length} shown` : ""}\n\n${lines.join("\n")}\n`;
+    } finally {
+      db.close();
+    }
   };
   /** A scratch file to edit in: scratch.ts if it's empty, else a fresh edit-N.ts. */
   const editFile = () => {
@@ -597,7 +821,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
               hoverProvider: true,
               codeLensProvider: { resolveProvider: false },
               inlayHintProvider: true,
-              executeCommandProvider: { commands: ["ucm.add", "ucm.update", "ucm.mv", "ucm.edit"] },
+              executeCommandProvider: { commands: ["ucm.add", "ucm.update", "ucm.mv", "ucm.edit", "ucm.dataMigrate"] },
               definitionProvider: true,
               referencesProvider: true,
               documentSymbolProvider: true,
@@ -690,7 +914,30 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       case "ucm/tree":
         send({ id: m.id, result: cb ? tree(String(p?.namespace ?? "")) : { namespaces: [], definitions: [] } });
         return;
+      case "ucm/data":
+        send({ id: m.id, result: cb ? dataTables() : [] });
+        return;
+      case "ucm/rows":
+        send({
+          id: m.id,
+          result: cb
+            ? dataPage(String(p?.table), {
+                offset: Math.max(0, Number(p?.offset ?? 0)),
+                limit: Math.min(500, Math.max(1, Number(p?.limit ?? 100))),
+                search: typeof p?.search === "string" && p.search ? p.search : undefined,
+                sort: p?.sort as { field: string; desc?: boolean } | undefined,
+              })
+            : { total: 0, fields: [], rows: [] },
+        });
+        return;
+      case "ucm/apps":
+        send({ id: m.id, result: cb ? apps() : [] });
+        return;
       case "ucm/source": {
+        const row = /^ucm:\/*\.data\/([^/]+)\/([^/]+)\.txt$/.exec(String(p?.uri));
+        if (cb && row) return send({ id: m.id, result: { text: rowText(decodeURIComponent(row[1]!), decodeURIComponent(row[2]!)) } });
+        const data = /^ucm:\/*\.data\/([^/]+)\.txt$/.exec(String(p?.uri));
+        if (cb && data) return send({ id: m.id, result: { text: tableText(decodeURIComponent(data[1]!)) } });
         const v = cb ? view(String(p?.uri)) : undefined;
         send(v ? { id: m.id, result: { text: v.text } } : { id: m.id, error: { code: -32602, message: `${p?.uri} is not in the codebase` } });
         return;
@@ -717,7 +964,11 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         return;
       }
       case "workspace/executeCommand":
-        send({ id: m.id, result: cb ? execute(String(p!.command), (p!.arguments as unknown[]) ?? []) : null });
+        // a command may finish later (migrating data runs the table's code)
+        Promise.resolve(cb ? execute(String(p!.command), (p!.arguments as unknown[]) ?? []) : null).then(
+          (result) => send({ id: m.id, result }),
+          (e) => send({ id: m.id, error: { code: -32603, message: (e as Error)?.message ?? String(e) } }),
+        );
         return;
       default:
         // requests we don't serve get an error; notifications are ignored, and responses to our requests too

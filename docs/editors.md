@@ -52,20 +52,51 @@ The code lives in the codebase, not in files, so the server also shows the codeb
   document's definitions.
 - **Hovers** in these documents describe whatever is under the cursor, as in scratch files.
 
-For clients that want to show more, the server answers `ucm/tree` (one level of the namespace tree, with each
-definition's kind, signature, placement and test status), `ucm/source` (a `ucm:` document's text) and
-`ucm/findByType` (type search, as `ucm find ':…'`). It sends `ucm/changed` whenever the codebase changes, here or
-from a terminal.
+For clients that want to show more, the server answers:
+
+| request | |
+|---|---|
+| `ucm/tree` | one level of the namespace tree: each definition's kind, role (app, type, table, schedule, server, browser, shared, test), signature, placement, whether it's an endpoint, test status |
+| `ucm/apps` | each app with its endpoints, browser code, tables (with row counts), schedules and tests |
+| `ucm/data` | tables, with row counts, rows of older row types, the declaring definition and the row type's fields |
+| `ucm/rows` | a page of a table's rows for a viewer: searched, sorted by a field and paged in SQLite; the row type's fields (columns), and each row's cells, full value, and whether it's of an older row type |
+| `ucm/source` | a `ucm:` document's text: a definition, `ucm:/.data/<table>.txt`, or `ucm:/.data/<table>/<id>.txt` |
+| `ucm/findByType` | type search, as `ucm find ':…'` |
+
+It sends `ucm/changed` when the codebase changes and `ucm/dataChanged` when the data store does, here or from a
+terminal or a running app. `ucm.dataMigrate <table>` is a command, like `ucm.add`.
 
 ## VS Code
 
 `editors/vscode` is the extension. Beyond starting `ucm lsp` in workspaces with a codebase, it adds:
 
-- **The Codebase sidebar** (the `#` icon in the activity bar): namespaces, and the definitions in each, with
-  icons by kind, signatures, where they run (`server ·`, `browser ·`) and test results. Hover for details; click to
-  open. Right-click (or the inline icons) for **Edit in a scratch file**, **Find usages**, **Run** (`ucm run` in a
-  terminal), **Rename** (`ucm mv`, also for a whole namespace) and **Copy hash**. It refreshes itself when the
-  codebase changes, including from a terminal.
+The `#` icon in the activity bar opens three views:
+
+- **Apps.** A launcher: every app in the codebase, meaning every browser entry point (a function that runs in
+  the browser, takes no arguments and isn't called by other code, like `polls.main`). **▶ Start** runs `ucm dev`
+  for it on a free port, with its log in an output channel, and opens it in VS Code's built-in browser; the
+  status bar shows running apps. **Open** (also in an external browser), **Log** and **Stop** act on a running
+  one. Clicking an app opens it if it runs, and its source otherwise. An app only expands to show problems that
+  would stop it building; what it's made of is in the other two views.
+- **Codebase.** Namespaces, and the definitions in each. Namespaces with more than a few definitions are grouped
+  by what they're for: Apps, Types, Data (tables), Jobs (schedules), Server, Browser, Shared (runs anywhere) and
+  Tests. Apps here show whether they're running, with the same start, open and stop buttons. Icons show kinds, endpoints (a cloud) and test results. Hover for details; click to open. Right-click (or
+  the inline icons) for **Edit in a scratch file**, **Find usages**, **Run** (`ucm run` in a terminal), **Rename**
+  (`ucm mv`, also for a whole namespace) and **Copy hash**.
+- **Data.** Every table: declared ones and ones with rows. Each shows its row count and how many rows are still
+  stored as an older row type; **Migrate rows** brings those up to date (`ucm data migrate`), and **Go to
+  definition** opens the `table<…>()` that declares it. Click a table to open it in the **table viewer**: a grid
+  with a column per field of the row type (each header gives the field's type), the row's id and when it was
+  written.
+  - Click a header to sort by it; type in the search box to find rows containing the text anywhere. Sorting,
+    search and paging (a hundred rows at a time) run in SQLite on the server, so big tables stay fast.
+  - Click a row to see its full value, nested objects and all, beside the grid.
+  - Rows stored as an older row type are badged, and the header offers **Migrate rows**.
+  - It's live: open viewers refresh as a running app writes rows. It's read-only; changing rows by hand would
+    bypass the table's own type checks and migrations.
+
+All three refresh when the codebase changes (including from a terminal), and the Data view also when the data
+does, so rows appear as a running app writes them.
 - **ucm: Find by type** (the search icon in the sidebar, or the command palette): type a TypeScript type, pick a
   match, and it opens.
 - **A TypeScript server plugin** (`editors/vscode/ts-plugin`, loaded through VS Code's

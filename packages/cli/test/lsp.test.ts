@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 
 const BIN = process.env.UCM_BIN ? path.resolve(process.env.UCM_BIN) : fileURLToPath(new URL("../bin/ucm.js", import.meta.url));
 const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ucm lsp ")));
@@ -85,7 +86,7 @@ square(12);
   const c = client();
   const init = await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir).href, capabilities: {}, clientInfo: { name: "test" } });
   assert.ok(init.capabilities.codeLensProvider && init.capabilities.inlayHintProvider && init.capabilities.hoverProvider);
-  assert.deepEqual(init.capabilities.executeCommandProvider.commands, ["ucm.add", "ucm.update", "ucm.mv", "ucm.edit"]);
+  assert.deepEqual(init.capabilities.executeCommandProvider.commands, ["ucm.add", "ucm.update", "ucm.mv", "ucm.edit", "ucm.dataMigrate"]);
   c.notify("initialized", {});
   c.notify("textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text } });
   const doc = { textDocument: { uri } };
@@ -230,4 +231,86 @@ export const perimeter = (ps: Point[]): number => ps.reduce((n, p, i) => n + dis
   await c.waitFor(() => c.notes.find((n) => n.method === "ucm/changed"));
   const moved = await c.request("ucm/tree", { namespace: "geo" });
   assert.ok(moved.definitions.some((d: any) => d.name === "distance"));
+});
+
+test("apps and data in the editor: roles, an app's parts, tables, rows, migrating", async () => {
+  const dir3 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ucm lsp3 ")));
+  const ucm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: dir3, env, encoding: "utf8" });
+  ucm("init");
+  fs.writeFileSync(
+    path.join(dir3, "scratch.ts"),
+    `// ucm: namespace shop
+import { table, every } from "#ucm/server";
+export type Item = { name: string; price: number };
+export const items = table<Item>("items", { migrate: (old: { name: string }) => ({ name: old.name, price: 0 }) });
+export async function listItems(): Promise<string[]> {
+  return (await items.find()).map((r) => r.value.name);
+}
+export async function cleanup(): Promise<void> {}
+export const nightly = every("0 3 * * *", cleanup);
+export const format = (names: string[]) => names.join(", ");
+export async function main() {
+  document.body.textContent = format(await listItems());
+}
+export const testFormat = () => {
+  if (format(["a", "b"]) !== "a, b") throw new Error("bad");
+};
+`,
+  );
+  assert.equal(ucm("add").status, 0, ucm("add").stdout);
+  fs.writeFileSync(path.join(dir3, "scratch.ts"), "");
+  // rows an app wrote: one of the current type, one of an older one
+  const schema = JSON.parse(spawnSync("sqlite3", [path.join(dir3, ".ucm", "codebase.sqlite"), "select value from metadata where key = 'table'"], { encoding: "utf8" }).stdout).hash;
+  fs.mkdirSync(path.join(dir3, ".ucm", "data"), { recursive: true });
+  const store = new DatabaseSync(path.join(dir3, ".ucm", "data", "store.sqlite"));
+  store.exec(`CREATE TABLE rows (tbl TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, schema_hash TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (tbl, id));
+    CREATE TABLE schemas (tbl TEXT NOT NULL, hash TEXT NOT NULL, schema TEXT NOT NULL, first_seen INTEGER NOT NULL, PRIMARY KEY (tbl, hash));`);
+  store.prepare("INSERT INTO rows VALUES ('items', 'a1', ?, ?, 2)").run(JSON.stringify({ name: "apple", price: 3 }), schema);
+  store.prepare("INSERT INTO rows VALUES ('items', 'p1', ?, 'v0', 1)").run(JSON.stringify({ name: "pear" }));
+  store.close();
+
+  const c = client();
+  await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir3).href, capabilities: {}, clientInfo: { name: "Visual Studio Code" } });
+  c.notify("initialized", {});
+
+  // each definition says what it's for
+  const shop = await c.request("ucm/tree", { namespace: "shop" });
+  const roles = Object.fromEntries(shop.definitions.map((d: any) => [d.name, d.role]));
+  assert.deepEqual(roles, { Item: "type", cleanup: "shared", format: "shared", items: "table", listItems: "server", main: "app", nightly: "schedule", testFormat: "test" });
+  assert.equal(shop.definitions.find((d: any) => d.name === "listItems").endpoint, true);
+  assert.equal(shop.definitions.find((d: any) => d.name === "testFormat").place, undefined, "a test's placement is noise");
+
+  // the app, and what it's made of
+  const [app] = await c.request("ucm/apps", {});
+  assert.equal(app.path, "shop.main");
+  assert.deepEqual(app.endpoints.map((e: any) => e.path), ["shop.listItems"]);
+  assert.deepEqual(app.browser.map((e: any) => e.path), ["shop.format", "shop.main"]);
+  assert.deepEqual(app.tables.map((t: any) => [t.table, t.rows]), [["items", 2]]);
+  assert.deepEqual(app.schedules.map((s: any) => [s.path, s.spec]), [["shop.nightly", "0 3 * * *"]]);
+  assert.deepEqual(app.tests.map((t: any) => t.path), ["shop.testFormat"]);
+
+  // the data: tables, a page of rows, a row in full
+  const [items] = await c.request("ucm/data", {});
+  assert.deepEqual([items.table, items.rows, items.older, items.path], ["items", 2, 1, "shop.items"]);
+  // a page for the table viewer: typed columns, cells, older rows marked; sorted and searched in SQL
+  const page = await c.request("ucm/rows", { table: "items", offset: 0, limit: 10 });
+  assert.equal(page.total, 2);
+  assert.deepEqual(page.fields, [{ name: "name", type: "string" }, { name: "price", type: "number" }]);
+  assert.deepEqual(page.rows.map((r: any) => [r.id, r.cells.name, r.cells.price, r.older]), [["a1", "apple", "3", false], ["p1", "pear", "", true]]);
+  const byName = await c.request("ucm/rows", { table: "items", offset: 0, limit: 10, sort: { field: "name", desc: true } });
+  assert.deepEqual(byName.rows.map((r: any) => r.id), ["p1", "a1"]);
+  const found = await c.request("ucm/rows", { table: "items", offset: 0, limit: 10, search: "APP" });
+  assert.deepEqual([found.total, found.rows.map((r: any) => r.id)], [1, ["a1"]]);
+  const rows = page.rows;
+  const row = await c.request("ucm/source", { uri: rows[0].uri });
+  assert.match(row.text, /^\/\/ table "items", row a1: written .* as row type #/);
+  assert.match((await c.request("ucm/source", { uri: "ucm:/.data/items.txt" })).text, /\/\/ table "items": 2 rows\n\na1  \{ name: 'apple', price: 3 \}\np1/);
+
+  // migrate the older row from the editor; the client hears the data changed
+  c.notes.length = 0;
+  assert.equal(await c.request("workspace/executeCommand", { command: "ucm.dataMigrate", arguments: ["items"] }), true);
+  await c.waitFor(() => c.notes.find((n) => n.method === "ucm/dataChanged"));
+  const after = await c.request("ucm/data", {});
+  assert.equal(after[0].older, 0);
+  assert.equal((await c.request("ucm/rows", { table: "items", offset: 0, limit: 10 })).rows.find((r: any) => r.id === "p1").summary, "{ name: 'pear', price: 0 }");
 });

@@ -2,7 +2,7 @@
   "name": "ucm-ts",
   "displayName": "ucm-ts",
   "description": "The ucm-ts codebase in VS Code: a namespace sidebar, definitions as documents, usages, type search, and Unison-style status, watch values and save commands for scratch files",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "publisher": "ucm-ts",
   "license": "MIT",
   "private": true,
@@ -29,8 +29,16 @@
     "views": {
       "ucm": [
         {
+          "id": "ucm.apps",
+          "name": "Apps"
+        },
+        {
           "id": "ucm.codebase",
           "name": "Codebase"
+        },
+        {
+          "id": "ucm.data",
+          "name": "Data"
         }
       ]
     },
@@ -38,6 +46,14 @@
       {
         "view": "ucm.codebase",
         "contents": "The codebase is empty. Write definitions in a scratch file (scratch.ts) and use **Add to codebase** above them."
+      },
+      {
+        "view": "ucm.apps",
+        "contents": "No apps yet. An app is a browser entry point: a function that runs in the browser, takes no arguments, and isn't called by other code (like `app.main`)."
+      },
+      {
+        "view": "ucm.data",
+        "contents": "No data yet. Tables are declared with `table<Row>(\"name\")` from `#ucm/server`; their rows appear here once an app writes some."
       }
     ],
     "commands": [
@@ -95,6 +111,54 @@
         "title": "Run",
         "category": "ucm",
         "icon": "$(play)"
+      },
+      {
+        "command": "ucm.startApp",
+        "title": "Start app",
+        "category": "ucm",
+        "icon": "$(play)"
+      },
+      {
+        "command": "ucm.stopApp",
+        "title": "Stop app",
+        "category": "ucm",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "ucm.openApp",
+        "title": "Open app",
+        "category": "ucm",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "ucm.openAppExternal",
+        "title": "Open app in external browser",
+        "category": "ucm",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "ucm.showAppLog",
+        "title": "Show app log",
+        "category": "ucm",
+        "icon": "$(output)"
+      },
+      {
+        "command": "ucm.showTable",
+        "title": "Open table",
+        "category": "ucm",
+        "icon": "$(table)"
+      },
+      {
+        "command": "ucm.migrateTable",
+        "title": "Migrate rows to the current row type",
+        "category": "ucm",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "ucm.openTableDefinition",
+        "title": "Go to definition",
+        "category": "ucm",
+        "icon": "$(go-to-file)"
       }
     ],
     "menus": {
@@ -108,37 +172,47 @@
           "command": "ucm.refresh",
           "when": "view == ucm.codebase",
           "group": "navigation@2"
+        },
+        {
+          "command": "ucm.refresh",
+          "when": "view == ucm.apps",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ucm.refresh",
+          "when": "view == ucm.data",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
         {
           "command": "ucm.editDefinition",
-          "when": "view == ucm.codebase && viewItem == definition",
+          "when": "(view == ucm.codebase || view == ucm.apps) && viewItem =~ /^definition/",
           "group": "inline@1"
         },
         {
           "command": "ucm.findUsages",
-          "when": "view == ucm.codebase && viewItem == definition",
+          "when": "(view == ucm.codebase || view == ucm.apps) && viewItem =~ /^definition/",
           "group": "inline@2"
         },
         {
           "command": "ucm.openDefinition",
-          "when": "view == ucm.codebase && viewItem == definition",
+          "when": "(view == ucm.codebase || view == ucm.apps) && viewItem =~ /^definition/",
           "group": "1_open@1"
         },
         {
           "command": "ucm.editDefinition",
-          "when": "view == ucm.codebase && viewItem == definition",
+          "when": "(view == ucm.codebase || view == ucm.apps) && viewItem =~ /^definition/",
           "group": "1_open@2"
         },
         {
           "command": "ucm.findUsages",
-          "when": "view == ucm.codebase && viewItem == definition",
+          "when": "(view == ucm.codebase || view == ucm.apps) && viewItem =~ /^definition/",
           "group": "2_navigate@1"
         },
         {
           "command": "ucm.runDefinition",
-          "when": "view == ucm.codebase && viewItem == definition",
+          "when": "(view == ucm.codebase || view == ucm.apps) && viewItem =~ /^definition/",
           "group": "2_navigate@2"
         },
         {
@@ -148,8 +222,68 @@
         },
         {
           "command": "ucm.copyHash",
-          "when": "view == ucm.codebase && viewItem == definition",
+          "when": "(view == ucm.codebase || view == ucm.apps) && viewItem =~ /^definition/",
           "group": "4_copy@1"
+        },
+        {
+          "command": "ucm.startApp",
+          "when": "view == ucm.apps && viewItem == app.stopped",
+          "group": "inline@1"
+        },
+        {
+          "command": "ucm.openApp",
+          "when": "view == ucm.apps && viewItem == app.running",
+          "group": "inline@1"
+        },
+        {
+          "command": "ucm.showAppLog",
+          "when": "view == ucm.apps && viewItem == app.running",
+          "group": "inline@2"
+        },
+        {
+          "command": "ucm.stopApp",
+          "when": "view == ucm.apps && viewItem == app.running",
+          "group": "inline@3"
+        },
+        {
+          "command": "ucm.openAppExternal",
+          "when": "view == ucm.apps && viewItem == app.running",
+          "group": "1_open@1"
+        },
+        {
+          "command": "ucm.startApp",
+          "when": "view == ucm.codebase && viewItem == definition.app",
+          "group": "inline@0"
+        },
+        {
+          "command": "ucm.showTable",
+          "when": "view == ucm.data && viewItem =~ /^table/",
+          "group": "inline@1"
+        },
+        {
+          "command": "ucm.migrateTable",
+          "when": "view == ucm.data && viewItem == table.older",
+          "group": "inline@2"
+        },
+        {
+          "command": "ucm.openTableDefinition",
+          "when": "view == ucm.data && viewItem =~ /^table/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "ucm.migrateTable",
+          "when": "view == ucm.data && viewItem == table.older",
+          "group": "2_change@1"
+        },
+        {
+          "command": "ucm.openApp",
+          "when": "view == ucm.codebase && viewItem == definition.app.running",
+          "group": "inline@0"
+        },
+        {
+          "command": "ucm.stopApp",
+          "when": "view == ucm.codebase && viewItem == definition.app.running",
+          "group": "inline@1"
         }
       ],
       "commandPalette": [
@@ -163,6 +297,26 @@
         },
         {
           "command": "ucm.findUsages",
+          "when": "false"
+        },
+        {
+          "command": "ucm.showTable",
+          "when": "false"
+        },
+        {
+          "command": "ucm.openAppExternal",
+          "when": "false"
+        },
+        {
+          "command": "ucm.showAppLog",
+          "when": "false"
+        },
+        {
+          "command": "ucm.migrateTable",
+          "when": "false"
+        },
+        {
+          "command": "ucm.openTableDefinition",
           "when": "false"
         }
       ]

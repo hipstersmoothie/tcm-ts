@@ -656,7 +656,7 @@ square(12);
   // the editor says where the workspace is (initialize), so the codebase is found then
   if (cmd === "lsp") {
     sendRunnerOutputToStderr();
-    serveLsp((dir) => Codebase.find(dir), { classify, save: (cb, file, mode) => save(cb, file, mode), mv, edit });
+    serveLsp((dir) => Codebase.find(dir), { classify, save: (cb, file, mode) => save(cb, file, mode), mv, edit, migrateTable });
     return -1; // serve until the editor says exit
   }
 

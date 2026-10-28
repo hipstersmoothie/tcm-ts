@@ -302,3 +302,33 @@ function describe(v: unknown): string {
 export function schemaCheckerSource(): string {
   return `${checkValue}\n${summary}\n${describe}\n`;
 }
+
+/** A schema as a short TypeScript-like type, for display (`string`, `Date`, `{ x: number }[]`). */
+export function schemaText(s: Schema, defs: Schema[], depth = 0): string {
+  if (depth > 3) return "…";
+  const t = (x: Schema) => schemaText(x, defs, depth + 1);
+  switch (s.t) {
+    case "date":
+      return "Date";
+    case "literal":
+      return JSON.stringify(s.value);
+    case "union":
+      return s.of.map(t).join(" | ");
+    case "array":
+      return s.of.t === "union" ? `(${t(s.of)})[]` : `${t(s.of)}[]`;
+    case "tuple":
+      return `[${s.of.map(t).join(", ")}${s.rest ? `, ...${t(s.rest)}[]` : ""}]`;
+    case "object":
+      return `{ ${Object.entries(s.props).map(([k, p]) => `${k}${p.optional ? "?" : ""}: ${t(p.s)}`).join("; ")} }`;
+    case "map":
+      return `Map<${t(s.key)}, ${t(s.value)}>`;
+    case "set":
+      return `Set<${t(s.of)}>`;
+    case "ref":
+      return depth > 0 ? "…" : t(defs[s.id]!);
+    case "unsendable":
+      return s.what;
+    default:
+      return s.t;
+  }
+}
