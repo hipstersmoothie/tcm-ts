@@ -49,6 +49,8 @@ ucm add           # save new definitions from scratch.ts
 - **Self-hosting:** ucm-ts imports, verifies and runs its own source at a fixed point.
   [Developing](docs/developing.md)
 
-Try the [polls example](examples/README.md): `examples/polls/setup.sh /tmp/polls`.
+New here? Read the [introduction](docs/introduction.md), then follow the tutorials:
+[your first codebase](docs/tutorial-codebase.md) and [your first web app](docs/tutorial-app.md). Or try the
+[polls example](examples/README.md): `examples/polls/setup.sh /tmp/polls`.
 
 All documentation: [docs/](docs/README.md). Open items: [limitations](docs/limitations.md).

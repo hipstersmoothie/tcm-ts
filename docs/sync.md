@@ -1,4 +1,4 @@
-# Sync and remote execution
+# Sharing code
 
 Because a hash identifies code completely, sharing a codebase means sending only the hashes the other side
 lacks, and running code remotely means sending its missing closure.

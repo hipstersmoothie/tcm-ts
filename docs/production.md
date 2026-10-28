@@ -1,4 +1,4 @@
-# Production: deploy and roll back by moving a name
+# Deploying: by moving a name
 
 - **`ucm build <app>`** writes an immutable, content-addressed build to `.ucm/apps/<app hash>/`. Its assets are
   served under `/_app/<hash>/`. An existing build is reused unless `--force`.

@@ -1,4 +1,4 @@
-# Server API: `#ucm/server`
+# Server functions
 
 Server functions know who's calling. Importing anything from `#ucm/server` is also what puts a function on the
 server; placement still needs no annotation.

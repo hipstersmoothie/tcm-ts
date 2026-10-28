@@ -63,7 +63,7 @@ export const main = (...args: string[]) => \`\${sumSquares(args.map(Number))} \$
   const d = ucm("diff");
   assert.match(d, /changes from `update scratch\.ts`/);
   // `mv square math.sq` kept the function's runtime name; this edit declares `sq`, so the name changes too
-  assert.match(d, /edited\s+~ math\.sq[\s\S]*- const square = \(x: number\): number => x \* x\n\s+\+ const sq = \(x: number\): number => x \* x \* x/);
+  assert.match(d, /edited\s+~ math\.sq[\s\S]*- export const square = \(x: number\): number => x \* x\n\s+\+ export const sq = \(x: number\): number => x \* x \* x/);
   assert.match(d, /updated because a dependency changed[\s\S]*lib\.main .* via lib\.sumSquares[\s\S]*lib\.sumSquares .* via math\.sq/);
   assert.doesNotMatch(d.split("updated because")[0]!, /lib\.sumSquares/, "propagated definitions are not listed as edits");
 

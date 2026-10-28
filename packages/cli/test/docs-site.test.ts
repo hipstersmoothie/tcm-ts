@@ -13,9 +13,10 @@ test("the docs site builds, every link and anchor resolves", () => {
   const r = spawnSync(process.execPath, [SCRIPT, out], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   const index = fs.readFileSync(path.join(out, "index.html"), "utf8");
-  // the menu lists every page in docs/README.md's order, numbered
+  // the menu lists every page in docs/README.md's order, numbered, under its section, by its link's text
   assert.match(index, /<span>\[0\] index<\/span>/);
-  assert.match(index, /<a href="getting-started.html">\[1\] getting started<\/a>/);
+  assert.match(index, /<li class="section">start<\/li>\n<li><a href="introduction.html">\[1\] introduction<\/a><\/li>/);
+  assert.match(index, /<a href="getting-started.html">\[2\] install<\/a>/);
   const data = fs.readFileSync(path.join(out, "data.html"), "utf8");
   assert.match(data, /<h1 id="data-typed-tables">\d+\. Data: typed tables<\/h1>/);
   assert.match(data, /<h2 id="transactions">\d+\.\d+ Transactions<\/h2>/);

@@ -1,4 +1,4 @@
-# Docs that can't go stale
+# Writing docs that can't go stale
 
 Definitions are documented with ordinary JSDoc. As in Unison, where docs are code, ucm treats the parts of a doc
 that name code as code: they're resolved to hashes when the definition is added, so they follow renames and

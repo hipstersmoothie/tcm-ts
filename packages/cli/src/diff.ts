@@ -144,7 +144,7 @@ export function printDiff(cb: Codebase, d: NamespaceDiff, before: NameState, aft
   const src = cb.source();
   const [oldNames, newNames] = [namesIn(before), namesIn(after)];
   const body = (hash: string, nameOf: (h: string) => string | undefined) =>
-    render([src.get(hash)!], src, cb.lay, { style: "scratch", omitImports: true, nameOf }).text.trimEnd().split("\n");
+    render([src.get(hash)!], src, cb.lay, { style: "scratch", omitImports: true, nameOf, exportDeclarations: true }).text.trimEnd().split("\n");
   const name = (hash: string) => newNames(hash) ?? shortHash(hash);
   const section = (label: string, n: number) => n && console.log(`\n  ${dim(label)}`);
 

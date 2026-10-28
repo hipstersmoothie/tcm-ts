@@ -14,7 +14,7 @@ export const testSortIsStable = () => {
 - **Results are cached by hash and Node version.** A test's hash covers everything it calls, so only tests whose
   code or dependencies changed re-run. Tests that read the filesystem, clock or network can go stale in the
   cache: `--fresh` re-runs everything. Watch expressions are cached the same way ([getting
-  started](getting-started.md#the-loop)).
+  started](scratch-files.md#scratch-files)).
 
 ## Testing app code in one process
 

@@ -227,6 +227,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       if (r.status === "new") out.push(lens(at, `+ new ${r.path}`), lens(at, "Add to codebase", "ucm.add", [doc.uri]));
       else if (r.status === "update") out.push(lens(at, `~ update ${r.path} (${r.note})`), lens(at, "Update codebase", "ucm.update", [doc.uri]));
       else if (r.status === "alias") out.push(lens(at, `& ${r.path}: ${r.note}`), lens(at, "Add name", "ucm.add", [doc.uri]));
+      else if (r.status === "doc") out.push(lens(at, `~ ${r.path}: ${r.note}`), lens(at, "Update codebase", "ucm.update", [doc.uri]));
       else if (r.status === "conflict") out.push(lens(at, `! ${r.path} is conflicted (${r.note}): ucm todo`));
       else {
         const where = r.def.kind === "term" ? placement?.placeOf(r.def.hash) : undefined;

@@ -85,6 +85,12 @@ export const journal: string[] = [];
   assert.match(squares, /```text\n⧩ undefined\n```\n\n```text\n⧩ \[ 9 \]\n```/, "the assertion passed; the second value shown");
   assert.match(ucm("docs", "lib.journal"), /```text\n⧩ 1\n```/, "the push ran before the length was read");
 
+  // the same code with a new doc: saving it updates the doc (docs aren't part of the hash)
+  scratch(`// ucm: namespace lib\n/** Square a number: {@link sumSquares} uses it. */\nexport const square = (x: number): number => x * x;\n`);
+  assert.match(ucm("check"), /~ doc\s+lib\.square .*\(doc changed\)/);
+  assert.match(ucm("update"), /~ doc\s+lib\.square/);
+  assert.match(ucm("docs", "lib.square"), /Square a number: `sumSquares` uses it\./);
+
   // links and embeds show names; examples are evaluated; a string result is shown as its text
   let doc = ucm("docs", "lib.sumSquares");
   assert.match(doc, /The sum of the `square`s of some numbers \(squares, that is\)\./);

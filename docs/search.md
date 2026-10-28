@@ -1,4 +1,4 @@
-# Searching
+# Finding code
 
 ## By name or signature text
 

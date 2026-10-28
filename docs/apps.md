@@ -1,4 +1,4 @@
-# Browser apps: no network boundary to write
+# Web apps: no network boundary to write
 
 ```ts
 // ucm: namespace app

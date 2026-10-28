@@ -45,7 +45,7 @@ function parseArgs(argv: string[]) {
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
 
-type Status = "new" | "identical" | "update" | "alias" | "conflict";
+type Status = "new" | "identical" | "update" | "alias" | "conflict" | "doc";
 
 interface Row {
   def: DefRecord;
@@ -73,7 +73,11 @@ function classifyPaths(cb: Codebase, planned: { def: DefRecord; path: string }[]
   return planned.map(({ def, path: p }) => {
     // only definitions in the same space compete: `type User` and `const User` live side by side
     const hs = cb.store.hashesAt(p, def.kind);
-    if (hs.length === 1 && hs[0] === def.hash) return { def, path: p, status: "identical" };
+    if (hs.length === 1 && hs[0] === def.hash) {
+      // the same code with a different doc: the doc isn't part of the hash, so saving it updates the definition's doc
+      const stored = cb.store.getDef(def.hash)?.doc;
+      return def.doc && def.doc !== stored ? { def, path: p, status: "doc", note: stored ? "doc changed" : "doc added" } : { def, path: p, status: "identical" };
+    }
     if (hs.length > 1) return { def, path: p, status: "conflict", note: `${hs.length} definitions` };
     if (hs.length === 1) return { def, path: p, status: "update", note: `was ${shortHash(hs[0]!)}` };
     const others = cb.store.pathsOf(def.hash);
@@ -85,6 +89,7 @@ function classifyPaths(cb: Codebase, planned: { def: DefRecord; path: string }[]
 const STATUS_LABEL: Record<Status, string> = {
   new: green("  + new      "),
   identical: dim("  = identical"),
+  doc: yellow("  ~ doc      "),
   update: yellow("  ~ update   "),
   alias: cyan("  & alias    "),
   conflict: red("  ! conflict "),
@@ -153,6 +158,10 @@ function apply(cb: Codebase, rows: Row[], mode: "add" | "update", command: strin
   cb.store.transaction(() => {
     for (const r of rows) {
       if (r.status === "new" || r.status === "alias") cb.store.addName(r.path, r.def.hash, r.def.kind, command);
+      else if (r.status === "doc") {
+        cb.store.setMetadata(r.def.hash, "doc", r.def.doc!);
+        cb.store.setMetadata(r.def.hash, "docRefs", JSON.stringify(r.def.docRefs ?? []));
+      }
       else if (r.status === "update" || r.status === "conflict") {
         if (mode === "add") {
           skipped.push(r);

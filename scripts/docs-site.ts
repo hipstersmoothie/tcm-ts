@@ -22,18 +22,24 @@ interface Page {
   label: string;
   /** section number (0 for the index) */
   n: number;
+  /** the docs' section it's in (Start, Guides, ...) */
+  section?: string;
 }
 
 // ---- pages, in the order docs/README.md lists them -------------------------------------------------------------
 
 const index = fs.readFileSync(path.join(repo, "docs", "README.md"), "utf8");
 const pages: Page[] = [{ src: "docs/README.md", file: "index.html", label: "index", n: 0 }];
-for (const m of index.matchAll(/^\| \[([^\]]+)\]\(([^)]+)\) \|/gm)) {
+// sections are the index's `## headings`; pages are the links in the tables under them, labelled by their text
+let section: string | undefined;
+for (const line of index.split("\n")) {
+  const h = /^## (.+)$/.exec(line);
+  if (h) section = h[1]!.trim();
+  const m = /^\| \[([^\]]+)\]\(([^)]+)\) \|/.exec(line);
+  if (!m) continue;
   const src = path.normalize(path.join("docs", m[2]!));
   const name = src === "examples/README.md" ? "examples" : path.basename(src, ".md");
-  // the menu uses short names, like files in a directory; pages keep their full titles
-  const label = name === "documentation" ? "docs" : name.replace(/-/g, " ");
-  pages.push({ src, file: `${name}.html`, label, n: pages.length });
+  pages.push({ src, file: `${name}.html`, label: m[1]!.toLowerCase(), n: pages.length, ...(section ? { section } : {}) });
 }
 const bySrc = new Map(pages.map((p) => [p.src, p]));
 
@@ -128,11 +134,12 @@ const version = (() => {
 
 function template(page: Page, body: string, title: string, toc: { id: string; text: string; num: string }[]): string {
   const menu = pages
-    .map((p) => {
+    .map((p, i) => {
+      const heading = p.section && p.section !== pages[i - 1]?.section ? `<li class="section">${esc(p.section.toLowerCase())}</li>\n` : "";
       const here = p === page;
       const label = `[${p.n}] ${esc(p.label)}`;
       const sections = here && toc.length ? `<ul>${toc.map((t) => `<li><a href="#${t.id}">${t.num} ${esc(t.text.toLowerCase())}</a></li>`).join("")}</ul>` : "";
-      return `<li${here ? ' class="here"' : ""}>${here ? `<span>${label}</span>` : `<a href="${p.file}">${label}</a>`}${sections}</li>`;
+      return `${heading}<li${here ? ' class="here"' : ""}>${here ? `<span>${label}</span>` : `<a href="${p.file}">${label}</a>`}${sections}</li>`;
     })
     .join("\n");
   const prev = pages[page.n - 1];
@@ -182,6 +189,8 @@ h1 + .rule::before, .side .rule::before { content: "============================
 .side .home { color: var(--fg); text-decoration: none; font-weight: bold; }
 .side ol { list-style: none; margin: 0; padding: 0; }
 .side li { margin: 0 0 1px; }
+.side li.section { margin: 14px 0 3px; color: var(--dim); }
+.side li.section::before { content: "-- "; }
 .side li > a, .side li > span { display: block; padding-left: 2ch; }
 .side li.here > span { font-weight: bold; color: var(--here); }
 .side li.here > span::before { content: "> "; margin-left: -2ch; }

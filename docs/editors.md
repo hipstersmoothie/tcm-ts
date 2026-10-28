@@ -14,7 +14,7 @@ the `.ts` files at the top of the codebase directory, the ones the watcher check
   - aliases and conflicts;
   - `ucm: 2 type errors; nothing hashed until they're fixed` while TypeScript reports errors.
 - **Watch values inline**, as inlay hints at the end of the line: `square(12)  ⧩ 144`. They're
-  [cached by hash](getting-started.md#the-loop): while you type, values already known for an expression show
+  [cached by hash](scratch-files.md#scratch-files): while you type, values already known for an expression show
   at once; new ones are evaluated when the file is opened or saved, so a half-typed expression with side effects
   doesn't run on every keystroke.
 - **Test results** on test definitions: `✓ passed (cached)` or `✗ failed: …`, run on open and save like watches.
