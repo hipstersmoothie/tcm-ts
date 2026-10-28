@@ -9,7 +9,7 @@
 // - Markdown uses neither, so it renders wherever it's used: on the server in NotePreview, in the browser in
 //   NoteEditor's live preview.
 import assert from "node:assert/strict";
-import { useState, useSyncExternalStore } from "react";
+import { Suspense, useState, useSyncExternalStore } from "react";
 import { addSampleNotes, deleteNote, getNote, listNotes, Markdown, saveNote, type NoteSummary } from "#codebase/notes";
 // for the README's example
 import { excerpt, sampleNotes } from "#codebase/notes";
@@ -52,9 +52,13 @@ function subscribeToRoute(onChange: () => void): () => void {
   return () => window.removeEventListener("popstate", onChange);
 }
 
-/** The current {@link Route}; the component re-renders when it changes. */
+/**
+ * The current {@link Route}; the component re-renders when it changes. It reads `location` on the server too:
+ * while tcm renders the first paint, `location` is the page's URL.
+ */
 export function useRoute(): Route {
-  return parseRoute(useSyncExternalStore(subscribeToRoute, () => location.search));
+  const search = () => location.search;
+  return parseRoute(useSyncExternalStore(subscribeToRoute, search, search));
 }
 
 /** Go to another {@link Route}: `to` changes some of the current one. `replace` doesn't add a history entry. */
@@ -212,7 +216,11 @@ export function SearchField({ value }: { value: string }) {
   );
 }
 
-/** The app: a browser component (it follows the URL), laying out the server components it renders. */
+/**
+ * The app: a browser component (it follows the URL), laying out the server components it renders. While a server
+ * component's tree is on its way, its `<Suspense>` boundary shows "loading…"; the first paint is rendered on the
+ * server, so it has none.
+ */
 export function App() {
   const route = useRoute();
   return (
@@ -224,16 +232,20 @@ export function App() {
           <button onClick={() => navigate({ note: undefined, edit: true })}>new</button>
         </header>
         <SearchField value={route.q} />
-        <NoteList search={route.q} selected={route.note} />
+        <Suspense fallback={<p className="none">loading…</p>}>
+          <NoteList search={route.q} selected={route.note} />
+        </Suspense>
       </aside>
       <main>
-        {route.edit ? (
-          route.note ? <NoteEditorLoader id={route.note} /> : <NoteEditor title="" body="" />
-        ) : route.note ? (
-          <NotePreview id={route.note} />
-        ) : (
-          <p className="none">Pick a note, or write a new one.</p>
-        )}
+        <Suspense fallback={<p className="none">loading…</p>}>
+          {route.edit ? (
+            route.note ? <NoteEditorLoader id={route.note} /> : <NoteEditor title="" body="" />
+          ) : route.note ? (
+            <NotePreview id={route.note} />
+          ) : (
+            <p className="none">Pick a note, or write a new one.</p>
+          )}
+        </Suspense>
       </main>
     </div>
   );

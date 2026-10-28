@@ -20,5 +20,5 @@ What isn't done yet, or is deliberately out of scope:
 - **Server-only npm packages are found by a heuristic:** no browser build, and an entry that imports Node
   builtins.
 - **Transactions lock per process** ([data](data.md#transactions)).
-- **React server components** have no server-rendered first paint and no streaming; context providers, `lazy`
-  and class components render only in the browser ([React](react.md#limits)).
+- **React:** `lazy` components and context consumers render only in the browser, and cookies set while
+  rendering the first paint aren't sent ([React](react.md#limits)).

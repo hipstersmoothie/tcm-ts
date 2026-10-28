@@ -42,6 +42,24 @@ function usesOf(rec: { spans: { hash?: string; pos: string; element?: boolean }[
 /** React APIs that only work in a component instance the browser keeps alive: hooks, portals. */
 const isClientReactApi = (e: { module: string; export: string }) => /^npm:react(-dom)?@/.test(e.module) && /^(use[A-Z]\w*|use|createPortal|flushSync)$/.test(e.export);
 
+/** `React.useState(…)` through `import * as React` or `import React`: the same hooks, used as properties. */
+function namespacedClientApi(ir: IR): string | undefined {
+  if (typeof ir === "string") return undefined;
+  if (ir[0] === "PropertyAccessExpression") {
+    const object = (ir.find((x) => Array.isArray(x) && x[0] === "expression") as IR[] | undefined)?.[1] as IR[] | undefined;
+    const name = (ir.find((x) => Array.isArray(x) && x[0] === "name") as IR[] | undefined)?.[1] as IR[] | undefined;
+    if (object?.[0] === "Ext" && typeof object[1] === "string" && (object[3] === "*" || object[3] === "default") && name?.[0] === "N" && typeof name[1] === "string") {
+      const api = { module: object[1], export: name[1] };
+      if (isClientReactApi(api)) return `${object[1].replace(/^npm:(.+)@[^@]+$/, "$1")}.${name[1]}`;
+    }
+  }
+  for (const c of ir) {
+    const found = namespacedClientApi(c);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 /** An `on…` attribute (`onClick={…}`): an event handler, which only exists in the browser. */
 function eventHandler(ir: IR): string | undefined {
   if (typeof ir === "string") return undefined;
@@ -132,10 +150,16 @@ export class Placement {
     return rec ? [...usesOf(rec, h)] : [];
   }
 
-  /** A React component: a function with JSX in it, named like one (`Counter`). */
+  /** A React component: a function (or class) with JSX in it, named like one (`Counter`). */
   isComponent(h: string): boolean {
     const rec = this.cb.store.getDef(h);
-    return !!rec && rec.kind === "term" && !!rec.jsx && /^[A-Z]/.test(rec.nameHint);
+    return !!rec && (rec.kind === "term" || rec.kind === "class") && !!rec.jsx && /^[A-Z]/.test(rec.nameHint);
+  }
+
+  /** `const Theme = createContext(…)`: server components can render its provider; the browser needs the object. */
+  isContext(h: string): boolean {
+    const rec = this.cb.store.getDef(h);
+    return !!rec && rec.kind === "term" && rec.spans.some((s) => s.ext && /^npm:react@/.test(s.ext.module) && s.ext.export === "createContext");
   }
 
   /** Renders on the server, so the browser fetches its rendered tree: needs the server, or is async. */
@@ -195,6 +219,12 @@ export class Placement {
     if (!rec || rec.kind === "type") return undefined;
     for (const g of globalsIn(JSON.parse(rec.ir) as IR)) if (isDomGlobal(g)) return `uses ${g}`;
     for (const s of rec.spans) if (s.ext && s.pos === "value" && isClientReactApi(s.ext)) return `uses ${s.ext.export}`;
+    if (rec.jsx) {
+      const namespaced = namespacedClientApi(JSON.parse(rec.ir) as IR);
+      if (namespaced) return `uses ${namespaced}`;
+    }
+    // a class component's instance holds its state
+    if (rec.kind === "class" && this.isComponent(h)) return "is a class component";
     const handler = rec.jsx ? eventHandler(JSON.parse(rec.ir) as IR) : undefined;
     if (handler) return `handles ${handler}`;
     return undefined;
@@ -323,6 +353,12 @@ export class Placement {
         if (seen.has(x)) return;
         seen.add(x);
         for (const d of this.valueDeps(x)) {
+          // a context the tree provides: the browser components under it read the same object
+          if (this.isContext(d)) {
+            refs.add(d);
+            visit(d, [...chain, this.name(root)]);
+            continue;
+          }
           if (this.isBrowserComponent(d)) {
             refs.add(d);
             plan.clientRefs.add(d);

@@ -276,9 +276,12 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
     // functions carry their hash at runtime, so code can name them durably (e.g. a background job records which
     // exact function version to run)
     for (const m of members) {
-      if (m.kind !== "term") continue;
+      if (m.kind === "type") continue;
       const local = memberNames.get(m.hash)!;
-      lines.push(`if (typeof ${local} === "function") Object.defineProperty(${local}, Symbol.for("tcm.hash"), { value: ${JSON.stringify(m.hash)} });`);
+      // and so do React contexts, which a server component's tree can provide to the browser components under it
+      lines.push(
+        `if (typeof ${local} === "function" || (${local} as any)?.$$typeof === Symbol.for("react.context")) Object.defineProperty(${local}, Symbol.for("tcm.hash"), { value: ${JSON.stringify(m.hash)} });`,
+      );
       // a table learns its row type's schema here (the type itself is erased)
       if (m.table) lines.push(`Object.defineProperty(${local}, Symbol.for("tcm.schema"), { value: ${JSON.stringify(m.table)} });`);
     }

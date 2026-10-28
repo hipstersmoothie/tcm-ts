@@ -1,7 +1,9 @@
 # Deploying: by moving a name
 
 - **`tcm build <app>`** writes an immutable, content-addressed build to `.tcm/apps/<app hash>/`. Its assets are
-  served under `/_app/<hash>/`. An existing build is reused unless `--force`.
+  served under `/_app/<hash>/`. An existing build is reused unless `--force`. A React component app's build also
+  holds a server-rendering bundle (`server/`, never served), which `tcm start` renders each page's first paint
+  with ([React](react.md#the-first-paint)).
 - **`tcm start <app>`** serves the build the app's name points to now. When the name moves (`tcm update`,
   `mv`, `reset`, `pull`), it builds the new version if needed and switches to it. Deploying and rolling back
   are both moving a name, like Unison's service names pointing at service hashes. It also runs the

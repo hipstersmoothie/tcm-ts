@@ -44,7 +44,8 @@ tcm add           # save new definitions from scratch.ts
   functions are called by hash, so there's no client/server version skew. [Apps](docs/apps.md) ·
   [server API](docs/server-api.md)
 - **React server components with no directives.** Async components and ones that read tables render on the
-  server; ones with state or handlers in the browser. No `"use client"`, no `"use server"`. [React](docs/react.md)
+  server; ones with state or handlers in the browser. No `"use client"`, no `"use server"`. Pages render on the
+  server first and stream `<Suspense>` boundaries. [React](docs/react.md)
 - **Typed tables that never silently disagree with your code,** with typed migration chains, indexes,
   atomic updates and transactions. [Data](docs/data.md)
 - **Background jobs pinned to the code that enqueued them,** plus cron schedules. [Jobs](docs/jobs.md)

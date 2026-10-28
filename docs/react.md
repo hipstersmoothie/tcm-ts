@@ -39,8 +39,9 @@ tcm add notes.tsx
 tcm dev notes.App
 ```
 
-`tcm dev` (and `tcm build`/`tcm start`) accept a component as the app: tcm renders it into the page with React
-DOM. A `main` function that calls `createRoot` itself works too.
+`tcm dev` (and `tcm build`/`tcm start`) accept a component as the app. tcm renders its first paint on the
+server, then the browser takes it over (hydrates it) with React DOM ([below](#the-first-paint)). A `main`
+function that calls `createRoot` itself works too, rendered in the browser only.
 
 ## Where a component renders
 
@@ -48,7 +49,7 @@ DOM. A `main` function that calls `createRoot` itself works too.
 
 | a component that | renders |
 |---|---|
-| uses a hook (`useState`, `useEffect`, …), an event handler (`onClick={…}`), or the DOM | in the browser |
+| uses a hook (`useState`, `React.useEffect`, …), an event handler (`onClick={…}`), or the DOM, or is a class component | in the browser |
 | is `async`, or uses the server (a [table](data.md), `node:*`, `#tcm/server`) | on the server |
 | does neither | anywhere: where it's used |
 
@@ -82,11 +83,61 @@ Each renders where it has to.
 ## Keeping server components current
 
 After the page calls a server function, every server component on it fetches its tree again, so `NoteList`
-shows the new note without any wiring. Browser components inside a refetched tree keep their state, as React
-keeps it for any re-render.
+shows the new note without any wiring. The fetch runs in a transition: the old tree stays on screen until the
+new one is ready, and browser components inside it keep their state, as React keeps it for any re-render.
 
 A server component's props come from the browser component rendering it. Change them (`<NoteList search={q} />`
 with `q` in state) and it fetches the tree for the new props.
+
+## Loading and streaming
+
+A server component's stub suspends while its tree is on the way, so a `<Suspense>` boundary above it shows its
+fallback:
+
+```tsx
+<Suspense fallback={<p>loading…</p>}>
+  <NotePreview id={id} />
+</Suspense>
+```
+
+A `<Suspense>` boundary *inside* a server component streams. Its fallback goes out with the rest of the tree,
+and what's inside follows when it's ready, so a slow part doesn't hold up the rest:
+
+```tsx
+export async function Page() {
+  return (
+    <>
+      <h1>Dashboard</h1>                                  {/* arrives at once */}
+      <Suspense fallback={<p>loading stats…</p>}>
+        <Stats />                                          {/* an async component: streams in when it's done */}
+      </Suspense>
+    </>
+  );
+}
+```
+
+An error inside a boundary goes to that boundary in the browser, so an error boundary around it can catch it.
+The rest of the tree is unaffected.
+
+## The first paint
+
+When the app is a component, `tcm dev` and `tcm start` render each page on the server and stream its HTML: the
+shell first (everything outside boundaries that are still waiting, with their fallbacks), then each boundary's
+contents. Server components render right there, in the page's request (its cookies and session). The trees
+they rendered go into the page, and the browser hydrates with them instead of fetching them again.
+
+- **Browser components render on the server too, for the first paint**, as React server rendering does: their
+  initial state, without effects. Code that touches the DOM belongs in effects and event handlers.
+- **`location` is the page's URL** while the page renders on the server, so browser code that reads it (a
+  router, say) renders the same on both sides. `useSyncExternalStore` needs a server snapshot to render on the
+  server; `() => location.search` works for both.
+- **If the shell can't render on the server** (a browser component reads `window` while rendering), tcm logs why
+  and sends the page without it; the browser renders it, as it would without server rendering. A boundary that
+  fails on the server is rendered in the browser instead.
+- **Until the page hydrates, clicks do nothing**: the markup is there before the code that handles it.
+
+`tcm build` makes a server-rendering bundle along with the browser one, kept in the build (`server/`) but never
+served.
 
 ## What crosses
 
@@ -121,12 +172,23 @@ renderToStaticMarkup(<Markdown text="**hi**" />);    // ⧩ '<div class="markdow
 The [notes example](../examples/README.md#notes-react-server-components) is a complete app: a sidebar and
 note page rendered on the server, an editor with a live preview in the browser, and search.
 
+## Contexts
+
+A server component can provide a context to the browser components it renders:
+
+```tsx
+export const Theme = createContext("light");          // a top-level definition, so it has a hash
+
+export async function Layout() {
+  const prefs = await loadPrefs();
+  return <Theme value={prefs.theme}><Toolbar /></Theme>;   // Toolbar reads it with useContext
+}
+```
+
+The provider is sent as the context's hash and its value, which must be plain data. Server components can't
+read a context themselves: they render before the browser does. Pass what they need as props.
+
 ## Limits
 
-- **The first paint happens in the browser.** The page loads, then server components fetch their trees; there's
-  no server-rendered HTML yet.
-- **A server component's tree arrives whole.** There's no streaming, and `<Suspense>` inside a server
-  component doesn't show its fallback.
-- **Context providers, `lazy` and class components render only in the browser.**
-- **Import hooks by name** (`import { useState } from "react"`). tcm can't tell that `React.useState` makes a
-  component a browser component, and a hook called on the server fails.
+- **`lazy` components render only in the browser**, as do context consumers (`<Theme.Consumer>`).
+- **Cookies set while rendering the first paint aren't sent**; set them in a server function instead.

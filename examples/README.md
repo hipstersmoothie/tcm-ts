@@ -47,7 +47,8 @@ tcm infers where each component renders from what it uses ([React](../docs/react
 | [`playground.tsx`](notes/playground.tsx) | the scratch file you start with: watch expressions, including a component rendered to HTML |
 
 `tcm dev notes.App` prints the split: three server components fetched by hash, the browser components they send
-by hash, and the server functions the browser calls. Saving a note refreshes the sidebar by itself: after a server
-function call, server components fetch their trees again.
+by hash, and the server functions the browser calls. The first paint is rendered on the server, links to a note
+included, and the browser hydrates it. Saving a note refreshes the sidebar by itself: after a server function
+call, server components fetch their trees again.
 
 The test suite builds this example too, then adds, opens, edits and searches notes in Chrome.

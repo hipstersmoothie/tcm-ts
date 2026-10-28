@@ -13,6 +13,8 @@ export interface Page {
   evaluate<T = unknown>(expression: string): Promise<T>;
   /** poll `expression` until `until` accepts its value; returns the last value seen */
   waitFor<T = unknown>(expression: string, until: (v: T) => boolean, timeoutMs?: number): Promise<T>;
+  /** the page's console errors and uncaught exceptions so far */
+  errors: string[];
 }
 
 /** Open `url` in a fresh headless Chrome, run `fn` against it, then close Chrome. */
@@ -34,9 +36,12 @@ export async function withPage<R>(url: string, fn: (page: Page) => Promise<R>): 
     await new Promise((r, j) => ((sock.onopen = r), (sock.onerror = j)));
     let id = 0;
     const pending = new Map<number, (v: Record<string, unknown>) => void>();
+    const errors: string[] = [];
     sock.onmessage = (e) => {
-      const msg = JSON.parse(String(e.data)) as { id?: number; result?: Record<string, unknown> };
+      const msg = JSON.parse(String(e.data)) as { id?: number; method?: string; result?: Record<string, unknown>; params?: Record<string, any> };
       if (msg.id !== undefined) pending.get(msg.id)?.(msg.result ?? {});
+      if (msg.method === "Runtime.consoleAPICalled" && msg.params?.type === "error") errors.push(msg.params.args.map((a: { value?: unknown; description?: string }) => a.value ?? a.description).join(" "));
+      if (msg.method === "Runtime.exceptionThrown") errors.push(msg.params?.exceptionDetails?.exception?.description ?? msg.params?.exceptionDetails?.text);
     };
     const send = (method: string, params: Record<string, unknown> = {}, sessionId?: string) =>
       new Promise<Record<string, unknown>>((resolve) => {
@@ -44,13 +49,18 @@ export async function withPage<R>(url: string, fn: (page: Page) => Promise<R>): 
         pending.set(n, resolve);
         sock.send(JSON.stringify({ id: n, method, params, ...(sessionId ? { sessionId } : {}) }));
       });
-    const { targetId } = (await send("Target.createTarget", { url })) as { targetId: string };
+    // attach before loading, so the page's errors from the first moment are seen
+    const { targetId } = (await send("Target.createTarget", { url: "about:blank" })) as { targetId: string };
     const { sessionId } = (await send("Target.attachToTarget", { targetId, flatten: true })) as { sessionId: string };
+    await send("Runtime.enable", {}, sessionId);
+    await send("Page.enable", {}, sessionId);
+    await send("Page.navigate", { url }, sessionId);
     const evaluate = async <T,>(expression: string): Promise<T> => {
       const r = (await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }, sessionId)) as { result?: { value?: T } };
       return r.result?.value as T;
     };
     const page: Page = {
+      errors,
       evaluate,
       async waitFor<T>(expression: string, until: (v: T) => boolean, timeoutMs = 15000) {
         let v = undefined as T;
@@ -71,9 +81,15 @@ export async function withPage<R>(url: string, fn: (page: Page) => Promise<R>): 
     const exited = new Promise((r) => chrome.once("exit", r));
     chrome.kill();
     await Promise.race([exited, new Promise((r) => setTimeout(r, 3000))]);
+    // Chrome's helper processes can hold its pipes open after it exits; they mustn't keep this process alive
+    for (const pipe of [chrome.stdin, chrome.stdout, chrome.stderr]) pipe?.destroy();
     fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
+
+/** Wait until React has taken over (hydrated or rendered) the page's `#app`: before that, clicks do nothing. */
+export const hydrated = (page: Page) =>
+  page.waitFor<boolean>(`Object.keys(document.getElementById("app") ?? {}).some((k) => k.startsWith("__reactContainer"))`, (v) => !!v);
 
 /**
  * Open `url` in a fresh headless Chrome and return the text of `selector` once `until` accepts it (or the last text

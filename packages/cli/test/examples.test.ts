@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { CHROME, pageText, withPage } from "./browser.ts";
+import { CHROME, hydrated, pageText, withPage } from "./browser.ts";
 
 const BIN = process.env.TCM_BIN ? path.resolve(process.env.TCM_BIN) : fileURLToPath(new URL("../bin/tcm.js", import.meta.url));
 const SETUP = fileURLToPath(new URL("../../../examples/polls/setup.sh", import.meta.url));
@@ -85,9 +85,14 @@ test("the notes example: React server components with no directives, in a browse
   const type = (sel: string, v: string) =>
     `(() => { const i = document.querySelector(${JSON.stringify(sel)}); const proto = i instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; ` +
     `Object.getOwnPropertyDescriptor(proto, "value").set.call(i, ${JSON.stringify(v)}); i.dispatchEvent(new Event("input", { bubbles: true })); })()`;
+  // the first paint is rendered on the server: the sidebar's server component included
+  const html = await (await fetch(url, { headers: { accept: "text/html" } })).text();
+  assert.match(html, /<div id="app"><div class="notes">.*No notes yet/s);
+  assert.match(html, /var __TCM_TREES__ = /, "with the trees it was made from, for hydration");
   await withPage(url, async (p) => {
     // the sidebar is a server component; the button in it is a browser component it sent by hash
     assert.match(await p.waitFor<string>(text("aside"), (t) => /add sample notes/.test(t ?? "")), /No notes yet/);
+    assert.ok(await hydrated(p), "the browser takes over the server-rendered page");
     await p.evaluate(click("aside button", "add sample notes"));
     // the server function call makes the server components fetch their trees again
     assert.match(await p.waitFor<string>(text("aside"), (t) => /Groceries/.test(t ?? "")), /How this app works/);
@@ -102,6 +107,7 @@ test("the notes example: React server components with no directives, in a browse
     assert.match(await p.waitFor<string>(text("aside"), (t) => /bread milk/.test(t ?? "")), /Groceries/);
     await p.evaluate(type(".search", "bread"));
     assert.doesNotMatch(await p.waitFor<string>(text(".list"), (t) => !/Markdown/.test(t ?? "")), /Markdown/);
+    assert.deepEqual(p.errors, [], "no errors, hydration mismatches included");
   });
   // what the browser received: no server code
   const assets = path.join(notesDir, ".tcm", "apps", hashOf("notes.App", notesDir), "assets");
