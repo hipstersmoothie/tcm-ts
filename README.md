@@ -307,7 +307,9 @@ export async function me(): Promise<string> {
     commits. Nobody sees a debit without its credit. Jobs enqueued inside are queued on commit and dropped on
     rollback, so a failed signup doesn't send its welcome email. A transaction inside a transaction is a
     savepoint. Keep transactions short, and don't await anything inside one that itself waits on a table
-    (such as a request to your own server): it would wait forever.
+    (such as a request to your own server): it would wait forever. The lock is per process. Another process
+    using the same store, such as `ucm data migrate` while the app serves, is kept out by SQLite's write lock
+    instead: it waits up to 5 seconds for a transaction to finish, then fails with "database is locked".
   - `ucm data` lists tables and row counts, and `ucm data <table>` shows rows. Tables live in memory under
     `ucm test`.
 - **Background jobs.** `enqueue(sendWelcome, user.id)` from a server function returns at once; the work runs
@@ -389,7 +391,6 @@ The design and milestones are in the plan. Still open:
   the repo.
 - `ucm import` skips test files (`*.test.ts`, `*.spec.ts`, `*.test-d.ts`, `test/` directories).
 - `find` searches signature *text*; structural type search (signature IR) isn't built.
-- No `merge` between branches.
 - Watch results aren't cached by hash.
 - The watcher uses `createProgram` with `oldProgram` reuse, not a LanguageService.
 - To share one definition under two names, use `ucm alias`. Adding the same code twice creates two.
