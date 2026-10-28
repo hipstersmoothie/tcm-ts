@@ -4,6 +4,7 @@
   "type": "module",
   "imports": {
     "#codebase": "./.ucm/codebase/index.ts",
-    "#codebase/*": "./.ucm/codebase/*.ts"
+    "#codebase/*": "./.ucm/codebase/*.ts",
+    "#ucm/server": "./.ucm/cache/ucm-server.js"
   }
 }

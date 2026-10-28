@@ -146,7 +146,10 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
       if (span.literal && span.ext) {
         // `import("pkg")`: point at the pinned version (the real package name in editable scratch files)
         const e = span.ext;
-        const spec = e.module.startsWith("npm:") ? (opts.style === "scratch" ? realPackage(e.module) : npmAlias(e.module)) + (e.subpath ? `/${e.subpath}` : "") : e.module;
+        const spec =
+          e.module === "ucm:server"
+            ? opts.style === "scratch" ? "#ucm/server" : "./ucm-server.js"
+            : e.module.startsWith("npm:") ? (opts.style === "scratch" ? realPackage(e.module) : npmAlias(e.module)) + (e.subpath ? `/${e.subpath}` : "") : e.module;
         text = text.slice(0, span.start) + JSON.stringify(spec) + text.slice(span.end);
         continue;
       }
@@ -176,6 +179,8 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
       const e = imp.ext!;
       let from = e.module;
       if (e.module.startsWith("npm:")) from = (opts.style === "scratch" ? realPackage(e.module) : npmAlias(e.module)) + (e.subpath ? `/${e.subpath}` : "");
+      // ucm's server API: generated into the cache, so every module in a process shares one instance
+      if (e.module === "ucm:server") from = opts.style === "scratch" ? "#ucm/server" : "./ucm-server.js";
       lines.push(importLine(imp.local, e.export, from, !imp.value));
     }
   }

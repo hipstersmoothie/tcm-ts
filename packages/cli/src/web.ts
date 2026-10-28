@@ -12,6 +12,7 @@
 // browser can reach is a public endpoint.
 import fs from "node:fs";
 import http from "node:http";
+import { randomBytes } from "node:crypto";
 import https from "node:https";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -50,6 +51,7 @@ export function remote(hash, name, callable) {
     if (!res.ok) {
       const err = new Error(body && body.message ? body.message : res.statusText);
       err.name = body && body.name ? body.name : "RemoteError";
+      err.status = res.status;
       throw err;
     }
     return body;
@@ -128,7 +130,35 @@ function ucmPlugin(cb: Codebase, current: () => AppPlan): Plugin {
 type Middleware = (req: http.IncomingMessage, res: http.ServerResponse, next: () => void) => void;
 
 /** Answers `POST /__ucm/rpc/<hash>` for hashes `isEndpoint` accepts, by importing and calling the real function. */
-function rpcHandler(cb: Codebase, isEndpoint: (hash: string) => boolean, retired: (hash: string) => boolean = () => false): Middleware {
+interface ServerApiHost {
+  HttpError: new (status: number, message: string) => Error & { status: number };
+  withCall: <T>(
+    call: { method: string; url: string; headers: Record<string, string | string[] | undefined>; ip: string | undefined; signal: AbortSignal },
+    opts: { secret: string; secure: boolean },
+    fn: () => Promise<T>,
+  ) => Promise<{ ok: true; value: T; setCookies: string[] } | { ok: false; error: unknown; setCookies: string[] }>;
+}
+
+/** The codebase's session-signing secret: `UCM_SECRET`, or one generated once into .ucm/secret. */
+function sessionSecret(cb: Codebase): string {
+  if (process.env.UCM_SECRET) return process.env.UCM_SECRET;
+  const file = path.join(cb.lay.ucmDir, "secret");
+  if (!fs.existsSync(file)) fs.writeFileSync(file, randomBytes(32).toString("hex"), { mode: 0o600 });
+  return fs.readFileSync(file, "utf8").trim();
+}
+
+export interface RpcOptions {
+  /** production hides unexpected errors from the browser (they're logged here); dev shows them */
+  production: boolean;
+  /** served over TLS: cookies default to Secure */
+  secure: boolean;
+}
+
+function rpcHandler(cb: Codebase, isEndpoint: (hash: string) => boolean, retired: (hash: string) => boolean = () => false, opts: RpcOptions = { production: false, secure: false }): Middleware {
+  // the same #ucm/server instance the server functions import, so they see this call's request
+  let api: Promise<ServerApiHost> | undefined;
+  const host = () => (api ??= import(pathToFileURL(path.join(cb.lay.cacheDir, "ucm-server.js")).href) as Promise<ServerApiHost>);
+  const secret = sessionSecret(cb);
   return async (req, res, next) => {
     const m = /^\/__ucm\/rpc\/([a-z2-7]{52})$/.exec((req.url ?? "").split("?")[0]!);
     if (!m) return next();
@@ -149,9 +179,13 @@ function rpcHandler(cb: Codebase, isEndpoint: (hash: string) => boolean, retired
       const mark = status === 200 ? green(String(status)) : red(String(status));
       console.log(`  ${dim("→")} ${name} ${mark} ${dim(`${Math.round(performance.now() - started)}ms`)}`);
     };
+    // CSRF: server functions can read cookies, so only the app's own pages may call them. Cross-site requests
+    // are refused, and requiring a JSON body rules out plain HTML form posts, which can't set that content type.
     const origin = req.headers.origin;
     if (origin && new URL(origin).host !== req.headers.host) return send(403, { name: "RemoteError", message: "cross-origin call refused" });
+    if (req.headers["sec-fetch-site"] === "cross-site") return send(403, { name: "RemoteError", message: "cross-site call refused" });
     if (req.method !== "POST") return send(405, { name: "RemoteError", message: "use POST" });
+    if (!/^application\/json\b/.test(req.headers["content-type"] ?? "")) return send(415, { name: "RemoteError", message: "send arguments as application/json" });
     if (!isEndpoint(hash)) {
       // a page from a pruned build: 410 tells the browser runtime to reload itself onto the current build
       if (retired(hash)) return send(410, { name: "OutdatedError", message: "this page's build is no longer served; reload for the current version" });
@@ -173,14 +207,25 @@ function rpcHandler(cb: Codebase, isEndpoint: (hash: string) => boolean, retired
     // arguments come from the network: check them against the function's parameter types before calling it
     const problem = rec.params && checkArgs(rec.params, args);
     if (problem) return send(400, { name: "TypeError", message: `${name}: ${problem}` });
-    try {
-      // a hash names immutable code, so Node's module cache can never serve a stale version of it
-      const mod = (await import(pathToFileURL(path.join(cb.lay.cacheDir, `${rec.componentHash}.ts`)).href)) as Record<string, (...a: unknown[]) => unknown>;
-      send(200, await mod[exportId(hash)]!(...args));
-    } catch (e) {
-      const err = e as Error;
-      send(500, { name: err?.name ?? "Error", message: err?.message ?? String(e) });
+    // a hash names immutable code, so Node's module cache can never serve a stale version of it
+    const fn = ((await import(pathToFileURL(path.join(cb.lay.cacheDir, `${rec.componentHash}.ts`)).href)) as Record<string, (...a: unknown[]) => unknown>)[exportId(hash)]!;
+    const abort = new AbortController();
+    res.on("close", () => {
+      if (!res.writableFinished) abort.abort(new Error("the client disconnected"));
+    });
+    const { HttpError, withCall } = await host();
+    const call = { method: req.method ?? "POST", url: req.url ?? "/", headers: req.headers, ip: req.socket.remoteAddress, signal: abort.signal };
+    const r = await withCall(call, { secret, secure: opts.secure }, async () => fn(...(args as unknown[])));
+    if (r.setCookies.length) res.setHeader("set-cookie", r.setCookies);
+    if (r.ok) return send(200, r.value);
+    const err = r.error as Error & { status?: number };
+    if (err instanceof HttpError) return send(err.status >= 400 && err.status < 600 ? err.status : 500, { name: "HttpError", message: err.message, status: err.status });
+    if (opts.production) {
+      // unexpected errors can carry internals (paths, queries, secrets): log them here, tell the browser less
+      console.error(red(`  ${name} failed: ${err?.stack ?? String(err)}`));
+      return send(500, { name: "Error", message: "internal error" });
     }
+    send(500, { name: err?.name ?? "Error", message: err?.message ?? String(err) });
   };
 }
 
@@ -408,6 +453,7 @@ export async function start(cb: Codebase, appName: string, opts: StartOptions): 
     (h) => endpoints.has(h),
     // was an endpoint of a build this server has served, or is code in the codebase: an old page, not an attack
     (h) => ever.has(h) || cb.store.hasDef(h),
+    { production: true, secure: !!opts.tls },
   );
 
   const serveFile = (res: http.ServerResponse, file: string, immutable: boolean) => {

@@ -171,6 +171,38 @@ fetch calls and no API layer.
 - **Testable in one process:** in `ucm test` everything runs locally, the counterpart of Unison's local
   `Remote` handler.
 
+**Server functions know who's calling.** `#ucm/server` gives them their request's context:
+
+```ts
+import { session, setSession, clearSession, HttpError, request } from "#ucm/server";
+
+export async function login(name: string, password: string): Promise<string> {
+  if (!(await checkPassword(name, password))) throw new HttpError(401, "wrong name or password");
+  setSession({ user: name });                    // a signed, HttpOnly cookie
+  return name;
+}
+export async function me(): Promise<string> {
+  const user = session().user;                   // forged or expired sessions come back empty
+  if (typeof user !== "string") throw new HttpError(401, "sign in first");
+  return user;
+}
+```
+
+- **`request()`** gives the method, URL, `Headers`, cookies, client IP, and an `AbortSignal` that fires if
+  the client disconnects. The context follows the call through any depth of `await`s.
+- **`setCookie` / `deleteCookie`.** Cookies default to `HttpOnly` and `SameSite=Lax`, and to `Secure` over TLS.
+- **`session` / `setSession` / `clearSession`.** Session data lives in a cookie signed with `UCM_SECRET` or a
+  secret generated into `.ucm/secret`. A tampered cookie reads as no session.
+- **`HttpError(status, message)` reaches the browser** as a rejected promise carrying `status` and the
+  message.
+- **Other errors are hidden in production.** Under `ucm start` the browser gets "internal error" and the server
+  logs the full stack, so database errors and paths don't leak. `ucm dev` shows everything.
+- **`withRequest(init, fn)` runs a server function as if answering a request,** so `ucm test` can test login
+  flows with no server running.
+- **Placement still needs no annotation.** Using `#ucm/server` is what puts a function on the server.
+- **CSRF.** Server functions read cookies, so calls must be same-origin, must not be cross-site
+  (`Sec-Fetch-Site`), and must send JSON, which rules out plain HTML form posts.
+
 **Arguments are checked against the parameter types.** A server function the browser can call is a public
 endpoint, and TypeScript types are gone at runtime. So ucm derives a runtime schema from each server function's
 parameters (objects, arrays, tuples, unions, literals, dates, maps, sets, recursive types). Calls with wrong

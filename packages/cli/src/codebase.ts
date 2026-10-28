@@ -20,7 +20,8 @@ import {
 
 type SaltFor = NonNullable<AnalyzeHost["saltFor"]>;
 import { Store } from "@ucm/store";
-import { ensureExternals, layout, materialize, render, writeShim, type DefSource, type Layout } from "@ucm/loader";
+import { ensureExternals, layout, materialize, render, writeIfChanged, writeShim, type DefSource, type Layout } from "@ucm/loader";
+import { serverApiFiles } from "./server-api.ts";
 
 /** A dotted codebase name: `lib.util.sort`. */
 export const IDENT_PATH = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
@@ -33,6 +34,11 @@ export class Codebase {
   private constructor(root: string) {
     this.lay = layout(root);
     this.store = new Store(this.lay.dbFile);
+    // the #ucm/server runtime every generated module and runner in this codebase shares
+    const api = serverApiFiles();
+    fs.mkdirSync(this.lay.cacheDir, { recursive: true });
+    writeIfChanged(path.join(this.lay.cacheDir, "ucm-server.js"), api.js);
+    writeIfChanged(path.join(this.lay.cacheDir, "ucm-server.d.ts"), api.dts);
     const versions = this.store.irVersions().filter((v) => v !== IR_VERSION);
     if (versions.length) {
       this.store.close();
@@ -61,7 +67,12 @@ export class Codebase {
     const pkgFile = path.join(root, "package.json");
     const pkg = fs.existsSync(pkgFile) ? JSON.parse(fs.readFileSync(pkgFile, "utf8")) : { name: path.basename(root).toLowerCase().replace(/[^a-z0-9-]/g, "-"), private: true };
     pkg.type = "module";
-    pkg.imports = { ...(pkg.imports ?? {}), "#codebase": "./.ucm/codebase/index.ts", "#codebase/*": "./.ucm/codebase/*.ts" };
+    pkg.imports = {
+      ...(pkg.imports ?? {}),
+      "#codebase": "./.ucm/codebase/index.ts",
+      "#codebase/*": "./.ucm/codebase/*.ts",
+      "#ucm/server": "./.ucm/cache/ucm-server.js",
+    };
     fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + "\n");
     const tsconfig = path.join(root, "tsconfig.json");
     if (!fs.existsSync(tsconfig)) {

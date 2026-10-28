@@ -133,7 +133,9 @@ function importClassifier(file: string, host: AnalyzeHost) {
     const spec = (decl.moduleSpecifier as ts.StringLiteral).text;
     const exportName = ts.isImportSpecifier(d) ? (d.propertyName ?? d.name).text : ts.isImportClause(d) ? "default" : "*";
     let r: Resolved;
-    if (spec === "#codebase" || spec.startsWith("#codebase/")) {
+    if (spec === SERVER_API || isServerApiFile(spec, file, host)) {
+      r = { kind: "ext", ext: { module: "ucm:server", subpath: "", export: exportName } };
+    } else if (spec === "#codebase" || spec.startsWith("#codebase/")) {
       if (exportName === "*" || exportName === "default") {
         throw new UcmError('import codebase definitions by name: `import { sort } from "#codebase/lib"`', d);
       }
@@ -158,8 +160,17 @@ function importClassifier(file: string, host: AnalyzeHost) {
   };
 }
 
+/** ucm's own server API (request context, cookies, sessions): unversioned, like a Node builtin. */
+const SERVER_API = "#ucm/server";
+
+/** The generated runtime of `#ucm/server`, as cache modules and re-analyzed definitions import it. */
+function isServerApiFile(spec: string, file: string, host: AnalyzeHost): boolean {
+  return /^\.\.?\//.test(spec) && path.resolve(path.dirname(file), spec) === path.join(host.cacheDir, "ucm-server.js");
+}
+
 /** A Node builtin or an npm package (version pinned from node_modules), as imported from `file`. */
 function externalModule(spec: string, file: string, at: ts.Node, exportName: string): ExtRef {
+  if (spec === SERVER_API) return { module: "ucm:server", subpath: "", export: exportName };
   if (isBuiltin(spec)) return { module: spec.startsWith("node:") ? spec : `node:${spec}`, subpath: "", export: exportName };
   const parts = spec.split("/");
   const pkgName = spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;

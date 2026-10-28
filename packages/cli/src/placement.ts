@@ -120,6 +120,7 @@ export class Placement {
     for (const s of rec.spans) {
       if (!s.ext || s.pos !== "value") continue;
       if (s.ext.module.startsWith("node:")) return `uses ${s.ext.module}`;
+      if (s.ext.module === "ucm:server") return `uses #ucm/server (${s.ext.export})`;
       if (s.ext.module.startsWith("npm:") && this.isServerPackage(s.ext.module)) return `uses ${s.ext.module.slice(4)}, a server-side package`;
     }
     for (const g of globalsIn(JSON.parse(rec.ir) as IR)) if (NODE_GLOBALS.has(g)) return `uses ${g}`;
