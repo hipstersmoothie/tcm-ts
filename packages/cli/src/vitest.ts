@@ -19,7 +19,7 @@ import { exportId, type DefRecord } from "@tcm/core";
 import { materialize, moduleFile, type DefSource, type TestRun } from "@tcm/loader";
 import { Codebase } from "./codebase.ts";
 import { testPlugins } from "./web.ts";
-import { provideTool } from "./lint.ts";
+import { provideTool, toolRange } from "./lint.ts";
 import { Placement } from "./placement.ts";
 
 const TEST_TIMEOUT_MS = 10_000;
@@ -44,7 +44,8 @@ interface Request {
 
 /** The key test results are cached under: the runtime and the test framework that produced them. */
 export function testRunKey(cb: Codebase): string {
-  const vitest = cb.store.lockedPackages().filter((l) => l.name === "vitest").at(-1)?.version;
+  const range = toolRange(cb, "vitest");
+  const vitest = range && cb.store.lockedVersion("vitest", range);
   return `${process.version}${vitest ? ` vitest@${vitest}` : ""}`;
 }
 

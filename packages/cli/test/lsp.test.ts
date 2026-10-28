@@ -412,6 +412,13 @@ test("packages in the editor: the lock, what uses each package, a page with its 
   assert.deepEqual(d.range.start, { line: 1, character: 2 });
   assert.match(d.codeDescription.href, /oxc\.rs/);
 
+  // oxfmt: formatting a scratch file as it's saved, and Format Document
+  const messy = `export const g=(n:number)=>{return n}\n`;
+  c.notify("textDocument/didChange", { textDocument: { uri: pathToFileURL(lintFile).href, version: 2 }, contentChanges: [{ text: messy }] });
+  const onSave = await c.request("textDocument/willSaveWaitUntil", { textDocument: { uri: pathToFileURL(lintFile).href }, reason: 1 });
+  assert.equal(onSave[0].newText, "export const g = (n: number) => {\n  return n;\n};\n");
+  assert.deepEqual(await c.request("textDocument/formatting", { textDocument: { uri: pathToFileURL(lintFile).href }, options: { tabSize: 2, insertSpaces: true } }), onSave);
+
   const upgraded = await c.request("workspace/executeCommand", { command: "tcm.upgrade", arguments: ["ms"] });
   assert.equal(upgraded, true);
   assert.notEqual((await c.request("tcm/packages", {})).find((p: { name: string }) => p.name === "ms").ranges[0].version, "2.1.1");

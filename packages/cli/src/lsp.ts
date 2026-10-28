@@ -23,6 +23,7 @@ import { definitionPage, docSummary, find } from "./pages.ts";
 import { packageList, packagePage, packageUsers } from "./package-pages.ts";
 import { upgradeTo, upgradeWithin } from "./upgrade.ts";
 import { lintScratch, type LintIssue } from "./lint.ts";
+import { formatText } from "./fmt.ts";
 import { testRunKey } from "./vitest.ts";
 
 /** What the language server needs from the CLI (passed in, so this module doesn't import the CLI's entry). */
@@ -856,7 +857,9 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
           id: m.id,
           result: {
             capabilities: {
-              textDocumentSync: { openClose: true, change: 1, save: { includeText: false } },
+              // willSaveWaitUntil: scratch files are formatted (oxfmt) as they're saved, with no editor setup
+              textDocumentSync: { openClose: true, change: 1, save: { includeText: false }, willSaveWaitUntil: true },
+              documentFormattingProvider: true,
               hoverProvider: true,
               codeLensProvider: { resolveProvider: false },
               inlayHintProvider: true,
@@ -1032,6 +1035,25 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       case "textDocument/inlayHint": {
         const doc = docAt(p);
         send({ id: m.id, result: doc ? inlayHints(doc) : [] });
+        return;
+      }
+      // oxfmt: Format Document, and formatting as a scratch file is saved
+      case "textDocument/formatting":
+      case "textDocument/willSaveWaitUntil": {
+        const doc = docs.get(uriOf(p));
+        let edits: Json[] = [];
+        if (cb && doc && isScratch(doc.file)) {
+          try {
+            const formatted = formatText(cb, doc.text, doc.file);
+            if (formatted !== undefined && formatted !== doc.text) {
+              const { pos } = lines(doc.text);
+              edits = [{ range: { start: { line: 0, character: 0 }, end: pos(doc.text.length) }, newText: formatted }];
+            }
+          } catch (e) {
+            message(2, `formatting: ${(e as Error).message}`);
+          }
+        }
+        send({ id: m.id, result: edits });
         return;
       }
       case "textDocument/hover": {

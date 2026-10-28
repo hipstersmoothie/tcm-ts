@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkValue, isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from "@tcm/core";
 import { decode } from "./codec.ts";
-import type { ProjectDef } from "@tcm/core";
+import type { Analysis, ProjectDef } from "@tcm/core";
 import { inspect } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { render, run, sendRunnerOutputToStderr } from "@tcm/loader";
@@ -17,6 +17,7 @@ import { mergeBranch } from "./merge.ts";
 import { evaluateCached, isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
 import { listPackages, upgradeTo, upgradeWithin } from "./upgrade.ts";
 import { vitestChild } from "./vitest.ts";
+import { formatStored, formatText } from "./fmt.ts";
 import { LINT_CONFIG, lintDefinitions, lintScratch, locate, type LintIssue } from "./lint.ts";
 import { diffNamespaces, printDiff, rewind, stateOf } from "./diff.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
@@ -178,7 +179,26 @@ function save(cb: Codebase, file: string, mode: "add" | "update", into?: string)
     return false;
   }
   cb.lockPackages(a.packages);
-  return apply(cb, rows, mode, `${mode} ${path.basename(file)}`, false);
+  return apply(cb, formattedRows(cb, file, into, a, rows), mode, `${mode} ${path.basename(file)}`, false);
+}
+
+/**
+ * What's saved is formatted: the scratch file's definitions as oxfmt formats them (the file itself is left as
+ * written). Formatting can't change a hash, and the formatted text is only used if, analyzed again, every
+ * definition hashes the same.
+ */
+function formattedRows(cb: Codebase, file: string, into: string | undefined, a: Analysis, rows: Row[]): Row[] {
+  const text = fs.readFileSync(file, "utf8");
+  const formatted = formatText(cb, text, file);
+  if (formatted === undefined || formatted === text) return rows;
+  const b = cb.analyze(file, cb.scratchSalts(into), [], new Map([[file, formatted]]));
+  const same = !b.errors.length && !b.diagnostics.length && b.defs.length === a.defs.length && b.defs.every((d, i) => d.hash === a.defs[i]!.hash);
+  if (!same) {
+    console.log(yellow(`warning: formatting ${path.basename(file)} would change what it means, so it's saved as written (please report this)`));
+    return rows;
+  }
+  const byHash = new Map(b.defs.map((d) => [d.hash, d]));
+  return rows.map((r) => ({ ...r, def: byHash.get(r.def.hash) ?? r.def }));
 }
 
 /** Store the analyzed definitions and move names: `add` only binds free names, `update` also replaces. */
@@ -619,6 +639,8 @@ const HELP = `${bold("tcm")} — a content-addressed codebase manager for TypeSc
   tcm update [file] [--into ns]  add, and replace changed definitions; dependents are re-hashed
   tcm import <dir> [--into ns] [--update] [--exclude a,b] [--verbose]
                                  add an existing project: one namespace per file (src/ and index dropped)
+  tcm fmt [namespace]            reformat stored definitions with oxfmt (no hash changes); options in a
+                                 \`fmt.config\` definition
   tcm lint [namespace] [--fresh] lint definitions with oxlint (results are cached by hash); configure with a
                                  \`lint.config\` definition, whose imports are its plugins
   tcm test [namespace] [--fresh]  run tests (definitions named test… or under \`tests\`); results are cached by hash
@@ -811,6 +833,17 @@ square(12);
     case "internal-vitest":
       await vitestChild(args[0]!);
       return 0;
+    case "fmt": {
+      const ns = args[0] ?? "";
+      const live = cb.liveHashes();
+      const hashes = cb.store.names().filter((n) => live.has(n.hash) && (!ns || n.path === ns || n.path.startsWith(ns + "."))).map((n) => n.hash);
+      const r = formatStored(cb, [...new Set(hashes)]);
+      for (const h of r.formatted) console.log(`  ${green("~")} ${cb.store.pathsOf(h).join(", ") || shortHash(h)}`);
+      for (const h of r.skipped) console.log(yellow(`  skipped ${cb.store.pathsOf(h)[0] ?? shortHash(h)}: formatting it would change its hash (please report this)`));
+      console.log(`${r.formatted.length ? `reformatted ${r.formatted.length} definition(s)` : green("everything is formatted")}${dim(`; no hashes changed`)}`);
+      if (r.formatted.length) cb.refreshShim(true);
+      return r.skipped.length ? 1 : 0;
+    }
     case "lint": {
       const ns = args[0] ?? "";
       const live = cb.liveHashes();

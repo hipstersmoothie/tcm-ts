@@ -13,8 +13,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { compatRange } from "@tcm/core";
-import { ensureExternals, materialize, newestVersion, nodeArgs, npmAlias, render } from "@tcm/loader";
+import { compareVersions, compatRange } from "@tcm/core";
+import { ensureExternals, newestVersion, npmAlias, render } from "@tcm/loader";
+import { configDefinition } from "./config.ts";
 import type { Codebase } from "./codebase.ts";
 import { isTestPath } from "./tests.ts";
 
@@ -32,10 +33,22 @@ export interface LintIssue {
 /** The path a codebase's lint configuration is a definition at. */
 export const LINT_CONFIG = "lint.config";
 
-/** A tool tcm provides from the cache, at the range the codebase locks (else the newest release's). */
+/** The range a tool runs at: the one chosen for it, else the newest the codebase locks (none if it's never run). */
+export function toolRange(cb: Codebase, name: string): string | undefined {
+  const pad = (r: string) => (r.split(".").length === 1 ? `${r}.0.0` : r.split(".").length === 2 ? `${r}.0` : r);
+  const locked = cb.store.lockedPackages().filter((l) => l.name === name).map((l) => l.range).sort((a, b) => compareVersions(pad(a), pad(b))).at(-1);
+  return cb.store.getSetting(`tool.${name}`) ?? locked;
+}
+
+/** The tools tcm provides (no definition imports them: tcm runs them). */
+export const TOOLS = new Set(["oxlint", "oxfmt", "vitest", "@vitest/browser-playwright", "playwright"]);
+
+/**
+ * A tool tcm provides from the cache: at the range chosen for it (`tcm upgrade <tool>@<range>`), else the newest
+ * range the codebase locks, else the newest release's.
+ */
 export function provideTool(cb: Codebase, name: string): { module: string; dir: string; version: string } {
-  const locked = cb.store.lockedPackages().filter((l) => l.name === name).map((l) => l.range).sort().at(-1);
-  const range = locked ?? compatRange(newestVersion(name) ?? "");
+  const range = toolRange(cb, name) ?? compatRange(newestVersion(name) ?? "");
   if (!range) throw new Error(`can't find ${name} on the registry`);
   const module = `npm:${name}@${range}`;
   ensureExternals(cb.lay, [{ module, subpath: "", export: "*" }]);
@@ -49,35 +62,14 @@ interface UserConfig {
   hash?: string;
 }
 
-const userConfigs = new Map<string, UserConfig>();
-
-/** The codebase's `lint.config`, evaluated (once per hash): its value, and the packages it imports. */
+/** The codebase's `lint.config`: its value, and the packages it imports, which are its JS plugins. */
 function userConfig(cb: Codebase): UserConfig {
-  const hash = cb.store.hashesAt(LINT_CONFIG, "term")[0];
-  if (!hash) return { config: {}, jsPlugins: [] };
-  const hit = userConfigs.get(hash);
-  if (hit) return hit;
-  const rec = cb.store.getDef(hash)!;
-  const src = cb.source();
-  materialize([hash], src, cb.lay);
-  const runner = path.join(cb.lay.cacheDir, `lint_config_${hash}.ts`);
-  fs.writeFileSync(
-    runner,
-    `import { h_${hash} as config } from "./${path.basename(cb.modulePath(rec.componentHash))}";\n` +
-      `const value: unknown = typeof config === "function" ? await (config as () => unknown)() : config;\n` +
-      `process.stdout.write(JSON.stringify(value ?? {}, (_k, v) => (typeof v === "function" ? undefined : v)));\n`,
-  );
-  const r = spawnSync(process.execPath, [...nodeArgs(cb.lay), runner], { encoding: "utf8" });
-  fs.rmSync(runner, { force: true });
-  if (r.status !== 0) throw new Error(`${LINT_CONFIG} failed to evaluate:\n${r.stderr}`);
-  const config = JSON.parse(r.stdout || "{}") as Record<string, unknown>;
-  // the packages it imports are its plugins
-  const jsPlugins = [...new Set(rec.spans.flatMap((s) => (s.ext?.module.startsWith("npm:") && s.pos === "value" ? [s.ext.module] : [])))].map((m) =>
+  const def = configDefinition(cb, LINT_CONFIG);
+  if (!def) return { config: {}, jsPlugins: [] };
+  const jsPlugins = [...new Set(def.rec.spans.flatMap((s) => (s.ext?.module.startsWith("npm:") && s.pos === "value" ? [s.ext.module] : [])))].map((m) =>
     path.join(cb.lay.cacheDir, "node_modules", npmAlias(m)),
   );
-  const out = { config, jsPlugins, hash };
-  userConfigs.set(hash, out);
-  return out;
+  return { config: def.value, jsPlugins, hash: def.hash };
 }
 
 /** What the code being linted uses, which decides the plugins. */

@@ -445,6 +445,14 @@ export class Store {
     this.db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, value);
   }
 
+  /**
+   * Replace a stored definition's text, keeping its hash: for reformatting, which never changes what code means.
+   * The caller has checked that the new text hashes the same.
+   */
+  replaceSource(hash: string, sourceText: string, spans: Span[], reservedNames: string[]) {
+    this.db.prepare("UPDATE definitions SET source_text = ?, ref_spans = ?, reserved_names = ? WHERE hash = ?").run(sourceText, JSON.stringify(spans), JSON.stringify(reservedNames), hash);
+  }
+
   // ---- lint results --------------------------------------------------------------------------------------------
 
   lintResult(hash: string, key: string): string | undefined {

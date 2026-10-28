@@ -34,8 +34,9 @@ tcm add           # save new definitions from scratch.ts
   [Docs](docs/documentation.md)
 - **Tests with Vitest, with nothing to set up.** A test is a definition, cached by hash; it runs in Node, or in
   Chrome when it renders a component. [Testing](docs/testing.md)
-- **Linting with nothing to set up.** oxlint, with plugins for what the code uses, findings cached by hash, and
-  a `lint.config` definition whose imports are its plugins. [Linting](docs/linting.md)
+- **Linting and formatting with nothing to set up.** oxlint, with plugins for what the code uses and findings
+  cached by hash; oxfmt, which never changes a hash, so stored code is always formatted. Both are configured by a
+  definition (`lint.config`, `fmt.config`). [Linting](docs/linting.md) · [formatting](docs/formatting.md)
 - **Search by type,** as in Unison: `tcm find ':(xs: T[]) => T'` finds matches up to renaming, reordered
   arguments, `async` results, and more general or specific types. [Search](docs/search.md)
 - **Real projects import as they are.** neverthrow, ts-pattern and valibot import, verify and run.

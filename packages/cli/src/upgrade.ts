@@ -10,6 +10,7 @@
 import { compareVersions, compatRange, pinnedRange, satisfies, shortHash } from "@tcm/core";
 import { ensureExternals, installedPeers, newestVersion, parseModule, versionsIn } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
+import { TOOLS } from "./lint.ts";
 import { bold, dim, green, red, yellow } from "./style.ts";
 
 interface Move {
@@ -133,6 +134,13 @@ export function upgradeTo(cb: Codebase, name: string, target: string, namespace:
     for (const [h, r] of usersOf(cb, n, undefined, namespace)) if (module(`npm:${n}@${r}`) !== `npm:${n}@${r}`) hashes.add(h);
   }
   const where = namespace ? ` in ${namespace}` : "";
+  // a tool (oxlint, oxfmt, vitest): no definition pins it; the codebase records which range it runs
+  if (TOOLS.has(name) && !usersOf(cb, name).size && !namespace) {
+    ensureExternals(cb.lay, [{ module: `npm:${name}@${range}`, subpath: "", export: "*" }]);
+    cb.store.setSetting(`tool.${name}`, range);
+    console.log(`${bold(name)} now runs at ${range} (${cb.store.lockedVersion(name, range)})`);
+    return true;
+  }
   if (!hashes.size) {
     console.log(dim(`nothing${where} uses ${name} other than at ${range}`));
     return true;
@@ -156,7 +164,8 @@ export function listPackages(cb: Codebase) {
   const width = Math.max(...locked.map((l) => l.name.length));
   for (const l of locked) {
     const n = users.get(`${l.name}@${l.range}`) ?? 0;
-    const note = l.name.startsWith("@types/") ? "types" : n ? `${n} definition${n === 1 ? "" : "s"}` : "unused";
+    const tool = TOOLS.has(l.name) && (cb.store.getSetting(`tool.${l.name}`) ?? l.range) === l.range;
+    const note = l.name.startsWith("@types/") ? "types" : n ? `${n} definition${n === 1 ? "" : "s"}` : tool ? "tool" : "unused";
     console.log(`${l.name.padEnd(width)}  ${dim(l.range.padEnd(6))}  ${l.version.padEnd(10)}  ${dim(note)}`);
   }
 }

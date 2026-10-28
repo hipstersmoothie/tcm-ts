@@ -209,7 +209,8 @@ export const summary = () => [first, second, rest.join("+"), host, port, flag, l
 
   // renaming one binding expands its shorthand and leaves the others alone
   tcm("mv", "cfg.host", "cfg.hostname");
-  assert.match(tcm("view", "cfg.hostname"), /const \{ host: hostname, port = 8080, nested: \{ flag \} \} =/);
+  // stored formatted (oxfmt), one binding per line
+  assert.match(tcm("view", "cfg.hostname"), /const \{\s+host: hostname,\s+port = 8080,\s+nested: \{ flag \},?\s+\} =/);
   assert.equal(tcm("run", "cfg.summary").trim(), "1 2 3 h 8080 true 1");
   assert.match(tcm("verify"), /rendering and re-hashing is the identity/);
 });

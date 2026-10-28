@@ -24,6 +24,7 @@ New here? Read the [introduction](introduction.md), then follow [your first code
 | [Packages](packages.md) | using npm packages and Node builtins; how versions are pinned |
 | [Testing](testing.md) | tests with Vitest, in Node or a browser; why they only run when something changed |
 | [Linting](linting.md) | oxlint with nothing to set up; configuring it, plugins |
+| [Formatting](formatting.md) | oxfmt with nothing to set up; restyling stored code without changing a hash |
 | [Writing docs](documentation.md) | doc comments with links and runnable examples that follow your code |
 | [Finding code](search.md) | by name, and by type |
 | [Importing a project](importing.md) | bringing an existing TypeScript project into a codebase |
