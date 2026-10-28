@@ -32,6 +32,8 @@ tcm add           # save new definitions from scratch.ts
 - **Docs that can't go stale.** JSDoc links, embeds and ```` ```ts ```` examples are resolved to hashes: they
   follow renames and updates, examples are evaluated, and `update` reports the ones that break.
   [Docs](docs/documentation.md)
+- **Linting with nothing to set up.** oxlint, with plugins for what the code uses, findings cached by hash, and
+  a `lint.config` definition whose imports are its plugins. [Linting](docs/linting.md)
 - **Search by type,** as in Unison: `tcm find ':(xs: T[]) => T'` finds matches up to renaming, reordered
   arguments, `async` results, and more general or specific types. [Search](docs/search.md)
 - **Real projects import as they are.** neverthrow, ts-pattern and valibot import, verify and run.

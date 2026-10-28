@@ -20,6 +20,7 @@ the `.ts` and `.tsx` files at the top of the codebase directory, the ones the wa
 - **Test results** on test definitions: `✓ passed (cached)` or `✗ failed: …`, run on open and save like watches.
 - **Hovers on codebase names,** in scratch files: every path a definition has, its hash, signature, where it
   runs and why, how many named definitions use it, and its documentation.
+- **oxlint's findings as diagnostics** (source `oxlint`, linked to the rule's page; see [linting](linting.md)).
 - **tcm's own errors as diagnostics** (source `tcm`), such as a top-level `let` or `declare` in a scratch file.
 
 Commands, which editors expose as code-lens actions or a command palette:

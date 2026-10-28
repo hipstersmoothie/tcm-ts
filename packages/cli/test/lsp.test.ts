@@ -399,6 +399,19 @@ test("packages in the editor: the lock, what uses each package, a page with its 
   assert.ok(page.api.some((a: { name: string; kind: string }) => a.name === "default" && a.kind === "function"), "its API, from its types");
   assert.match(page.users[0].uri, /^tcm:\/time\/short\.ts$/);
 
+  // oxlint's findings are diagnostics in scratch files, beside tcm's own
+  const lintFile = path.join(dir5, "lint.ts");
+  const lintText = `export const f = (n: number): number => {\n  debugger;\n  return n;\n};\n`;
+  fs.writeFileSync(lintFile, lintText);
+  c.notify("textDocument/didOpen", { textDocument: { uri: pathToFileURL(lintFile).href, languageId: "typescript", version: 1, text: lintText } });
+  const linted = await c.waitFor(() =>
+    c.notes.find((n) => n.method === "textDocument/publishDiagnostics" && n.params.uri === pathToFileURL(lintFile).href && n.params.diagnostics.some((d: { source: string }) => d.source === "oxlint")),
+  );
+  const d = linted.params.diagnostics.find((x: { source: string }) => x.source === "oxlint");
+  assert.equal(d.code, "eslint(no-debugger)");
+  assert.deepEqual(d.range.start, { line: 1, character: 2 });
+  assert.match(d.codeDescription.href, /oxc\.rs/);
+
   const upgraded = await c.request("workspace/executeCommand", { command: "tcm.upgrade", arguments: ["ms"] });
   assert.equal(upgraded, true);
   assert.notEqual((await c.request("tcm/packages", {})).find((p: { name: string }) => p.name === "ms").ranges[0].version, "2.1.1");

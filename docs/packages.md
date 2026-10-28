@@ -117,8 +117,9 @@ so one namespace can move to a new major while another stays.
 
 A package without types of its own gets its DefinitelyTyped package (`@types/react` for `react`) installed beside
 it, at the newest version for the same range, so scratch files, generated modules and re-checks see its types.
-`@types/node` comes with tcm, so Node's builtins are typed out of the box. A package version with no types
-anywhere is untyped, as it would be without tcm: strict code using it doesn't typecheck.
+`@types/node` comes with tcm, so Node's builtins are typed out of the box. A package tcm provides that has no
+types anywhere (no `@types` package either; most ESLint plugins, say) is typed as `any`, with a warning: there's
+nothing you could install to type it. A package installed in the project itself is checked as usual.
 
 ## Packages in web apps
 

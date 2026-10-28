@@ -234,12 +234,12 @@ const formatHost: ts.FormatDiagnosticsHost = {
   getNewLine: () => "\n",
 };
 
-export function fileDiagnostics(program: ts.Program, sf: ts.SourceFile, ignore: number[] = [], includeGlobal = true): Diagnostic[] {
+export function fileDiagnostics(program: ts.Program, sf: ts.SourceFile, ignore: number[] = [], includeGlobal = true, skip?: (d: ts.Diagnostic) => boolean): Diagnostic[] {
   const all = [
     ...(includeGlobal ? [...program.getOptionsDiagnostics(), ...program.getGlobalDiagnostics()] : []),
     ...program.getSyntacticDiagnostics(sf),
     ...program.getSemanticDiagnostics(sf),
-  ].filter((d) => !ignore.includes(d.code));
+  ].filter((d) => !ignore.includes(d.code) && !skip?.(d));
   return all.map((d) => ({
     code: d.code,
     message: ts.flattenDiagnosticMessageText(d.messageText, "\n"),

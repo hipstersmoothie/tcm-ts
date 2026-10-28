@@ -33,6 +33,8 @@ export interface AnalyzeHost {
    * a salt identical code at two places would wrongly become one definition. Return undefined for none.
    */
   saltFor?(file: string, name: string, targetPath?: string): string | undefined;
+  /** diagnostics that don't count (beyond `ignoreDiagnostics`' codes) */
+  skipDiagnostic?(d: ts.Diagnostic): boolean;
   /** where package `name` is for imports in `file`, when tcm provides it (see PackageResolver) */
   packageDir?(name: string, file: string): string | undefined;
 }
@@ -121,7 +123,7 @@ function analyzeWith(files: string[], host: AnalyzeHost, mode: ExtractMode): Omi
   });
   const base = { program, defs: [], watches: [], warnings: [] as string[] };
 
-  const diagnostics = sfs.flatMap((sf, i) => fileDiagnostics(program, sf, host.ignoreDiagnostics, i === 0));
+  const diagnostics = sfs.flatMap((sf, i) => fileDiagnostics(program, sf, host.ignoreDiagnostics, i === 0, host.skipDiagnostic));
   const errors: string[] = [];
   if (diagnostics.length) {
     // structural problems (enums, top-level let, ...) explain themselves better than the type errors they cause

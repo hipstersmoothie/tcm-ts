@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { registerHooks } from "node:module";
-import type ts from "typescript";
+import ts from "typescript";
 import {
   compareVersions,
   analyzeFile,
@@ -263,11 +263,23 @@ export class Codebase {
     // packages the file imports that the project doesn't install: tcm provides them
     const text = overlay?.get(file) ?? fs.readFileSync(file, "utf8");
     const provided = providePackages(this, file, text, this.compilerOptions());
-    return analyzeFile(file, {
+    // a provided package with no types anywhere (most ESLint plugins, say) is typed as any, with a warning: there's
+    // no @types to install, tcm already looked
+    const untyped = new Set<string>();
+    const a = analyzeFile(file, {
       ...this.host(ignoreDiagnostics, saltFor),
       compile: (files, options) => this.compile(files, options, overlay, provided.resolver),
       packageDir: (name) => provided.dirs.get(name),
+      skipDiagnostic: (d) => {
+        if (d.code !== 7016) return false;
+        const m = /module '([^']+)'/.exec(ts.flattenDiagnosticMessageText(d.messageText, " "));
+        if (!m || !provided.dirs.has(m[1]!)) return false;
+        untyped.add(m[1]!);
+        return true;
+      },
     });
+    for (const name of untyped) a.warnings.push(`${name} has no types (neither its own nor @types), so it's typed as any`);
+    return a;
   }
 
   analyzeProject(files: string[], saltFor: SaltFor | undefined, ignoreDiagnostics: number[] = [], compilerOptions?: ts.CompilerOptions): ProjectAnalysis {

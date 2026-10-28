@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS test_results (
   output TEXT NOT NULL, duration_ms INTEGER NOT NULL, ts INTEGER NOT NULL,
   PRIMARY KEY (hash, node_version)
 );
+-- oxlint's findings for a definition, by the linter version and configuration they were found with
+CREATE TABLE IF NOT EXISTS lint_results (hash TEXT NOT NULL, key TEXT NOT NULL, issues TEXT NOT NULL, PRIMARY KEY (hash, key));
 CREATE TABLE IF NOT EXISTS watch_results (
   hash TEXT NOT NULL, node_version TEXT NOT NULL, ok INTEGER NOT NULL, value TEXT NOT NULL, ts INTEGER NOT NULL,
   PRIMARY KEY (hash, node_version)
@@ -441,6 +443,16 @@ export class Store {
 
   setSetting(key: string, value: string) {
     this.db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, value);
+  }
+
+  // ---- lint results --------------------------------------------------------------------------------------------
+
+  lintResult(hash: string, key: string): string | undefined {
+    return (this.db.prepare("SELECT issues FROM lint_results WHERE hash = ? AND key = ?").get(hash, key) as { issues: string } | undefined)?.issues;
+  }
+
+  putLintResult(hash: string, key: string, issues: string) {
+    this.db.prepare("INSERT OR REPLACE INTO lint_results (hash, key, issues) VALUES (?, ?, ?)").run(hash, key, issues);
   }
 
   // ---- the package lock ----------------------------------------------------------------------------------------

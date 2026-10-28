@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkValue, isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from "@tcm/core";
 import { decode } from "./codec.ts";
+import type { ProjectDef } from "@tcm/core";
 import { inspect } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { render, run, sendRunnerOutputToStderr } from "@tcm/loader";
@@ -15,6 +16,7 @@ import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
 import { evaluateCached, isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
 import { listPackages, upgradeTo, upgradeWithin } from "./upgrade.ts";
+import { LINT_CONFIG, lintDefinitions, lintScratch, locate, type LintIssue } from "./lint.ts";
 import { diffNamespaces, printDiff, rewind, stateOf } from "./diff.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
 import { addRemote, listRemotes, newToken, pull, push, runOn, serve, tlsMaterial } from "./sync.ts";
@@ -116,6 +118,24 @@ function analyzeScratch(cb: Codebase, file: string, into?: string) {
   return a;
 }
 
+/** oxlint's findings in a scratch file, printed under its report; whether any is an error. */
+function printScratchLint(cb: Codebase, file: string, only?: { start: number; end: number }[]): boolean {
+  const text = fs.readFileSync(file, "utf8");
+  const issues = lintScratch(cb, file, text).filter((i) => !only || only.some((r) => i.start >= r.start && i.start < r.end));
+  if (!issues.length) return false;
+  console.log(`\n  ${dim("lint")}`);
+  for (const i of issues) printIssue(text, i, "    ");
+  return issues.some((i) => i.severity === "error");
+}
+
+function printIssue(text: string, i: LintIssue, indent = "  ") {
+  const at = locate(text, i.start);
+  const mark = i.severity === "error" ? red("error") : yellow("warning");
+  console.log(`${indent}${dim(`${at.line}:${at.col}`)}  ${mark}  ${i.message} ${dim(i.rule)}`);
+  console.log(`${indent}  ${dim(at.source.trim())}`);
+  if (i.help) console.log(`${indent}  ${dim(i.help)}`);
+}
+
 function check(cb: Codebase, file: string, into?: string, fresh = false): boolean {
   const a = analyzeScratch(cb, file, into);
   if (!a) return false;
@@ -123,6 +143,7 @@ function check(cb: Codebase, file: string, into?: string, fresh = false): boolea
   console.log(`${bold(path.basename(file))}${a.namespace || into ? dim(` → ${into ?? a.namespace}`) : ""}`);
   if (rows.length) printRows(rows);
   else if (!a.watches.length) console.log(dim("  (no definitions)"));
+  printScratchLint(cb, file);
   if (a.watches.length) {
     const results = evaluateCached(cb, a.watches, cb.source([...a.defs, ...a.watches]), fresh);
     for (const w of a.watches) {
@@ -148,8 +169,15 @@ function check(cb: Codebase, file: string, into?: string, fresh = false): boolea
 function save(cb: Codebase, file: string, mode: "add" | "update", into?: string): boolean {
   const a = analyzeScratch(cb, file, into);
   if (!a) return false;
+  const rows = classify(cb, a.defs, into ?? a.namespace ?? "");
+  // lint what's being saved: warnings are shown, errors (rules set to "error" in lint.config) stop the save
+  const saving = rows.filter((r) => r.status !== "identical").flatMap((r) => (r.def as ProjectDef).range ?? []);
+  if (saving.length && printScratchLint(cb, file, saving)) {
+    console.log(red(`\n${path.basename(file)} has lint errors; nothing was saved. Fix them, or set the rule to "warn" in ${LINT_CONFIG}.`));
+    return false;
+  }
   cb.lockPackages(a.packages);
-  return apply(cb, classify(cb, a.defs, into ?? a.namespace ?? ""), mode, `${mode} ${path.basename(file)}`, false);
+  return apply(cb, rows, mode, `${mode} ${path.basename(file)}`, false);
 }
 
 /** Store the analyzed definitions and move names: `add` only binds free names, `update` also replaces. */
@@ -590,6 +618,8 @@ const HELP = `${bold("tcm")} — a content-addressed codebase manager for TypeSc
   tcm update [file] [--into ns]  add, and replace changed definitions; dependents are re-hashed
   tcm import <dir> [--into ns] [--update] [--exclude a,b] [--verbose]
                                  add an existing project: one namespace per file (src/ and index dropped)
+  tcm lint [namespace] [--fresh] lint definitions with oxlint (results are cached by hash); configure with a
+                                 \`lint.config\` definition, whose imports are its plugins
   tcm test [namespace] [--fresh]  run tests (definitions named test… or under \`tests\`); results are cached by hash
   tcm verify                     re-render and re-hash every live definition; must be the identity
   tcm migrate                    rebuild a codebase written with an older hash format (keeps a backup)
@@ -775,6 +805,28 @@ square(12);
         http: str("http") === undefined ? undefined : parseHttpFlag(str("http")!),
       });
       return -1; // keep serving
+    }
+    case "lint": {
+      const ns = args[0] ?? "";
+      const live = cb.liveHashes();
+      const targets = cb.store.names().filter((n) => n.kind !== "type" && live.has(n.hash) && (!ns || n.path === ns || n.path.startsWith(ns + ".")));
+      const results = lintDefinitions(cb, targets, !!flags.fresh);
+      let warnings = 0;
+      let errors = 0;
+      for (const r of results) {
+        if (!r.issues.length) continue;
+        console.log(`${bold(r.path)} ${dim(shortHash(r.hash))}`);
+        for (const i of r.issues) {
+          printIssue(r.text, i);
+          if (i.severity === "error") errors++;
+          else warnings++;
+        }
+      }
+      const cached = results.filter((r) => r.cached).length;
+      console.log(
+        `${errors ? red(`${errors} error(s)`) : green("no errors")}, ${warnings} warning(s) in ${results.length} definition(s)${cached ? dim(` (${cached} cached)`) : ""}`,
+      );
+      return errors ? 1 : 0;
     }
     case "test": {
       const ns = args[0] ?? "";

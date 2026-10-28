@@ -22,6 +22,7 @@ import { renderDoc } from "./docs.ts";
 import { definitionPage, docSummary, find } from "./pages.ts";
 import { packageList, packagePage, packageUsers } from "./package-pages.ts";
 import { upgradeTo, upgradeWithin } from "./upgrade.ts";
+import { lintScratch, type LintIssue } from "./lint.ts";
 
 /** What the language server needs from the CLI (passed in, so this module doesn't import the CLI's entry). */
 export interface LspTools {
@@ -107,6 +108,8 @@ interface DocState {
     rows: Row[];
     problems: { message: string; severity: 1 | 2 }[];
     typeErrors: number;
+    /** oxlint's findings, offsets in `text` */
+    lint: LintIssue[];
     watches: Map<number, { ok: boolean; value: string; cached: boolean }>;
     tests: Map<string, { ok: boolean; message: string; cached: boolean }>;
   };
@@ -138,8 +141,14 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
   const analyze = (doc: DocState, run: boolean) => {
     const c = cb!;
     const problems: { message: string; severity: 1 | 2 }[] = [];
-    const state: NonNullable<DocState["analyzed"]> = { text: doc.text, rows: [], problems, typeErrors: 0, watches: new Map(), tests: new Map() };
+    const state: NonNullable<DocState["analyzed"]> = { text: doc.text, rows: [], problems, typeErrors: 0, lint: [], watches: new Map(), tests: new Map() };
     doc.analyzed = state;
+    // lint as written, type errors or not: it's about the code, not whether it checks
+    try {
+      state.lint = lintScratch(c, doc.file, doc.text);
+    } catch (e) {
+      problems.push({ message: `lint: ${(e as Error).message}`, severity: 2 });
+    }
     let a: Analysis;
     try {
       c.refreshShim();
@@ -192,6 +201,16 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       const start = { line, character: here ? Number(m[3]) - 1 : 0 };
       return { range: { start, end: pos(lineEnd(line)) }, severity: p.severity, source: "tcm", message: here ? m[4]! : p.message };
     });
+    for (const i of s.lint) {
+      diagnostics.push({
+        range: { start: pos(i.start), end: pos(Math.max(i.end, i.start)) },
+        severity: i.severity === "error" ? 1 : 2,
+        source: "oxlint",
+        message: i.help ? `${i.message}\n${i.help}` : i.message,
+        code: i.rule,
+        ...(i.url ? { codeDescription: { href: i.url } } : {}),
+      } as (typeof diagnostics)[number]);
+    }
     notify("textDocument/publishDiagnostics", { uri: doc.uri, version: doc.version, diagnostics });
     if (canRefresh.lens) request("workspace/codeLens/refresh");
     if (canRefresh.hints) request("workspace/inlayHint/refresh");

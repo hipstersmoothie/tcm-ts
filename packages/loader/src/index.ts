@@ -405,7 +405,7 @@ export function sendRunnerOutputToStderr() {
 }
 
 /** Node flags for processes tcm spawns; the transform hook, when the cache has one, compiles marked modules. */
-function nodeArgs(lay: Layout): string[] {
+export function nodeArgs(lay: Layout): string[] {
   const hook = path.join(lay.cacheDir, "tcm-transform.js");
   return ["--disable-warning=ExperimentalWarning", ...(fs.existsSync(hook) ? ["--import", pathToFileURLString(hook)] : [])];
 }
