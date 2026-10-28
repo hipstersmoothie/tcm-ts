@@ -308,7 +308,13 @@ export class Codebase {
       ];
       reject(`their source does not match their hashes (${bad.join(", ") || "missing members"})`);
     }
-    this.putDefs(fresh.map((d) => ({ ...d, deps: r!.defs.get(d.hash)!.deps, signature: r!.defs.get(d.hash)!.signature })));
+    // dependencies, signatures and schemas come from the local analysis, never from the sender
+    this.putDefs(
+      fresh.map((d) => {
+        const local = r!.defs.get(d.hash)!;
+        return { ...d, deps: local.deps, signature: local.signature, params: local.params, table: local.table };
+      }),
+    );
     return { stored: fresh.length };
   }
 

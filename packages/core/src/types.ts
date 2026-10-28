@@ -1,4 +1,4 @@
-import type { ParamsSchema } from "./schema.ts";
+import type { ParamsSchema, TableSchema } from "./schema.ts";
 
 export type DefKind = "term" | "type" | "class";
 export type InitKind = "hoisted" | "strict";
@@ -57,6 +57,8 @@ export interface DefRecord {
   doc?: string;
   /** runtime schema of a function's parameters (metadata, not hashed): checks arguments arriving from browsers */
   params?: ParamsSchema;
+  /** for `const x = table<T>(...)`: the row type's schema (metadata, not hashed); attached to the value at runtime */
+  table?: TableSchema;
 }
 
 /**

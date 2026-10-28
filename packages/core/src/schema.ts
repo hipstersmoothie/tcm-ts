@@ -24,6 +24,17 @@ export type Schema =
   /** a type that can't arrive as plain data (functions, class instances): any argument is refused */
   | { t: "unsendable"; what: string };
 
+/** A table's row type, as a schema, with a hash identifying it (rows record the hash they were written with). */
+export interface TableSchema {
+  /** the table's name, if given as a literal */
+  name?: string;
+  /** whether the definition passes options (a `migrate` function) */
+  hasOptions?: boolean;
+  hash: string;
+  s: Schema;
+  defs: Schema[];
+}
+
 export interface ParamsSchema {
   params: { name: string; s: Schema; optional: boolean; rest: boolean }[];
   /** shared definitions for recursive types (`ref` points into these) */
@@ -33,9 +44,8 @@ export interface ParamsSchema {
 const GLOBAL_CLASSES = new Set(["Date", "Map", "Set", "ReadonlyMap", "ReadonlySet"]);
 
 /** The parameters of a function-typed value, as runtime schemas. */
-export function paramsSchema(checker: ts.TypeChecker, type: ts.Type): ParamsSchema | undefined {
-  const sig = type.getCallSignatures()[0];
-  if (!sig) return undefined;
+/** Turns TypeScript types into schemas; recursive types share `defs`. */
+function schemaBuilder(checker: ts.TypeChecker) {
   const defs: Schema[] = [];
   const refs = new Map<ts.Type, number>();
   const active = new Set<ts.Type>();
@@ -105,7 +115,19 @@ export function paramsSchema(checker: ts.TypeChecker, type: ts.Type): ParamsSche
   };
 
   const isGlobal = (t: ts.Type) => (t.getSymbol()?.declarations ?? []).some((d) => d.getSourceFile().isDeclarationFile);
+  return { of, defs };
+}
 
+/** The runtime schema of a type (e.g. a table's row type). */
+export function typeSchema(checker: ts.TypeChecker, type: ts.Type): { s: Schema; defs: Schema[] } {
+  const b = schemaBuilder(checker);
+  return { s: b.of(type, 0), defs: b.defs };
+}
+
+export function paramsSchema(checker: ts.TypeChecker, type: ts.Type): ParamsSchema | undefined {
+  const sig = type.getCallSignatures()[0];
+  if (!sig) return undefined;
+  const { of, defs } = schemaBuilder(checker);
   const params = sig.getParameters().map((p) => {
     const decl = p.valueDeclaration as ts.ParameterDeclaration | undefined;
     const rest = !!decl?.dotDotDotToken;
@@ -247,4 +269,12 @@ function describe(v: unknown): string {
   if (typeof v === "string") return `the string ${JSON.stringify(v.length > 40 ? v.slice(0, 40) + "…" : v)}`;
   if (typeof v === "object") return "an object";
   return `${typeof v} ${String(v)}`;
+}
+
+/**
+ * The value checker as standalone source text, for runtimes that can't import ucm (the generated #ucm/server
+ * module): built from these functions' own source, so it's the same code wherever ucm runs from.
+ */
+export function schemaCheckerSource(): string {
+  return `${checkValue}\n${summary}\n${describe}\n`;
 }

@@ -217,6 +217,30 @@ export async function me(): Promise<string> {
   - names resolve on each request, so `ucm mv` moves a URL without a restart;
   - these routes are for other callers, so they skip the CSRF checks. Check signatures (e.g. a webhook secret)
     in the handler.
+- **Typed tables that never silently disagree with your code.** For example:
+
+  ```ts
+  export type User = { name: string; email: string; joined: Date };
+  export const users = table<User>("users");          // declared at the top level
+  await users.insert({ name: "ada", email: "ada@x", joined: new Date() });
+  await users.find({ name: "ada" });                    // also get / put / delete / count
+  ```
+
+  TypeScript erases `User` at runtime, but ucm sees it where the table is declared. It derives a schema from
+  it and attaches that schema, with its hash, to the table.
+  - **Writes are checked** against `User`. Each row records the schema it was written with, in
+    `.ucm/data/store.sqlite`. Dates, maps and sets round-trip.
+  - **When `User` changes,** each stored row is checked as it's read:
+    - rows that still fit the new type (e.g. a new optional field) just work;
+    - rows that don't are converted by `table<User>("users", { migrate: (old) => … })`, the result is checked,
+      and the upgraded row is written back;
+    - with no `migrate`, reading refuses with the reason, never returning the wrong shape.
+  - **`ucm update` reports this up front.** It checks the stored rows the moment the type changes and says
+    whether they fit, will be migrated, or need a `migrate` first.
+  - **Old pages reload instead of misreading.** A page from an older build (old builds keep serving) that reads
+    rows written by newer code gets a 410, and its browser reloads onto the current version.
+  - `ucm data` lists tables and row counts, and `ucm data <table>` shows rows. Tables live in memory under
+    `ucm test`.
 - **Background jobs.** `enqueue(sendWelcome, user.id)` from a server function returns at once; the work runs
   in the background.
   - **Durable.** Jobs live in `.ucm/data/jobs.sqlite` and survive restarts. A worker inside `ucm start` and

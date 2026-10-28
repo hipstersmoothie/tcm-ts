@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from "@ucm/core";
+import { checkValue, isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from "@ucm/core";
+import { decode } from "./codec.ts";
+import { inspect } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { evaluateWatches, render, run } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
@@ -169,6 +171,7 @@ function apply(cb: Codebase, rows: Row[], mode: "add" | "update", command: strin
     console.log([...counts].map(([s, n]) => `${STATUS_LABEL[s].trim()} ${n}`).join(dim(" · ")) || dim("nothing to do"));
   } else printRows(rows.filter((r) => !skipped.includes(r)));
   for (const r of skipped) console.log(`${yellow("  ~ skipped  ")} ${bold(r.path)} ${dim("already names a different definition; use `ucm update`")}`);
+  checkStoredRows(cb, rows.map((r) => r.def));
   if (patches.size) {
     const { updated, failed } = cb.propagate(patches, new Set(rows.map((r) => r.def.hash)));
     for (const p of updated) console.log(`${yellow("  ~ updated  ")} ${bold(p)} ${dim("(dependent)")}`);
@@ -176,6 +179,55 @@ function apply(cb: Codebase, rows: Row[], mode: "add" | "update", command: strin
   }
   cb.refreshShim();
   return skipped.length === 0;
+}
+
+// ---- data ----------------------------------------------------------------------------------------------------
+
+const storeFile = (cb: Codebase) => path.join(cb.lay.ucmDir, "data", "store.sqlite");
+
+/**
+ * When a table's row type changes, look at what's already stored, now rather than in production: rows that still
+ * fit are fine as is, rows that don't need the table's `migrate`.
+ */
+function checkStoredRows(cb: Codebase, defs: DefRecord[]) {
+  if (!fs.existsSync(storeFile(cb))) return;
+  const db = new DatabaseSync(storeFile(cb), { readOnly: true });
+  try {
+    for (const d of defs) {
+      const t = d.table;
+      if (!t?.name) continue;
+      const stale = db.prepare("SELECT id, data FROM rows WHERE tbl = ? AND schema_hash != ?").all(t.name, t.hash) as { id: string; data: string }[];
+      if (!stale.length) continue;
+      const misfits = stale.map((r) => ({ id: r.id, why: checkValue(t.s, decode(r.data), "row", t.defs) })).filter((m) => m.why);
+      const label = `  table "${t.name}"`;
+      if (!misfits.length) console.log(dim(`${label}: ${stale.length} stored row(s) were written as an earlier type and still fit the new one`));
+      else if (t.hasOptions) console.log(yellow(`${label}: ${misfits.length} stored row(s) don't fit the new type; they'll go through migrate() when read`));
+      else {
+        console.log(red(`${label}: ${misfits.length} stored row(s) don't fit the new type, e.g. ${misfits[0]!.id}: ${misfits[0]!.why}`));
+        console.log(red(`    reading them will fail until table() gets a migrate function: table<Row>("${t.name}", { migrate: (old) => ... })`));
+      }
+    }
+  } finally {
+    db.close();
+  }
+}
+
+function data(cb: Codebase, table?: string, limit = 20) {
+  if (!fs.existsSync(storeFile(cb))) return console.log(dim("no tables yet (table<Row>(\"name\") from #ucm/server)"));
+  const db = new DatabaseSync(storeFile(cb), { readOnly: true });
+  try {
+    if (!table) {
+      const rows = db.prepare("SELECT tbl, count(*) AS n, count(DISTINCT schema_hash) AS versions FROM rows GROUP BY tbl ORDER BY tbl").all() as { tbl: string; n: number; versions: number }[];
+      if (!rows.length) return console.log(dim("no rows stored yet"));
+      for (const r of rows) console.log(`${bold(r.tbl.padEnd(20))} ${String(r.n).padStart(6)} row(s)${r.versions > 1 ? yellow(`  written under ${r.versions} row types`) : ""}`);
+      return;
+    }
+    const rows = db.prepare("SELECT id, data, schema_hash FROM rows WHERE tbl = ? ORDER BY updated DESC LIMIT ?").all(table, limit) as { id: string; data: string; schema_hash: string }[];
+    if (!rows.length) return console.log(dim(`no rows in "${table}"`));
+    for (const r of rows) console.log(`${dim(r.id)}  ${inspect(decode(r.data), { colors: true, breakLength: 120, depth: 4 })}  ${dim(`#${r.schema_hash.slice(0, 8)}`)}`);
+  } finally {
+    db.close();
+  }
 }
 
 // ---- importing existing projects ---------------------------------------------------------------------
@@ -514,6 +566,7 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
   ucm dev <app> [--port 5173] [--http <namespace>[=/prefix]]
                                  serve a browser app from the codebase; what needs the server runs there, called by hash
   ucm build <app> [--force]      production build into .ucm/apps/<hash>/ (immutable; reused if it exists)
+  ucm data [table [n]]           typed tables (table<Row>() from #ucm/server): row counts, or a table's rows
   ucm jobs [n] | retry <id> | cancel <id>
                                  background jobs: enqueue() / every() from #ucm/server, run by ucm start / ucm dev
   ucm apps [prune [--keep 3]]    list builds (* = current); prune keeps the current build plus the newest N others
@@ -589,6 +642,9 @@ square(12);
       need(1, "dev <app> [--port 5173]");
       await dev(cb, args[0]!, Number(typeof flags.port === "string" ? flags.port : 5173), typeof flags.http === "string" ? parseHttpFlag(flags.http) : undefined);
       return -1; // keep serving
+    case "data":
+      data(cb, args[0], Number(args[1] ?? 20));
+      return 0;
     case "jobs": {
       const file = path.join(cb.lay.ucmDir, "data", "jobs.sqlite");
       if (!fs.existsSync(file)) return (console.log(dim("no jobs yet (enqueue() from a server function, or every() for recurring ones)")), 0);

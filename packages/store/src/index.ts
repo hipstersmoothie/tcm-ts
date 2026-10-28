@@ -134,6 +134,7 @@ export class Store {
         sig.run(r.hash, r.signature, tsVersion);
         if (r.doc) meta.run(r.hash, "doc", r.doc);
         if (r.params) meta.run(r.hash, "params", JSON.stringify(r.params));
+        if (r.table) meta.run(r.hash, "table", JSON.stringify(r.table));
       }
     });
   }
@@ -154,11 +155,12 @@ export class Store {
   getDef(hash: string): DefRecord | undefined {
     const row = this.db
       .prepare(
-        `SELECT d.*, c.size, s.display, m.value AS doc, p.value AS params FROM definitions d
+        `SELECT d.*, c.size, s.display, m.value AS doc, p.value AS params, t.value AS table_schema FROM definitions d
          JOIN components c ON c.hash = d.component_hash
          LEFT JOIN signatures s ON s.hash = d.hash
          LEFT JOIN metadata m ON m.hash = d.hash AND m.key = 'doc'
          LEFT JOIN metadata p ON p.hash = d.hash AND p.key = 'params'
+         LEFT JOIN metadata t ON t.hash = d.hash AND t.key = 'table'
          WHERE d.hash = ?`,
       )
       .get(hash) as Row | undefined;
@@ -193,6 +195,7 @@ export class Store {
       signature: (row.display as string | null) ?? "?",
       doc: (row.doc as string | null) ?? undefined,
       params: row.params ? JSON.parse(row.params as string) : undefined,
+      table: row.table_schema ? JSON.parse(row.table_schema as string) : undefined,
     };
   }
 

@@ -7,7 +7,8 @@ import { extract, UcmError, type DefSite, type ExtractMode, type Piece } from ".
 import { canonicalizeSite, type CanonContext, type Resolved, type SiteResult } from "./canonicalize.ts";
 import { createProgram, fileDiagnostics, type Diagnostic } from "./program.ts";
 import { depRef, type DefRecord, type Dep, type ExtRef, type Span } from "./types.ts";
-import { paramsSchema, type ParamsSchema } from "./schema.ts";
+import { paramsSchema, typeSchema, type ParamsSchema, type TableSchema } from "./schema.ts";
+import { createHash } from "node:crypto";
 
 export interface AnalyzeHost {
   /** absolute path of `.ucm/cache`; relative imports into it address definitions by hash */
@@ -259,6 +260,25 @@ function paramsOf(site: DefSite, checker: ts.TypeChecker): ParamsSchema | undefi
   return sym ? paramsSchema(checker, checker.getTypeOfSymbolAtLocation(sym, site.nameNode)) : undefined;
 }
 
+/**
+ * `const users = table<User>("users")` with `table` from #ucm/server: the row type is erased at runtime, but it's
+ * known here, so its schema (and that schema's hash) travel with the definition.
+ */
+function tableOf(site: DefSite, checker: ts.TypeChecker): TableSchema | undefined {
+  if (site.tag !== "Const") return undefined;
+  let init = (site.nodes[0] as ts.VariableDeclaration).initializer;
+  while (init && (ts.isParenthesizedExpression(init) || ts.isAsExpression(init) || ts.isSatisfiesExpression(init))) init = init.expression;
+  if (!init || !ts.isCallExpression(init) || !init.typeArguments?.length || !ts.isIdentifier(init.expression)) return undefined;
+  const d = checker.getSymbolAtLocation(init.expression)?.declarations?.[0];
+  if (!d || !ts.isImportSpecifier(d) || (d.propertyName ?? d.name).text !== "table") return undefined;
+  const spec = (d.parent.parent.parent.moduleSpecifier as ts.StringLiteral).text;
+  if (spec !== "#ucm/server" && !spec.endsWith("/ucm-server.js")) return undefined;
+  const { s, defs } = typeSchema(checker, checker.getTypeFromTypeNode(init.typeArguments[0]!));
+  const arg = init.arguments[0];
+  const hash = createHash("sha256").update(JSON.stringify({ s, defs })).digest("hex").slice(0, 32);
+  return { ...(arg && ts.isStringLiteralLike(arg) ? { name: arg.text } : {}), ...(init.arguments.length > 1 ? { hasOptions: true } : {}), hash, s, defs };
+}
+
 function signatureOf(site: DefSite, checker: ts.TypeChecker): string {
   if (site.kind === "type") return site.tag === "Interface" ? "interface" : "type";
   const flags = ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope;
@@ -378,6 +398,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
       deps: [...deps.values()],
       signature: signatureOf(site, checker),
       params: paramsOf(site, checker),
+      table: tableOf(site, checker),
       doc: site.doc,
       file: site.sf.fileName,
     };

@@ -18,6 +18,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { codecSource, decode, encode } from "./codec.ts";
+import { checkValue, schemaCheckerSource } from "@ucm/core";
 
 export function createServerApi(deps: {
   AsyncLocalStorage: typeof AsyncLocalStorage;
@@ -25,6 +26,7 @@ export function createServerApi(deps: {
   DatabaseSync: typeof DatabaseSync;
   encode: typeof encode;
   decode: typeof decode;
+  checkValue: typeof checkValue;
 }) {
   interface ServerRequest {
     method: string;
@@ -376,6 +378,113 @@ export function createServerApi(deps: {
     tick();
   };
 
+  // ---- tables: typed, durable rows in .ucm/data/store.sqlite ----------------------------------------------------
+  // The row type is erased at runtime, but ucm knows it where the table is declared and attaches its schema (with a
+  // hash) to the table value. Every write is checked against it and records the schema it was written with. A read
+  // of a row written under another schema checks that it still fits, else migrates it, else refuses: stored data
+  // never silently disagrees with the code reading it. Rows from newer code mean the caller is a stale page (410).
+  const SCHEMA_MARK = Symbol.for("ucm.schema");
+  type Db = InstanceType<typeof DatabaseSync>;
+  interface RowSchema {
+    name?: string;
+    hash: string;
+    s: Parameters<typeof checkValue>[0];
+    defs: Parameters<typeof checkValue>[3];
+  }
+  const dataDbs = new Map<string, Db>();
+  const dataDb = (dataDir: string | undefined): Db => {
+    const file = dataDir ? `${dataDir}/store.sqlite` : ":memory:";
+    let db = dataDbs.get(file);
+    if (!db) {
+      db = new deps.DatabaseSync(file);
+      db.exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;
+        CREATE TABLE IF NOT EXISTS rows (tbl TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, schema_hash TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (tbl, id));
+        CREATE TABLE IF NOT EXISTS schemas (tbl TEXT NOT NULL, hash TEXT NOT NULL, schema TEXT NOT NULL, first_seen INTEGER NOT NULL, PRIMARY KEY (tbl, hash));`);
+      dataDbs.set(file, db);
+    }
+    return db;
+  };
+
+  class Table<T> {
+    readonly name: string;
+    readonly #migrate?: (old: unknown) => T | Promise<T>;
+    constructor(name: string, opts: { migrate?: (old: unknown) => T | Promise<T> } = {}) {
+      if (!/^[\w.-]+$/.test(name)) throw new Error(`invalid table name '${name}'`);
+      this.name = name;
+      this.#migrate = opts.migrate;
+    }
+    #schema(): RowSchema {
+      const s = (this as unknown as Record<symbol, RowSchema | undefined>)[SCHEMA_MARK];
+      if (!s) throw new Error(`table "${this.name}" doesn't know its row type: declare it at the top level with one, e.g. export const ${this.name} = table<Row>("${this.name}")`);
+      return s;
+    }
+    #db(): Db {
+      const db = dataDb(dataDirNow());
+      const s = this.#schema();
+      db.prepare("INSERT OR IGNORE INTO schemas (tbl, hash, schema, first_seen) VALUES (?, ?, ?, ?)").run(this.name, s.hash, JSON.stringify({ s: s.s, defs: s.defs }), Date.now());
+      return db;
+    }
+    #check(value: unknown, what: string) {
+      const s = this.#schema();
+      const bad = deps.checkValue(s.s, value, what, s.defs);
+      if (bad) throw new TypeError(`table "${this.name}": ${bad}`);
+    }
+    async #read(db: Db, row: { id: string; data: string; schema_hash: string }): Promise<T> {
+      const s = this.#schema();
+      const value = deps.decode(row.data);
+      if (row.schema_hash === s.hash) return value as T;
+      // written under another schema: fine if it still fits, otherwise migrate it (and store the result)
+      if (deps.checkValue(s.s, value, "row", s.defs) === undefined) return value as T;
+      const seen = db.prepare("SELECT hash, first_seen FROM schemas WHERE tbl = ? AND hash IN (?, ?)").all(this.name, row.schema_hash, s.hash) as { hash: string; first_seen: number }[];
+      const firstSeen = (h: string) => seen.find((x) => x.hash === h)?.first_seen ?? 0;
+      if (firstSeen(row.schema_hash) > firstSeen(s.hash)) {
+        throw new HttpError(410, `table "${this.name}": row ${row.id} was written by a newer version of this app; reload for the current version`);
+      }
+      if (!this.#migrate) {
+        throw new Error(`table "${this.name}": row ${row.id} was written as an older type and doesn't fit the current one (${deps.checkValue(s.s, value, "row", s.defs)}). Give table() a migrate function: table<Row>("${this.name}", { migrate: (old) => ... })`);
+      }
+      const next = await this.#migrate(value);
+      this.#check(next, `migrated row ${row.id}`);
+      db.prepare("UPDATE rows SET data = ?, schema_hash = ?, updated = ? WHERE tbl = ? AND id = ? AND schema_hash = ?").run(deps.encode(next), s.hash, Date.now(), this.name, row.id, row.schema_hash);
+      return next;
+    }
+    /** Store `value` under `id`, replacing what was there; it must fit the row type. */
+    async put(id: string, value: T): Promise<void> {
+      this.#check(value, "value");
+      this.#db().prepare("INSERT OR REPLACE INTO rows (tbl, id, data, schema_hash, updated) VALUES (?, ?, ?, ?, ?)").run(this.name, id, deps.encode(value, `a ${this.name} row`), this.#schema().hash, Date.now());
+    }
+    /** Store a new row; returns its id. */
+    async insert(value: T): Promise<string> {
+      const id = deps.randomBytes(9).toString("base64url");
+      await this.put(id, value);
+      return id;
+    }
+    async get(id: string): Promise<T | undefined> {
+      const db = this.#db();
+      const row = db.prepare("SELECT id, data, schema_hash FROM rows WHERE tbl = ? AND id = ?").get(this.name, id) as { id: string; data: string; schema_hash: string } | undefined;
+      return row ? this.#read(db, row) : undefined;
+    }
+    async delete(id: string): Promise<boolean> {
+      return this.#db().prepare("DELETE FROM rows WHERE tbl = ? AND id = ?").run(this.name, id).changes > 0;
+    }
+    /** Rows whose fields equal `where`'s (all rows if omitted), oldest first. */
+    async find(where: Partial<T> = {}): Promise<{ id: string; value: T }[]> {
+      const db = this.#db();
+      const out: { id: string; value: T }[] = [];
+      const keys = Object.entries(where as Record<string, unknown>).map(([k, v]) => [k, deps.encode(v)] as const);
+      for (const row of db.prepare("SELECT id, data, schema_hash FROM rows WHERE tbl = ? ORDER BY updated, id").all(this.name) as { id: string; data: string; schema_hash: string }[]) {
+        const value = await this.#read(db, row);
+        if (keys.every(([k, v]) => deps.encode((value as Record<string, unknown>)[k]) === v)) out.push({ id: row.id, value });
+      }
+      return out;
+    }
+    async count(where: Partial<T> = {}): Promise<number> {
+      return (await this.find(where)).length;
+    }
+  }
+  /** A typed, durable table: `export const users = table<User>("users")`. */
+  const table = <T>(name: string, opts?: { migrate?: (old: unknown) => T | Promise<T> }) => new Table<T>(name, opts);
+
   /** For the host: the Set-Cookie headers the current call has produced so far (a stream sends them up front). */
   const pendingCookies = (): string[] => storage.getStore()?.setCookies ?? [];
 
@@ -418,7 +527,7 @@ export function createServerApi(deps: {
 
   return {
     HttpError, request, cookie, setCookie, deleteCookie, session, setSession, clearSession, revokeSessions, rateLimit,
-    enqueue, enqueueAfter, every, runJobs, withCall, withRequest, pendingCookies, startWorker, setSchedules,
+    enqueue, enqueueAfter, every, runJobs, table, withCall, withRequest, pendingCookies, startWorker, setSchedules,
   };
 }
 
@@ -484,6 +593,24 @@ export interface RecurringJob {
  * like \`every("15m", sync)\`. ucm start / ucm dev run the jobs in the app's namespace, once per slot.
  */
 export declare function every(spec: string, fn: () => unknown): RecurringJob;
+/**
+ * A typed, durable table, declared at the top level: \`export const users = table<User>("users")\`. ucm attaches the
+ * row type's schema: writes are checked against it, and rows written under an older type are checked, migrated
+ * with \`migrate\` (if given) or refused when read. Data lives in .ucm/data/store.sqlite.
+ */
+export declare function table<T>(name: string, opts?: { migrate?: (old: any) => T | Promise<T> }): Table<T>;
+export interface Table<T> {
+  readonly name: string;
+  /** Store a new row; returns its id. */
+  insert(value: T): Promise<string>;
+  /** Store \`value\` under \`id\`, replacing what was there. */
+  put(id: string, value: T): Promise<void>;
+  get(id: string): Promise<T | undefined>;
+  delete(id: string): Promise<boolean>;
+  /** Rows whose fields equal \`where\`'s (all rows if omitted), oldest first. */
+  find(where?: Partial<T>): Promise<{ id: string; value: T }[]>;
+  count(where?: Partial<T>): Promise<number>;
+}
 /** For tests: run the queued jobs that are due (all of them with \`{ all: true }\`), inline. */
 export declare function runJobs(opts?: { all?: boolean }): Promise<{ done: number; failed: number }>;
 /** Run \`fn\` as if answering a request, for tests of server functions: no network (sessions kept in memory). */
@@ -500,10 +627,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 ${codecSource().replaceAll("export ", "")}
-const api = (${createServerApi})({ AsyncLocalStorage, randomBytes, DatabaseSync, encode, decode });
+${schemaCheckerSource()}
+const api = (${createServerApi})({ AsyncLocalStorage, randomBytes, DatabaseSync, encode, decode, checkValue });
 export const {
   HttpError, request, cookie, setCookie, deleteCookie, session, setSession, clearSession, revokeSessions, rateLimit,
-  enqueue, enqueueAfter, every, runJobs, withCall, withRequest, pendingCookies, startWorker, setSchedules,
+  enqueue, enqueueAfter, every, runJobs, table, withCall, withRequest, pendingCookies, startWorker, setSchedules,
 } = api;
 `;
   return { js, dts: DECLARATIONS };

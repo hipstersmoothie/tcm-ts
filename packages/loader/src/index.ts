@@ -208,6 +208,8 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
       if (m.kind !== "term") continue;
       const local = memberNames.get(m.hash)!;
       lines.push(`if (typeof ${local} === "function") Object.defineProperty(${local}, Symbol.for("ucm.hash"), { value: ${JSON.stringify(m.hash)} });`);
+      // a table learns its row type's schema here (the type itself is erased)
+      if (m.table) lines.push(`Object.defineProperty(${local}, Symbol.for("ucm.schema"), { value: ${JSON.stringify(m.table)} });`);
     }
   }
   return { text: lines.join("\n").trimEnd() + "\n", memberNames };

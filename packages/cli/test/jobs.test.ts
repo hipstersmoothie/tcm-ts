@@ -30,12 +30,20 @@ function hashOf(name: string): string {
   }
 }
 const lines = () => (fs.existsSync(outbox) ? fs.readFileSync(outbox, "utf8").trim().split("\n") : []);
-const waitFor = async (cond: () => boolean, ms = 20000) => {
-  for (const end = Date.now() + ms; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) if (cond()) return;
+const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 20000) => {
+  for (const end = Date.now() + ms; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) if (await cond()) return;
   throw new Error(`timed out; outbox:\n${lines().join("\n")}`);
 };
-const call = async (url: string, name: string, args: unknown[]) => {
-  const res = await fetch(new URL(`/__ucm/rpc/${hashOf(name)}`, url), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) });
+/** POST a server function call, retried once on a keep-alive connection reset (see web.test.ts). */
+const call = async (url: string, name: string, args: unknown[]): Promise<{ status: number; body: string }> => {
+  const init = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) };
+  let res: Response;
+  try {
+    res = await fetch(new URL(`/__ucm/rpc/${hashOf(name)}`, url), init);
+  } catch (e) {
+    if ((e as { cause?: { code?: string } }).cause?.code !== "ECONNRESET") throw e;
+    res = await fetch(new URL(`/__ucm/rpc/${hashOf(name)}`, url), init);
+  }
   return { status: res.status, body: await res.text() };
 };
 
@@ -121,7 +129,8 @@ test("background jobs: durable, retried, pinned to the code that enqueued them; 
   scratch(SHOP("v2"));
   ucm("update");
   await waitFor(() => lines().includes("welcome grace (v1)"));
-  await call(url, "shop.signup", ["linus"]);
+  // the new signup is callable once the server has rebuilt for the update
+  await waitFor(async () => (await call(url, "shop.signup", ["linus"])).status === 200);
   await waitFor(() => lines().includes("welcome linus (v2)"));
 
   // jobs name their function by hash, so an inline function can't be enqueued
