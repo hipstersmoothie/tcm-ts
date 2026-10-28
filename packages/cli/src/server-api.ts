@@ -218,12 +218,21 @@ export function createServerApi(deps: {
     const hash = opts.hash ?? (fn as unknown as Record<symbol, string | undefined>)[HASH_MARK];
     if (dataDir && !hash) throw new Error(`enqueue() needs a codebase function (a top-level definition, so it can be found by hash), not an inline one`);
     const id = deps.randomBytes(12).toString("base64url");
-    const r = jobsDb(dataDir)
-      .prepare("INSERT OR IGNORE INTO jobs (id, fn_hash, fn_name, args, run_at, max_attempts, status, created, slot) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)")
-      .run(id, hash ?? "", opts.name ?? (fn.name || "anonymous"), deps.encode(args, `arguments to ${fn.name || "the job"}`), runAt, opts.attempts ?? 5, Date.now(), opts.slot ?? null);
-    if (!r.changes) return "";
-    if (!dataDir) memoryFns.set(id, fn);
-    return id;
+    const encoded = deps.encode(args, `arguments to ${fn.name || "the job"}`);
+    const insert = () => {
+      const r = jobsDb(dataDir)
+        .prepare("INSERT OR IGNORE INTO jobs (id, fn_hash, fn_name, args, run_at, max_attempts, status, created, slot) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)")
+        .run(id, hash ?? "", opts.name ?? (fn.name || "anonymous"), encoded, runAt, opts.attempts ?? 5, Date.now(), opts.slot ?? null);
+      if (r.changes && !dataDir) memoryFns.set(id, fn);
+      return r.changes > 0;
+    };
+    // inside a transaction, the job is part of it: queued if it commits, never if it rolls back
+    const t = openTxn();
+    if (t && !opts.slot) {
+      t.afterCommit.push(insert);
+      return id;
+    }
+    return insert() ? id : "";
   };
   /** Run `fn(...args)` in the background, soon; returns the job's id. Arguments must be plain data. */
   const enqueue = (fn: Fn, ...args: unknown[]) => enqueueAt(Date.now(), fn, args);
@@ -437,6 +446,88 @@ export function createServerApi(deps: {
     return db;
   };
 
+  // ---- transactions: one connection is shared by every request, so a transaction must own it ------------------
+  // A transaction holds a lock on the store for its whole (async) duration: table calls made inside it run in it,
+  // and table calls from anywhere else wait until it commits or rolls back. Every table call takes the same lock
+  // briefly, so nothing reads uncommitted rows or writes into someone else's transaction. Holding is tracked with
+  // AsyncLocalStorage, and a hold ends when its call does: a timer started inside fires as an outsider.
+  type Hold = { key: object; open: boolean; parent?: Hold };
+  const holds = new deps.AsyncLocalStorage<Hold>();
+  const tails = new Map<object, Promise<void>>();
+  const holding = (key: object) => {
+    for (let h = holds.getStore(); h; h = h.parent) if (h.key === key && h.open) return true;
+    return false;
+  };
+  /** Run `fn` with `key` (a store, or a transaction for its nested ones) to itself; reentrant. */
+  const exclusive = async <R>(key: object, fn: () => R | Promise<R>): Promise<R> => {
+    if (holding(key)) return fn();
+    const prev = tails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const mine = new Promise<void>((r) => (release = r));
+    const tail = prev.then(() => mine);
+    tails.set(key, tail);
+    await prev;
+    const hold: Hold = { key, open: true, parent: holds.getStore() };
+    try {
+      return await holds.run(hold, fn);
+    } finally {
+      hold.open = false;
+      release();
+      if (tails.get(key) === tail) tails.delete(key);
+    }
+  };
+  type Txn = { db: InstanceType<typeof DatabaseSync>; open: boolean; afterCommit: (() => void)[] };
+  const txns = new deps.AsyncLocalStorage<Txn>();
+  const openTxn = () => {
+    const t = txns.getStore();
+    return t?.open ? t : undefined;
+  };
+  let savepoints = 0;
+  /**
+   * Run `fn` as one transaction over every table: all its writes happen, or (if it throws) none do. Jobs it
+   * enqueues are queued when it commits and dropped if it rolls back. Nested transactions are savepoints.
+   */
+  const transaction = async <R>(fn: () => R | Promise<R>): Promise<R> => {
+    const db = dataDb(dataDirNow());
+    const outer = openTxn();
+    if (outer && outer.db === db) {
+      // a savepoint: its failure undoes only its own writes. Nested ones take turns (savepoints are a stack).
+      return exclusive(outer, async () => {
+        const name = `ucm_tx_${++savepoints}`;
+        const inner: Txn = { db, open: true, afterCommit: [] };
+        db.exec(`SAVEPOINT ${name}`);
+        try {
+          const r = await txns.run(inner, fn);
+          db.exec(`RELEASE ${name}`);
+          outer.afterCommit.push(...inner.afterCommit);
+          return r;
+        } catch (e) {
+          db.exec(`ROLLBACK TO ${name}`);
+          db.exec(`RELEASE ${name}`);
+          throw e;
+        } finally {
+          inner.open = false;
+        }
+      });
+    }
+    return exclusive(db, async () => {
+      const t: Txn = { db, open: true, afterCommit: [] };
+      db.exec("BEGIN IMMEDIATE");
+      let r: R;
+      try {
+        r = await txns.run(t, fn);
+        db.exec("COMMIT");
+      } catch (e) {
+        if (db.isTransaction) db.exec("ROLLBACK");
+        throw e;
+      } finally {
+        t.open = false;
+      }
+      for (const f of t.afterCommit) f();
+      return r;
+    });
+  };
+
   class Table<T> {
     readonly name: string;
     readonly #steps: Step[];
@@ -487,7 +578,23 @@ export function createServerApi(deps: {
       }
       return db;
     }
+    /** A table call: it waits for any transaction it isn't part of (see `exclusive`). */
+    #op<R>(fn: (db: Db) => Promise<R>): Promise<R> {
+      return exclusive(dataDb(dataDirNow()), () => fn(this.#db()));
+    }
     #atomically<R>(db: Db, fn: () => R): R {
+      if (db.isTransaction) {
+        db.exec("SAVEPOINT ucm_atomic");
+        try {
+          const r = fn();
+          db.exec("RELEASE ucm_atomic");
+          return r;
+        } catch (e) {
+          db.exec("ROLLBACK TO ucm_atomic");
+          db.exec("RELEASE ucm_atomic");
+          throw e;
+        }
+      }
       db.exec("BEGIN IMMEDIATE");
       try {
         const r = fn();
@@ -568,7 +675,7 @@ export function createServerApi(deps: {
     /** Store `value` under `id`, replacing what was there; it must fit the row type. */
     async put(id: string, value: T): Promise<void> {
       this.#check(value, "value");
-      this.#write(this.#db(), id, value);
+      return this.#op(async (db) => this.#write(db, id, value));
     }
     /** Store a new row; returns its id. */
     async insert(value: T): Promise<string> {
@@ -577,19 +684,20 @@ export function createServerApi(deps: {
       return id;
     }
     async get(id: string): Promise<T | undefined> {
-      const db = this.#db();
+      return this.#op(async (db) => {
       const row = db.prepare("SELECT id, data, schema_hash, updated FROM rows WHERE tbl = ? AND id = ?").get(this.name, id) as Row | undefined;
       return row ? this.#read(db, row) : undefined;
+      });
     }
     async delete(id: string): Promise<boolean> {
-      return this.#db().prepare("DELETE FROM rows WHERE tbl = ? AND id = ?").run(this.name, id).changes > 0;
+      return this.#op(async (db) => db.prepare("DELETE FROM rows WHERE tbl = ? AND id = ?").run(this.name, id).changes > 0);
     }
     /**
      * Change one row atomically: `fn` gets its current value and returns the new one, synchronously, so nothing
      * can write in between. Returns the new value, or undefined if there's no such row.
      */
     async update(id: string, fn: (current: T) => T): Promise<T | undefined> {
-      const db = this.#db();
+      return this.#op(async (db) => {
       for (;;) {
         // bring the row up to the current type first: migrating may be async
         if ((await this.get(id)) === undefined) return undefined;
@@ -608,13 +716,14 @@ export function createServerApi(deps: {
         });
         if (r.done) return r.value;
       }
+      });
     }
     /**
      * Rows whose fields equal `where`'s (all rows if omitted), oldest first or by `orderBy`. Fields in the table's
      * `index` or `unique` lists are looked up by index.
      */
     async find(where: Partial<T> = {}, opts: FindOptions = {}): Promise<{ id: string; value: T }[]> {
-      const db = this.#db();
+      return this.#op(async (db) => {
       const entries = Object.entries(where as Record<string, unknown>);
       for (const f of [...entries.map(([k]) => k), ...(opts.orderBy ? [opts.orderBy] : [])]) if (!FIELD.test(f)) throw new Error(`table "${this.name}": no field '${f}'`);
       const wanted = entries.map(([k, v]) => [k, deps.encode(v)] as const);
@@ -643,21 +752,23 @@ export function createServerApi(deps: {
       const field = (r: { value: T }) => (r.value as Record<string, unknown>)[by!];
       out.sort((a, b) => (by ? compare(field(a), field(b)) * (opts.desc ? -1 : 1) : 0) || a.updated - b.updated || (a.id < b.id ? -1 : 1));
       return out.slice(offset, limit === undefined ? undefined : offset + limit).map(({ id, value }) => ({ id, value }));
+      });
     }
     /** The first row `find` would return, or undefined. */
     async findOne(where: Partial<T> = {}, opts: Omit<FindOptions, "limit"> = {}): Promise<{ id: string; value: T } | undefined> {
       return (await this.find(where, { ...opts, limit: 1 }))[0];
     }
     async count(where: Partial<T> = {}): Promise<number> {
-      const db = this.#db();
+      return this.#op(async (db) => {
       const entries = Object.entries(where as Record<string, unknown>);
       if (this.#stale(db).length || !entries.every(([k, v]) => FIELD.test(k) && isScalar(v))) return (await this.find(where)).length;
       const sql = `SELECT count(*) AS n FROM rows WHERE tbl = '${this.name}' AND schema_hash = ?${entries.map(([k]) => ` AND ${fieldSql(k)} = ?`).join("")}`;
       return (db.prepare(sql).get(this.#schema().hash, ...entries.map(([, v]) => sqlValue(v))) as { n: number }).n;
+      });
     }
     /** Read every row written as another type now, storing it as the current one (rows that fit are just restamped). */
     async [MIGRATE_ALL](): Promise<{ total: number; restamped: number; migrated: number; newer: number; failed: { id: string; why: string }[] }> {
-      const db = this.#db();
+      return this.#op(async (db) => {
       const s = this.#schema();
       const total = (db.prepare("SELECT count(*) AS n FROM rows WHERE tbl = ?").get(this.name) as { n: number }).n;
       const r = { total, restamped: 0, migrated: 0, newer: 0, failed: [] as { id: string; why: string }[] };
@@ -676,6 +787,7 @@ export function createServerApi(deps: {
         }
       }
       return r;
+      });
     }
   }
   /** A typed, durable table: `export const users = table<User>("users")`. */
@@ -723,7 +835,7 @@ export function createServerApi(deps: {
 
   return {
     HttpError, request, cookie, setCookie, deleteCookie, session, setSession, clearSession, revokeSessions, rateLimit,
-    enqueue, enqueueAfter, every, runJobs, table, withCall, withRequest, pendingCookies, startWorker, setSchedules,
+    enqueue, enqueueAfter, every, runJobs, table, transaction, withCall, withRequest, pendingCookies, startWorker, setSchedules,
   };
 }
 
@@ -834,6 +946,13 @@ export interface Table<T> {
   findOne(where?: Partial<T>, opts?: Omit<FindOptions<T>, "limit">): Promise<{ id: string; value: T } | undefined>;
   count(where?: Partial<T>): Promise<number>;
 }
+/**
+ * Run \`fn\` as one transaction over every table: all its writes happen, or, if it throws, none do. While it runs,
+ * other requests' table calls wait, so none sees its uncommitted rows or writes in between. Jobs it enqueues
+ * are queued when it commits, and dropped if it rolls back. A transaction inside one is a savepoint. Keep it
+ * short (it holds the store), and don't await anything inside that itself waits for a table.
+ */
+export declare function transaction<R>(fn: () => R | Promise<R>): Promise<R>;
 /** For tests: run the queued jobs that are due (all of them with \`{ all: true }\`), inline. */
 export declare function runJobs(opts?: { all?: boolean }): Promise<{ done: number; failed: number }>;
 /** Run \`fn\` as if answering a request, for tests of server functions: no network (sessions kept in memory). */
@@ -854,7 +973,7 @@ ${schemaCheckerSource()}
 const api = (${createServerApi})({ AsyncLocalStorage, randomBytes, DatabaseSync, encode, decode, checkValue });
 export const {
   HttpError, request, cookie, setCookie, deleteCookie, session, setSession, clearSession, revokeSessions, rateLimit,
-  enqueue, enqueueAfter, every, runJobs, table, withCall, withRequest, pendingCookies, startWorker, setSchedules,
+  enqueue, enqueueAfter, every, runJobs, table, transaction, withCall, withRequest, pendingCookies, startWorker, setSchedules,
 } = api;
 `;
   return { js, dts: DECLARATIONS };

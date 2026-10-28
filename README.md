@@ -270,6 +270,10 @@ export async function me(): Promise<string> {
   await users.find({ plan: "pro" }, { orderBy: "joined", desc: true, limit: 10 });
   await users.findOne({ email });
   await users.update(id, (u) => ({ ...u, logins: u.logins + 1 }));   // atomic read-modify-write
+  await transaction(async () => {                                      // several rows, all or nothing
+    await accounts.put(from, { ...a, balance: a.balance - amount });
+    await accounts.put(to, { ...b, balance: b.balance + amount });
+  });
   ```
 
   TypeScript erases `User` at runtime, but ucm sees it where the table is declared. It derives a schema from
@@ -296,8 +300,14 @@ export async function me(): Promise<string> {
     fields get SQLite expression indexes. When every row has the current type (e.g. after `ucm data migrate`),
     filtering, ordering and paging run in SQL. Otherwise rows of older types are read through `migrate` first,
     so results never depend on whether a row was migrated yet.
-  - **`update(id, fn)`** is atomic: `fn` is synchronous and runs while the row is locked. There are no
-    multi-row transactions.
+  - **`update(id, fn)`** is atomic: `fn` is synchronous and runs while the row is locked.
+  - **`transaction(async () => { … })`** makes any number of reads and writes, across tables, all or nothing:
+    a throw rolls them all back. Every request shares one SQLite connection, so a transaction holds the store
+    for as long as it runs. Table calls inside it run in it, and other requests' table calls wait until it
+    commits. Nobody sees a debit without its credit. Jobs enqueued inside are queued on commit and dropped on
+    rollback, so a failed signup doesn't send its welcome email. A transaction inside a transaction is a
+    savepoint. Keep transactions short, and don't await anything inside one that itself waits on a table
+    (such as a request to your own server): it would wait forever.
   - `ucm data` lists tables and row counts, and `ucm data <table>` shows rows. Tables live in memory under
     `ucm test`.
 - **Background jobs.** `enqueue(sendWelcome, user.id)` from a server function returns at once; the work runs

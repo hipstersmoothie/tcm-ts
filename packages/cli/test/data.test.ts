@@ -240,3 +240,95 @@ export const testAtomicUpdate = async () => {
   assert.match(second, /every row now has the current row type, so migrate has nothing left to do: you can remove it from table\("notes"\)/);
   assert.match(ok("data"), /notes\s+2 row\(s\)$/m);
 });
+
+test("transactions: all or nothing, isolated from other requests, savepoints, jobs on commit", () => {
+  const dir3 = fs.mkdtempSync(path.join(os.tmpdir(), "ucm data3 "));
+  const run = (...args: string[]) => {
+    const r = spawnSync(process.execPath, [BIN, ...args], { cwd: dir3, encoding: "utf8", env });
+    const out = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "");
+    if (r.status !== 0) throw new Error(`ucm ${args.join(" ")} exited ${r.status}:\n${out}`);
+    return out;
+  };
+  run("init");
+  fs.writeFileSync(
+    path.join(dir3, "scratch.ts"),
+    `// ucm: namespace bank
+import assert from "node:assert/strict";
+import { table, transaction, enqueue, runJobs } from "#ucm/server";
+
+export type Account = { owner: string; balance: number };
+export const accounts = table<Account>("accounts");
+const tick = () => new Promise((r) => setTimeout(r, 20));
+
+export async function transfer(from: string, to: string, amount: number): Promise<void> {
+  await transaction(async () => {
+    const a = (await accounts.get(from))!;
+    const b = (await accounts.get(to))!;
+    await accounts.put(from, { ...a, balance: a.balance - amount });
+    await tick(); // halfway: nobody else may see this
+    if (a.balance < amount) throw new Error("insufficient funds");
+    await accounts.put(to, { ...b, balance: b.balance + amount });
+  });
+}
+const balances = async (...ids: string[]) => Promise.all(ids.map(async (id) => (await accounts.get(id))?.balance));
+const open = async (id: string, balance: number) => accounts.put(id, { owner: id, balance });
+
+export const testCommitAndRollback = async () => {
+  await open("a", 100);
+  await open("b", 0);
+  await transfer("a", "b", 30);
+  assert.deepEqual(await balances("a", "b"), [70, 30]);
+  await assert.rejects(transfer("a", "b", 500), /insufficient funds/);
+  assert.deepEqual(await balances("a", "b"), [70, 30], "the debit was rolled back");
+};
+
+export const testIsolation = async () => {
+  await open("c", 50);
+  await open("d", 50);
+  // started while the transfer is halfway: waits, then sees all of it
+  const moving = transfer("c", "d", 10);
+  await new Promise((r) => setTimeout(r, 5));
+  const seen = await accounts.find();
+  await moving;
+  const sum = seen.filter((r) => r.id === "c" || r.id === "d").reduce((n, r) => n + r.value.balance, 0);
+  assert.equal(sum, 100, "never a debit without its credit");
+  assert.deepEqual(await balances("c", "d"), [40, 60]);
+};
+
+export const testSavepoints = async () => {
+  await open("e", 1);
+  await transaction(async () => {
+    await accounts.update("e", (x) => ({ ...x, balance: 2 }));
+    await assert.rejects(
+      transaction(async () => {
+        await accounts.put("e", { owner: "e", balance: 99 });
+        throw new Error("inner fails");
+      }),
+      /inner fails/,
+    );
+    assert.equal((await accounts.get("e"))?.balance, 2, "only the inner writes were undone");
+  });
+  assert.equal((await accounts.get("e"))?.balance, 2);
+};
+
+const sent: string[] = [];
+export async function notify(who: string): Promise<void> {
+  sent.push(who);
+}
+export const testJobsOnCommit = async () => {
+  await assert.rejects(transaction(async () => {
+    enqueue(notify, "rolled back");
+    throw new Error("no");
+  }));
+  await transaction(async () => {
+    enqueue(notify, "committed");
+  });
+  await runJobs({ all: true });
+  assert.deepEqual(sent, ["committed"]);
+};
+`,
+  );
+  run("add");
+  assert.match(run("test", "bank"), /4 passed, 0 failed/);
+  assert.match(run("view", "bank.transfer"), /runs on the server: it uses #ucm\/server/);
+});
