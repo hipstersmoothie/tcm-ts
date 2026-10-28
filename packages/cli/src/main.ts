@@ -18,7 +18,7 @@ import { addRemote, listRemotes, newToken, pull, push, runOn, serve, tlsMaterial
 
 class UsageError extends Error {}
 
-const VALUE_FLAGS = new Set(["into", "file", "on", "as", "port", "host", "token", "fingerprint", "tls-cert", "tls-key", "keep", "http"]);
+const VALUE_FLAGS = new Set(["into", "file", "on", "as", "port", "host", "token", "fingerprint", "tls-cert", "tls-key", "keep", "http", "exclude"]);
 
 function parseArgs(argv: string[]) {
   const positional: string[] = [];
@@ -234,11 +234,12 @@ function data(cb: Codebase, table?: string, limit = 20) {
 
 const SKIP_DIRS = new Set(["node_modules", "test", "tests", "__tests__", "dist", "build"]);
 
-function sourceFiles(dir: string): string[] {
+function sourceFiles(dir: string, exclude: Set<string>): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) return e.name.startsWith(".") || SKIP_DIRS.has(e.name) ? [] : sourceFiles(p);
-    return /\.(m|c)?ts$/.test(e.name) && !/\.d\.(m|c)?ts$|\.(test|spec)\.(m|c)?ts$/.test(e.name) ? [p] : [];
+    if (exclude.has(path.resolve(p))) return [];
+    if (e.isDirectory()) return e.name.startsWith(".") || SKIP_DIRS.has(e.name) ? [] : sourceFiles(p, exclude);
+    return /\.(m|c)?ts$/.test(e.name) && !/\.d\.(m|c)?ts$|\.(test|spec)(-d)?\.(m|c)?ts$/.test(e.name) ? [p] : [];
   });
 }
 
@@ -249,13 +250,13 @@ function namespaceForFile(root: string, file: string): string {
   return segs.map((s) => s.replace(/[^\w$]/g, "_").replace(/^(\d)/, "_$1")).join(".");
 }
 
-function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: string, verbose: boolean): boolean {
+function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: string, verbose: boolean, exclude: string[]): boolean {
   const root = path.resolve(dir);
-  const files = sourceFiles(root);
+  const files = sourceFiles(root, new Set(exclude.map((e) => path.resolve(root, e))));
   if (!files.length) throw new UsageError(`no .ts files under ${dir}`);
   console.log(dim(`analyzing ${files.length} files under ${dir}…`));
   cb.refreshShim();
-  const a = cb.analyzeProject(files, (file, name) => cb.lineageSalt(joinName(into, namespaceForFile(root, file), name)), [], cb.compilerOptions(root));
+  const a = cb.analyzeProject(files, (file, name) => cb.lineageSalt(joinName(into, namespaceForFile(root, file), name)), [], cb.compilerOptions(root, "import"));
   for (const w of a.warnings) console.log(yellow(`warning: ${w}`));
   if (a.diagnostics.length || a.errors.length) {
     for (const d of a.diagnostics) process.stdout.write(d.formatted);
@@ -541,7 +542,7 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
   ucm check [file]               one-shot version of watch
   ucm add [file] [--into ns]     add new definitions from a scratch file (default scratch.ts)
   ucm update [file] [--into ns]  add, and replace changed definitions; dependents are re-hashed
-  ucm import <dir> [--into ns] [--update] [--verbose]
+  ucm import <dir> [--into ns] [--update] [--exclude a,b] [--verbose]
                                  add an existing project: one namespace per file (src/ and index dropped)
   ucm test [namespace] [--fresh]  run tests (definitions named test… or under \`tests\`); results are cached by hash
   ucm verify                     re-render and re-hash every live definition; must be the identity
@@ -635,7 +636,7 @@ square(12);
       return save(cb, scratch(args[0]), cmd, into) ? 0 : 1;
     case "import":
       need(1, "import <dir> [--into ns] [--update]");
-      return importProject(cb, args[0]!, flags.update ? "update" : "add", into ?? "", !!flags.verbose) ? 0 : 1;
+      return importProject(cb, args[0]!, flags.update ? "update" : "add", into ?? "", !!flags.verbose, typeof flags.exclude === "string" ? flags.exclude.split(",") : []) ? 0 : 1;
     case "verify":
       return verify(cb) ? 0 : 1;
     case "dev":

@@ -84,6 +84,20 @@ function modifierKinds(node: ts.Node): ts.SyntaxKind[] {
   return ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []).map((m) => m.kind) : [];
 }
 
+/**
+ * `// @ts-expect-error` / `// @ts-ignore` comments directly above a declaration, as source pieces. They're kept with
+ * the definition (they decide whether it typechecks; like other comments they aren't hashed).
+ */
+function directivePieces(node: ts.Node, sf: ts.SourceFile): Piece[] {
+  // the line comments directly above it; a directive's explanation may continue over several of them
+  const comments = ts.getLeadingCommentRanges(sf.text, node.pos) ?? [];
+  let first = comments.length;
+  while (first > 0 && comments[first - 1]!.kind === ts.SyntaxKind.SingleLineCommentTrivia) first--;
+  const run = comments.slice(first);
+  const at = run.findIndex((c) => /^\/\/\/?\s*@ts-(expect-error|ignore)\b/.test(sf.text.slice(c.pos, c.end)));
+  return at < 0 ? [] : run.slice(at).flatMap((c) => [{ start: c.pos, end: c.end }, { text: "\n" }]);
+}
+
 /** Start of a declaration with `export` / `default` modifiers removed. */
 function strippedStart(node: ts.Node, sf: ts.SourceFile): number {
   const mods = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
@@ -121,6 +135,19 @@ export type ExtractMode = "scratch" | "import";
 const SIDE_EFFECT_HINT =
   "ucm stores definitions, not module side effects: move this statement into a function (e.g. an exported `main`) and call it from an entry file outside the codebase";
 
+/** Whether a namespace produces a runtime value (anything but types inside). */
+function isInstantiated(ns: ts.ModuleDeclaration): boolean {
+  const body = ns.body;
+  if (!body || !ts.isModuleBlock(body)) return false;
+  return body.statements.some(
+    (s) =>
+      !ts.isTypeAliasDeclaration(s) &&
+      !ts.isInterfaceDeclaration(s) &&
+      !(ts.isImportDeclaration(s) && s.importClause?.isTypeOnly) &&
+      !(ts.isModuleDeclaration(s) && !isInstantiated(s)),
+  );
+}
+
 export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstId = 0): Extracted {
   const defs: DefSite[] = [];
   const watches: DefSite[] = [];
@@ -131,8 +158,14 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
 
   let targetPath: string | undefined;
   let groups = 0;
+  /** the current statement's directive comments: they go with its first definition (all of a destructuring's) */
+  let directives: Piece[] = [];
   const push = (fields: Omit<DefSite, "id" | "isWatch" | "sf" | "targetPath">) => {
     const site = { ...fields, targetPath };
+    if (directives.length) {
+      site.pieces = [...directives, ...site.pieces];
+      if (site.group === undefined) directives = [];
+    }
     // one name may bind a type and a value (`const User = z.object(…)` + `type User = …`); a class is both
     const space = site.kind === "type" ? "type" : site.kind === "class" ? "both" : "value";
     for (const s of space === "both" ? ["type", "value"] : [space]) {
@@ -151,8 +184,30 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
   const statements = sf.statements;
   for (let i = 0; i < statements.length; i++) {
     const st = statements[i]!;
+    directives = directivePieces(st, sf);
     const mods = modifierKinds(st);
     if (mods.includes(ts.SyntaxKind.DeclareKeyword)) {
+      // `declare const brand: unique symbol` (a value that exists only for its type) is a type-only definition in
+      // imported code; anything else ambient (modules, globals) would describe code ucm can't see
+      if (mode === "import" && ts.isVariableStatement(st)) {
+        const kw = ts.tokenToString(st.declarationList.flags & ts.NodeFlags.Const ? ts.SyntaxKind.ConstKeyword : st.declarationList.flags & ts.NodeFlags.Let ? ts.SyntaxKind.LetKeyword : ts.SyntaxKind.VarKeyword);
+        for (const decl of st.declarationList.declarations) {
+          if (!ts.isIdentifier(decl.name)) throw new UcmError("ambient destructuring is not supported", decl);
+          push({
+            name: decl.name.text,
+            kind: "type",
+            nodes: [decl],
+            tag: "Declare",
+            pieces: [{ text: `declare ${kw} ` }, { start: decl.getStart(sf), end: decl.end }],
+            initKind: "hoisted",
+            declarations: [decl],
+            doc: st.declarationList.declarations.length === 1 ? jsDocText(st, sf) : undefined,
+            nameNode: decl.name,
+            nominal: true,
+          });
+        }
+        continue;
+      }
       throw new UcmError("`declare` is not supported; external code comes in through `import`.", st);
     }
     const doc = jsDocText(st, sf);
@@ -175,7 +230,7 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
       }
       const pieces: Piece[] = [];
       for (const [j, fn] of group.entries()) {
-        if (j > 0) pieces.push({ text: "\n" });
+        if (j > 0) pieces.push({ text: "\n" }, ...directivePieces(fn, sf));
         pieces.push({ start: strippedStart(fn, sf), end: fn.end });
       }
       push({
@@ -192,7 +247,29 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
       });
     } else if (ts.isVariableStatement(st)) {
       // AwaitUsing is Const|Using, so compare the masked value rather than testing bits
-      if ((st.declarationList.flags & ts.NodeFlags.BlockScoped) !== ts.NodeFlags.Const) {
+      // a top-level `let` in imported code is module state (a lazy cache, a config cell): it's nominal, so two
+      // identical declarations are still two cells, and whatever assigns to it shares its component
+      const blockScope = st.declarationList.flags & ts.NodeFlags.BlockScoped;
+      if (mode === "import" && blockScope === ts.NodeFlags.Let) {
+        for (const decl of st.declarationList.declarations) {
+          if (!ts.isIdentifier(decl.name)) throw new UcmError("a top-level `let` with destructuring is not supported", decl);
+          push({
+            name: decl.name.text,
+            kind: "term",
+            nodes: [decl],
+            tag: "Let",
+            pieces: [{ text: "let " }, { start: decl.getStart(sf), end: decl.end }],
+            // with nothing to evaluate it can go first, before the functions that assign it are declared
+            initKind: decl.initializer ? "strict" : "hoisted",
+            declarations: [decl],
+            doc: st.declarationList.declarations.length === 1 ? doc : undefined,
+            nameNode: decl.name,
+            nominal: true,
+          });
+        }
+        continue;
+      }
+      if (blockScope !== ts.NodeFlags.Const) {
         throw new UcmError(
           "top-level `let`/`var`/`using` is not supported: codebase bindings are immutable. Use `const` (the value itself may be mutable, e.g. `const cache = new Map()`).",
           st,
@@ -269,16 +346,46 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
         nameNode: st.name,
         nominal: false,
       });
+    } else if (ts.isEnumDeclaration(st) && mode === "import") {
+      // imported code may use syntax Node can't strip: it's compiled when run (see the cache transform hook)
+      push({
+        name: st.name.text,
+        kind: "class", // a type and a value, like a class
+        nodes: [st],
+        tag: "Enum",
+        pieces: [{ start: strippedStart(st, sf), end: st.end }],
+        initKind: "strict",
+        declarations: [st],
+        doc,
+        nameNode: st.name,
+        nominal: false,
+      });
+    } else if (ts.isModuleDeclaration(st) && mode === "import" && ts.isIdentifier(st.name) && st.body && ts.isModuleBlock(st.body)) {
+      // a namespace is a value (or only a type, if it holds nothing but types); it can pair with a same-named type
+      push({
+        name: st.name.text,
+        kind: isInstantiated(st) ? "term" : "type",
+        nodes: [st],
+        tag: "Namespace",
+        pieces: [{ start: strippedStart(st, sf), end: st.end }],
+        initKind: "strict",
+        declarations: [st],
+        doc,
+        nameNode: st.name,
+        nominal: false,
+      });
     } else if (ts.isEnumDeclaration(st)) {
-      throw new UcmError(`enums are not supported: ${NON_ERASABLE_HINT}.`, st);
+      throw new UcmError(`enums are not supported in scratch files: ${NON_ERASABLE_HINT} (\`ucm import\` accepts them).`, st);
     } else if (ts.isModuleDeclaration(st)) {
-      throw new UcmError(`namespaces are not supported: ${NON_ERASABLE_HINT}.`, st);
+      throw new UcmError(`namespaces are not supported${mode === "import" ? " in this form (dotted or ambient)" : " in scratch files"}: ${NON_ERASABLE_HINT}.`, st);
     } else if (ts.isImportEqualsDeclaration(st)) {
       throw new UcmError("`import x = require(...)` is not supported; use an ES import.", st);
     } else if (ts.isExportAssignment(st)) {
       throw new UcmError("`export default <expression>` is not supported: give it a name with `const`.", st);
     } else if (ts.isExportDeclaration(st)) {
-      if (mode === "import") continue;
+      // `export {}` only marks the file as a module
+      const empty = !st.moduleSpecifier && st.exportClause && ts.isNamedExports(st.exportClause) && !st.exportClause.elements.length;
+      if (mode === "import" || empty) continue;
       warnings.push(`ignoring export list at line ${sf.getLineAndCharacterOfPosition(st.getStart(sf)).line + 1}: exports have no meaning in a codebase`);
     } else if (ts.isExpressionStatement(st)) {
       if (mode === "import") throw new UcmError(`top-level expression statement: ${SIDE_EFFECT_HINT}.`, st);

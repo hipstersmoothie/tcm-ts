@@ -135,6 +135,9 @@ export class Store {
         if (r.doc) meta.run(r.hash, "doc", r.doc);
         if (r.params) meta.run(r.hash, "params", JSON.stringify(r.params));
         if (r.table) meta.run(r.hash, "table", JSON.stringify(r.table));
+        if (r.transform) meta.run(r.hash, "transform", "1");
+        if (r.checked) meta.run(r.hash, "checked", JSON.stringify(r.checked));
+        if (r.globalNames) meta.run(r.hash, "globals", JSON.stringify(r.globalNames));
       }
     });
   }
@@ -155,12 +158,15 @@ export class Store {
   getDef(hash: string): DefRecord | undefined {
     const row = this.db
       .prepare(
-        `SELECT d.*, c.size, s.display, m.value AS doc, p.value AS params, t.value AS table_schema FROM definitions d
+        `SELECT d.*, c.size, s.display, m.value AS doc, p.value AS params, t.value AS table_schema, x.value AS transform, k.value AS checked, g.value AS globals FROM definitions d
          JOIN components c ON c.hash = d.component_hash
          LEFT JOIN signatures s ON s.hash = d.hash
          LEFT JOIN metadata m ON m.hash = d.hash AND m.key = 'doc'
          LEFT JOIN metadata p ON p.hash = d.hash AND p.key = 'params'
          LEFT JOIN metadata t ON t.hash = d.hash AND t.key = 'table'
+         LEFT JOIN metadata x ON x.hash = d.hash AND x.key = 'transform'
+         LEFT JOIN metadata k ON k.hash = d.hash AND k.key = 'checked'
+         LEFT JOIN metadata g ON g.hash = d.hash AND g.key = 'globals'
          WHERE d.hash = ?`,
       )
       .get(hash) as Row | undefined;
@@ -196,6 +202,9 @@ export class Store {
       doc: (row.doc as string | null) ?? undefined,
       params: row.params ? JSON.parse(row.params as string) : undefined,
       table: row.table_schema ? JSON.parse(row.table_schema as string) : undefined,
+      ...(row.transform ? { transform: true } : {}),
+      ...(row.checked ? { checked: JSON.parse(row.checked as string) } : {}),
+      ...(row.globals ? { globalNames: JSON.parse(row.globals as string) } : {}),
     };
   }
 

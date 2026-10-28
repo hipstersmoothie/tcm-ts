@@ -1,6 +1,7 @@
 import ts from "typescript";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 
@@ -43,23 +44,77 @@ const REQUIRED: ts.CompilerOptions = {
  * Compiler options for a project: its `tsconfig.json` if there is one (lib, strictness, types, ... are the
  * project's choice), with the options ucm requires forced on top. Warnings name the settings that were overridden.
  */
-export function projectCompilerOptions(tsconfig: string | undefined): { options: ts.CompilerOptions; warnings: string[] } {
-  if (!tsconfig || !ts.sys.fileExists(tsconfig)) return { options: compilerOptions(), warnings: [] };
+/**
+ * For importing existing code: ucm renders its own imports (by hash, with `import type` decided by ucm), so the
+ * project's resolution style doesn't matter, and most projects are written for bundler resolution: every file is
+ * ESM and relative imports can omit extensions. Only what Node's type stripping needs to run the code is forced.
+ */
+const REQUIRED_FOR_IMPORT: ts.CompilerOptions = {
+  module: ts.ModuleKind.ESNext,
+  moduleResolution: ts.ModuleResolutionKind.Bundler,
+  noEmit: true,
+  // enums, namespaces and parameter properties are allowed: their modules are compiled when run
+  erasableSyntaxOnly: false,
+  allowImportingTsExtensions: true,
+  verbatimModuleSyntax: false,
+};
+
+export function projectCompilerOptions(tsconfig: string | undefined, mode: "scratch" | "import" = "scratch"): { options: ts.CompilerOptions; warnings: string[] } {
+  const required = mode === "import" ? REQUIRED_FOR_IMPORT : REQUIRED;
+  if (!tsconfig || !ts.sys.fileExists(tsconfig)) return { options: { ...compilerOptions(), ...(mode === "import" ? required : {}) }, warnings: [] };
   const warnings: string[] = [];
   const read = ts.readConfigFile(tsconfig, ts.sys.readFile);
   if (read.error) return { options: compilerOptions(), warnings: [`${tsconfig}: ${ts.flattenDiagnosticMessageText(read.error.messageText, " ")}; using ucm's defaults`] };
   const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, path.dirname(tsconfig), undefined, tsconfig);
   for (const e of parsed.errors.filter((e) => e.code !== 18003)) warnings.push(`${tsconfig}: ${ts.flattenDiagnosticMessageText(e.messageText, " ")}`);
-  const options: ts.CompilerOptions = { skipLibCheck: true, ...parsed.options };
+  // deprecations TypeScript 6 turned into errors (baseUrl, node10 resolution, ...) aren't the code's problem
+  const options: ts.CompilerOptions = { skipLibCheck: true, ignoreDeprecations: "6.0", ...parsed.options };
   // without its own `types`, a project gets ucm's @types/node, so scratch files typecheck without installing it
   if (options.types === undefined) Object.assign(options, { typeRoots: ucmTypeRoots, types: ["node"] });
-  for (const [k, v] of Object.entries(REQUIRED) as [keyof ts.CompilerOptions, unknown][]) {
-    if (parsed.options[k] !== undefined && parsed.options[k] !== v) warnings.push(`${path.basename(tsconfig)}: ucm requires \`${k}\` = ${k === "module" ? "NodeNext" : k === "moduleResolution" ? "NodeNext" : String(v)}, ignoring the project's setting`);
+  for (const [k, v] of Object.entries(required) as [keyof ts.CompilerOptions, unknown][]) {
+    // in import mode, resolution settings are ucm's business (it renders imports itself): no need to mention them
+    const quiet = mode === "import" && ["module", "moduleResolution", "verbatimModuleSyntax", "erasableSyntaxOnly"].includes(k as string);
+    if (!quiet && parsed.options[k] !== undefined && parsed.options[k] !== v) warnings.push(`${path.basename(tsconfig)}: ucm requires \`${k}\` = ${k === "module" || k === "moduleResolution" ? "NodeNext" : String(v)}, ignoring the project's setting`);
     (options as Record<string, unknown>)[k] = v;
   }
-  delete options.outDir;
-  delete options.declaration;
+  // emit options mean nothing here (nothing is emitted), and some are invalid without the others
+  for (const k of ["outDir", "declaration", "declarationMap", "emitDeclarationOnly", "isolatedDeclarations", "composite", "incremental", "tsBuildInfoFile", "sourceMap"]) delete options[k];
   return { options, warnings };
+}
+
+/**
+ * The options that decide whether code typechecks (strictness, lib, target). A definition is valid under the
+ * options it was checked with, so it records these and is re-checked with them later (verify, update, receive).
+ */
+const PROFILE_KEYS = [
+  "strict", "noImplicitAny", "strictNullChecks", "strictFunctionTypes", "strictBindCallApply", "strictPropertyInitialization",
+  "strictBuiltinIteratorReturn", "noImplicitThis", "useUnknownInCatchVariables", "alwaysStrict", "exactOptionalPropertyTypes",
+  "noUncheckedIndexedAccess", "noImplicitReturns", "noImplicitOverride", "noPropertyAccessFromIndexSignature", "lib", "target",
+] as const;
+
+export type CheckProfile = Partial<Record<(typeof PROFILE_KEYS)[number], unknown>>;
+
+export function checkProfile(options: ts.CompilerOptions): CheckProfile {
+  const out: CheckProfile = {};
+  for (const k of PROFILE_KEYS) if (options[k] !== undefined) out[k] = options[k];
+  return out;
+}
+
+/** The TypeScript runtime ucm uses, for compiling generated modules that use non-erasable syntax. */
+export function transpileForNode(source: string, fileName: string): string {
+  return ts.transpileModule(source, {
+    fileName,
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, preserveConstEnums: true, isolatedModules: true, verbatimModuleSyntax: false },
+  }).outputText;
+}
+
+/** Where that TypeScript lives, for processes that compile on their own (runners spawned by ucm). */
+export function typescriptUrl(): string | undefined {
+  try {
+    return pathToFileURL(require.resolve("typescript")).href;
+  } catch {
+    return undefined;
+  }
 }
 
 export function createProgram(rootFiles: string[], oldProgram?: ts.Program, options: ts.CompilerOptions = compilerOptions()): ts.Program {

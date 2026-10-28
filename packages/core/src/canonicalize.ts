@@ -66,13 +66,42 @@ export interface SiteResult {
   reserved: Set<string>;
   /** referenced same-file definitions → whether any reference is evaluated at module init */
   edges: Map<number, boolean>;
+  /** uses syntax Node's type stripping can't run (enum, namespace, parameter properties) */
+  transform: boolean;
+  /** the globals (and unresolved names) it uses: a module-level name must never shadow these */
+  globals: Set<string>;
+  /** top-level `let`s it assigns to: it must share their module, since an imported binding is read-only */
+  writes: Set<number>;
 }
 
 export type Meaning = "type" | "value";
 
+/** `x = …`, `x += …`, `x++`, `[x] = …`, `({ x } = …)`, `for (x of …)` */
+function isAssignmentTarget(node: ts.Node): boolean {
+  let n = node;
+  for (;;) {
+    const p = n.parent;
+    if (ts.isParenthesizedExpression(p) || ts.isNonNullExpression(p) || ts.isAsExpression(p) || ts.isSatisfiesExpression(p) || ts.isTypeAssertionExpression(p)) n = p;
+    else if (ts.isArrayLiteralExpression(p) || ts.isSpreadElement(p) || ts.isSpreadAssignment(p)) n = p;
+    else if (ts.isShorthandPropertyAssignment(p) && p.name === n) n = p.parent;
+    else if (ts.isPropertyAssignment(p) && p.initializer === n) n = p.parent;
+    else break;
+    if (ts.isObjectLiteralExpression(n)) continue;
+  }
+  const p = n.parent;
+  if (ts.isBinaryExpression(p)) return p.left === n && p.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && p.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
+  if (ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) return p.operator === ts.SyntaxKind.PlusPlusToken || p.operator === ts.SyntaxKind.MinusMinusToken;
+  if (ts.isForOfStatement(p) || ts.isForInStatement(p)) return p.initializer === n;
+  return false;
+}
+
 export interface CanonContext {
   checker: ts.TypeChecker;
+  /** import mode: enums, namespaces and parameter properties are allowed (compiled when run) */
+  allowTransformed: boolean;
   kindOf(def: number): DefKind;
+  /** whether a definition is a top-level `let` (imported code only) */
+  isLet(def: number): boolean;
   /** files being analyzed together; references between them resolve to definitions */
   projectFiles: Set<ts.SourceFile>;
   warn(message: string, node: ts.Node): void;
@@ -190,6 +219,24 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
   const spans: RawSpan[] = [];
   const reserved = new Set<string>();
   const edges = new Map<number, boolean>();
+  const writes = new Set<number>();
+  let transform = false;
+  const globals = new Set<string>();
+  const ACCESSIBILITY = new Set([ts.SyntaxKind.PublicKeyword, ts.SyntaxKind.PrivateKeyword, ts.SyntaxKind.ProtectedKeyword, ts.SyntaxKind.ReadonlyKeyword, ts.SyntaxKind.OverrideKeyword]);
+
+  /** If `left` is a namespace import of a project module, the definition `left.right` names. */
+  const namespaceMember = (left: ts.Identifier, right: ts.Identifier): number | undefined => {
+    const sym = checker.getSymbolAtLocation(left);
+    if (!sym || !(sym.flags & ts.SymbolFlags.Alias)) return undefined;
+    const target = checker.getAliasedSymbol(sym);
+    const decl = target.declarations?.[0];
+    if (!decl || !ts.isSourceFile(decl) || !ctx.projectFiles.has(decl)) return undefined;
+    let m = checker.getSymbolAtLocation(right);
+    if (m && m.flags & ts.SymbolFlags.Alias) m = checker.getAliasedSymbol(m);
+    const d = m?.declarations?.length ? pickDef(m.declarations, right) : undefined;
+    if (d === undefined) throw new UcmError(`'${left.text}.${right.text}' is not a top-level definition of ${decl.fileName}`, right);
+    return d;
+  };
 
   /** The definition a symbol denotes here. A type and a value sharing a name are one merged symbol. */
   const pickDef = (decls: readonly ts.Declaration[], at: ts.Node): number | undefined => {
@@ -247,9 +294,11 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
       }
       case "global":
         reserved.add(r.name);
+        globals.add(r.name);
         return ["G", r.name];
       case "raw":
         reserved.add(r.name);
+        globals.add(r.name);
         return ["U", r.name];
     }
     const pos: RefPos = site.kind === "type" || isTypePosition(at) ? "type" : "value";
@@ -259,6 +308,7 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
       case "def":
         spans.push({ ...base, target: { def: r.def } });
         if (r.def !== site.id) edges.set(r.def, (edges.get(r.def) ?? false) || strict);
+        if (r.def !== site.id && ctx.isLet(r.def) && isAssignmentTarget(at)) writes.add(r.def);
         return ["@def", String(r.def)];
       case "hash":
         spans.push({ ...base, target: { hash: r.hash } });
@@ -269,14 +319,16 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
     }
   };
 
+  const atRoot = (node: ts.Node) => site.nodes.includes(node);
   const children = (node: ts.Node, out: IR[]) => {
     ts.forEachChild(
       node,
       (c) => {
-        if (!isSkippedModifier(c)) out.push([slotOf(node, c), visit(c)]);
+        if (!(atRoot(node) && isSkippedModifier(c))) out.push([slotOf(node, c), visit(c)]);
       },
       (arr) => {
-        const kids = arr.filter((c) => !isSkippedModifier(c));
+        // only the definition's own `export` is dropped: inside a namespace, `export` changes what the code means
+        const kids = arr.filter((c) => !(atRoot(node) && isSkippedModifier(c)));
         // `export function f` and `function f` must hash the same: drop a modifier list emptied by stripping
         if (kids.length === 0 && ts.canHaveModifiers(node) && node.modifiers === arr) return;
         out.push([slotOf(node, arr), ["[", ...kids.map(visit)]]);
@@ -286,8 +338,11 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
 
   const visit = (node: ts.Node): IR => {
     const k = node.kind;
+    const transformable = k === ts.SyntaxKind.EnumDeclaration || k === ts.SyntaxKind.ModuleDeclaration;
     const rejected = REJECTED[k];
-    if (rejected) throw new UcmError(rejected, node);
+    if (rejected && !(transformable && ctx.allowTransformed)) throw new UcmError(rejected, node);
+    if (transformable) transform = true;
+    if (ts.isParameter(node) && ts.isConstructorDeclaration(node.parent) && (ts.getModifiers(node) ?? []).some((m) => ACCESSIBILITY.has(m.kind))) transform = true;
 
     switch (k) {
       case ts.SyntaxKind.Identifier: {
@@ -361,6 +416,16 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
         }
         break;
       }
+      case ts.SyntaxKind.PropertyAccessExpression:
+      case ts.SyntaxKind.QualifiedName: {
+        // `ns.member` through `import * as ns from "./mod"` (or a re-exported `export * as ns`) is a reference to
+        // that member: it hashes, and is spliced, exactly as if `member` had been imported by name
+        const left = ts.isPropertyAccessExpression(node) ? node.expression : (node as ts.QualifiedName).left;
+        const right = ts.isPropertyAccessExpression(node) ? node.name : (node as ts.QualifiedName).right;
+        const member = ts.isIdentifier(left) && ts.isIdentifier(right) ? namespaceMember(left, right) : undefined;
+        if (member !== undefined) return refIR({ kind: "def", def: member }, node, right.text);
+        break;
+      }
       case ts.SyntaxKind.CallExpression: {
         const call = node as ts.CallExpression;
         if (call.expression.kind === ts.SyntaxKind.ImportKeyword) {
@@ -403,5 +468,6 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
   // the salt gives separately declared definitions separate identities, even when their code is identical
   const head: IR[] = site.salt === undefined ? ["Def", site.tag] : ["Def", site.tag, ["Salt", site.salt]];
   const ir: IR = [...head, ...site.nodes.map(visit)];
-  return { ir, spans, reserved, edges };
+  if (site.tag === "Enum" || site.tag === "Namespace") transform = true;
+  return { ir, spans, reserved, edges, transform, globals, writes };
 }

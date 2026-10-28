@@ -88,10 +88,15 @@ export function migrate(root: string): boolean {
     const tmp = path.join(cb.lay.cacheDir, `_migrate_${c}.ts`);
     fs.writeFileSync(tmp, rendered.text);
     const byName = new Map([...rendered.memberNames].map(([h, n]) => [n, members.find((m) => m.hash === h)!]));
-    const a = cb.analyze(tmp, (_file, name) => {
-      const m = byName.get(name);
-      return m && (saltOf(m.ir) ?? firstPath.get(m.hash) ?? m.nameHint);
-    }, [7016]);
+    const a = cb.analyzeProject(
+      [tmp],
+      (_file, name) => {
+        const m = byName.get(name);
+        return m && (saltOf(m.ir) ?? firstPath.get(m.hash) ?? m.nameHint);
+      },
+      [7016],
+      cb.recheckOptions(members[0]?.checked),
+    );
     fs.rmSync(tmp);
     const problem = a.errors[0] ?? a.diagnostics[0]?.message;
     if (problem) {

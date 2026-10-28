@@ -70,8 +70,9 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
   the statement, so it still runs once. A type and a value can share a name, like TypeScript's own type and value spaces (`const User = z.object(…)`
   with `type User = z.infer<typeof User>`). Each half is its own definition, updated, diffed and merged
   independently. The `#codebase` shim exports both under the one name.
-  Classes hash as one unit. Top-level `let`/`var`, enums, namespaces, decorators and `declare` are rejected
-  with a reason.
+  Classes hash as one unit. In scratch files, top-level `let`/`var`, enums, namespaces, decorators and
+  `declare` are rejected with a reason. `ucm import` accepts most of them, because existing code uses them (see
+  [Importing existing projects](#importing-existing-projects)).
 - **Hashing** (`packages/core/src/canonicalize.ts`): every definition is lowered to an S-expression IR built
   from syntax-kind *names*, not numbers, with every child labelled by its slot (`name`, `body`, …).
   - Comments, formatting and `export` are dropped.
@@ -119,7 +120,38 @@ project's choice. A few options are forced, with a warning when the project sets
 - `verbatimModuleSyntax` and `erasableSyntaxOnly`, which Node's type stripping needs;
 - `allowImportingTsExtensions` and `noEmit`.
 
-`ucm import <dir>` uses the tsconfig nearest that directory. Options never affect hashes, only what typechecks.
+`ucm import <dir>` uses the tsconfig nearest that directory, with bundler resolution (extensionless and
+directory imports work) and without the stripping requirements. Emit options (`declaration`,
+`isolatedDeclarations`, `composite`, …) are dropped. Each definition records the strictness, `lib` and `target`
+it was checked with, and is re-checked under those later (`verify`, `update`, `receive`). Options never affect
+hashes, only what typechecks.
+
+## Importing existing projects
+
+`ucm import <dir> --into ns [--exclude a,b]` takes a project as it is. These have been imported, verified
+(every definition renders and re-hashes to itself) and run from a scratch file:
+
+| project | definitions | notes |
+|---|---|---|
+| neverthrow | 51 | `strict: false`, kept as its check profile |
+| ts-pattern | 247 | namespace imports (`P.infer<…>`), `declare const` |
+| valibot (`library/src`, `--exclude vitest`) | 941 | 573 files in 4s; module state, `@ts-expect-error` above overloads |
+
+What import mode accepts beyond scratch files:
+
+- **Enums, namespaces and parameter properties.** Node can't strip these, so their cache modules start with
+  `// ucm: transform` and are compiled by a module hook when loaded. They hash like any other syntax.
+- **Namespace imports of project modules.** `import * as ns from "./mod"` with `ns.member` is a reference to
+  `member`, hashed exactly as if it had been imported by name. Using `ns` as a value is still refused.
+- **`declare const x: unique symbol`**, the usual brand pattern, is a type-only definition. It's salted like a
+  term, so two identical declarations are still two distinct symbols.
+- **Top-level `let`** is module state (a lazy cache, a config cell). It's salted, so each declaration is its
+  own cell. Every definition that assigns to it shares its component (one module), because an imported
+  binding is read-only. Readers import it and see live updates.
+- **`// @ts-expect-error` and `// @ts-ignore`** directly above a declaration stay with it. Like other comments
+  they aren't hashed, but they decide whether it typechecks.
+
+Still refused: `declare module`/`declare global`, `import x = require()`, decorators, and top-level statements.
 
 **Packaging:** Node won't strip types from files under `node_modules`, so `pnpm build` (`scripts/build.ts`)
 transpiles the workspace into one plain-JavaScript package, `ucm-ts`, in `dist/package`. Code ucm
@@ -318,7 +350,7 @@ The design and milestones are in the plan. Still open:
 - `import.meta` is location-dependent: it is evaluated inside `.ucm/cache`, so ucm warns about it.
   ucm-ts's own `createRequire(import.meta.url)` still finds `@types/node`, because the cache sits inside
   the repo.
-- `ucm import` skips test files.
+- `ucm import` skips test files (`*.test.ts`, `*.spec.ts`, `*.test-d.ts`, `test/` directories).
 - `find` searches signature *text*; structural type search (signature IR) isn't built.
 - No `merge` between branches.
 - Watch results aren't cached by hash.

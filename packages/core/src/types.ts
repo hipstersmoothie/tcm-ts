@@ -46,6 +46,8 @@ export interface DefRecord {
   spans: Span[];
   /** identifiers in the body that are not spliced (locals, globals); spliced names must avoid them */
   reservedNames: string[];
+  /** the subset of reservedNames that are globals (the rest are locals) */
+  globalNames?: string[];
   initKind: InitKind;
   nameHint: string;
   /** the declared name is observable at runtime, so generated code must keep it */
@@ -59,6 +61,10 @@ export interface DefRecord {
   params?: ParamsSchema;
   /** for `const x = table<T>(...)`: the row type's schema (metadata, not hashed); attached to the value at runtime */
   table?: TableSchema;
+  /** uses syntax Node's type stripping can't run: its generated module is compiled when loaded */
+  transform?: boolean;
+  /** the type-checking options it was checked under (strictness, lib, target); re-checks use the same */
+  checked?: Record<string, unknown>;
 }
 
 /**

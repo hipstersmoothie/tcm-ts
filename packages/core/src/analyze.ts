@@ -5,7 +5,7 @@ import { isBuiltin } from "node:module";
 import { hashFromExportId, hashIR, serializeIR, type IR } from "./hash.ts";
 import { extract, UcmError, type DefSite, type ExtractMode, type Piece } from "./extract.ts";
 import { canonicalizeSite, type CanonContext, type Resolved, type SiteResult } from "./canonicalize.ts";
-import { createProgram, fileDiagnostics, type Diagnostic } from "./program.ts";
+import { checkProfile, createProgram, fileDiagnostics, type Diagnostic } from "./program.ts";
 import { depRef, type DefRecord, type Dep, type ExtRef, type Span } from "./types.ts";
 import { paramsSchema, typeSchema, type ParamsSchema, type TableSchema } from "./schema.ts";
 import { createHash } from "node:crypto";
@@ -108,6 +108,9 @@ export function analyzeProject(files: string[], host: AnalyzeHost, mode: Extract
   }
   const result = analyzeSources(sfs, program.getTypeChecker(), host, mode);
   if (result.errors.length) return { ...base, diagnostics: [], errors: result.errors, warnings: result.warnings };
+  // each definition remembers the options it typechecked under, so later re-checks use the same ones
+  const checked = checkProfile(program.getCompilerOptions());
+  for (const d of [...result.defs, ...result.watches]) d.checked = checked;
   return { ...result, program, diagnostics: [] };
 }
 
@@ -306,15 +309,18 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
   }
   const declToDef = new Map<ts.Node, number>();
   for (const s of sites) for (const d of s.declarations) declToDef.set(d, s.id);
-  for (const s of sites) if (s.kind !== "type") s.salt = host.saltFor?.(s.sf.fileName, s.name, s.targetPath);
+  // an ambient `declare const x: unique symbol` is a type-only definition, but each one is a distinct symbol
+  for (const s of sites) if (s.kind !== "type" || s.tag === "Declare") s.salt = host.saltFor?.(s.sf.fileName, s.name, s.targetPath);
   const classifiers = new Map(sfs.map((sf) => [sf, importClassifier(sf.fileName, host)]));
   const ctx: CanonContext = {
     checker,
     declToDef,
     projectFiles: new Set(sfs),
+    allowTransformed: mode === "import",
     classifyImport: (d, meaning) => classifiers.get(d.getSourceFile())!(d, meaning),
     classifyDynamicImport: (spec, at) => dynamicImportClassifier(at.getSourceFile().fileName)(spec, at),
     kindOf: (def) => sites[def]!.kind,
+    isLet: (def) => sites[def]!.tag === "Let",
     warn: (message, node) => warnings.push(new UcmError(message, node).message),
   };
 
@@ -334,6 +340,8 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
   const groups = new Map<string, DefSite[]>();
   for (const s of sites) if (s.group !== undefined) groups.set(`${s.sf.fileName} ${s.group}`, [...(groups.get(`${s.sf.fileName} ${s.group}`) ?? []), s]);
   for (const members of groups.values()) for (const a of members) for (const b of members) if (a !== b) ok[a.id]!.edges.set(b.id, true);
+  // a top-level `let` and everything assigning to it are one module (one component)
+  for (const s of sites) for (const l of ok[s.id]!.writes) if (!ok[l]!.edges.has(s.id)) ok[l]!.edges.set(s.id, false);
   const sccs = tarjan(sites.length, (v) => ok[v]!.edges.keys());
 
   const hashOf = new Map<number, string>();
@@ -391,6 +399,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
       sourceText: src.text,
       spans,
       reservedNames: [...r.reserved].sort(),
+      globalNames: [...r.globals].sort(),
       initKind: site.initKind,
       nameHint: site.name,
       nominal: site.nominal,
@@ -399,6 +408,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
       signature: signatureOf(site, checker),
       params: paramsOf(site, checker),
       table: tableOf(site, checker),
+      ...(r.transform ? { transform: true } : {}),
       doc: site.doc,
       file: site.sf.fileName,
     };
