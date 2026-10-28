@@ -38,12 +38,22 @@ Each reports its output as a message, and every open file's status is refreshed.
 before adding it, and adds **ucm: Rename a definition** (and a **Rename** lens on saved definitions), which asks
 for the new name and runs `ucm mv`.
 
+The quickest install skips packaging: link the folder into VS Code's extensions and reload the window.
+
 ```sh
-cd editors/vscode && npm install && npx @vscode/vsce package
-code --install-extension ucm-ts-0.1.0.vsix
+cd editors/vscode && npm install
+ln -s "$PWD" ~/.vscode/extensions/ucm-ts
 ```
 
-Set `ucm.path` if `ucm` isn't on your PATH (e.g. `node /path/to/ucm-ts/packages/cli/bin/ucm.js`). Inlay hints
+Or build a `.vsix` (the first `npx` downloads vsce, which takes a while) and install it with **Extensions → … →
+Install from VSIX…** or `code --install-extension`:
+
+```sh
+cd editors/vscode && npm install && npx @vscode/vsce package
+```
+
+Set `ucm.path` if `ucm` isn't on your PATH: either the path to ucm's `packages/cli/bin/ucm.js` (spaces in the
+path are fine; it's run with Node), or a command line with quotes around words containing spaces. Inlay hints
 must be enabled (`editor.inlayHints.enabled`, on by default) to see watch values.
 
 ## Other editors

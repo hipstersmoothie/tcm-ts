@@ -1,14 +1,21 @@
 // The VS Code side of `ucm lsp`: starts the language server and adds the bits that need VS Code's UI (saving a
 // file before it's added, asking for a new name). Everything else (lenses, watch values, hovers) is the server's.
+const fs = require("node:fs");
 const vscode = require("vscode");
 const { LanguageClient } = require("vscode-languageclient/node");
 
 let client;
 
-/** `ucm.path` may be a command line: "node /path/to/ucm.js". */
+/**
+ * `ucm.path` is the ucm executable, or a path to ucm's `bin/ucm.js` (run with Node), or a command line whose
+ * words are separated by spaces, with "quotes" around a word that contains spaces.
+ */
 function serverCommand() {
-  const [command, ...args] = vscode.workspace.getConfiguration("ucm").get("path", "ucm").trim().split(/\s+/);
-  return { command, args: [...args, "lsp"] };
+  const setting = vscode.workspace.getConfiguration("ucm").get("path", "ucm").trim();
+  // a file: ucm itself, or its bin/ucm.js (spaces in the path and all)
+  if (fs.existsSync(setting)) return /\.(c|m)?js$/.test(setting) ? { command: "node", args: [setting, "lsp"] } : { command: setting, args: ["lsp"] };
+  const words = [...setting.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
+  return { command: words[0], args: [...words.slice(1), "lsp"] };
 }
 
 async function activate(context) {

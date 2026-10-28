@@ -19,7 +19,7 @@
     "configuration": {
       "title": "ucm-ts",
       "properties": {
-        "ucm.path": { "type": "string", "default": "ucm", "description": "The ucm executable (`ucm` on your PATH, or e.g. `node /path/to/packages/cli/bin/ucm.js`)." }
+        "ucm.path": { "type": "string", "default": "ucm", "description": "The ucm executable: `ucm` on your PATH, or the path to ucm's packages/cli/bin/ucm.js (run with Node; spaces are fine), or a command line with \"quotes\" around words containing spaces." }
       }
     }
   },
