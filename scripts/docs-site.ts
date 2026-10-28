@@ -101,6 +101,12 @@ function render(page: Page): { html: string; title: string; toc: { id: string; t
       },
       table(token: Tokens.Table) {
         const cell = (c: Tokens.TableCell) => this.parser.parseInline(c.tokens);
+        // a two-column table is a list of terms and what they mean: shown the man-page way, the term on its line
+        // and the description indented under it, so long terms (commands with all their flags) wrap freely
+        if (token.header.length === 2) {
+          const rows = token.rows.map((r) => `<dt>${cell(r[0]!)}</dt><dd>${cell(r[1]!)}</dd>`).join("\n");
+          return `<dl>\n${rows}\n</dl>\n`;
+        }
         const head = `<tr>${token.header.map((c) => `<th>${cell(c)}</th>`).join("")}</tr>`;
         const body = token.rows.map((r) => `<tr>${r.map((c) => `<td>${cell(c)}</td>`).join("")}</tr>`).join("\n");
         return `<div class="table"><table>\n<thead>${head}</thead>\n<tbody>${body}</tbody>\n</table></div>\n`;
@@ -191,7 +197,6 @@ h2 { text-transform: uppercase; }
 p, ul, ol, .table { margin: 0 0 14px; }
 ul, ol { padding-left: 4ch; } li { margin: 2px 0; }
 code { font: inherit; }
-p code, li code, td code { white-space: nowrap; }
 pre { margin: 0 0 14px; padding: 8px 2ch; background: var(--code); overflow-x: auto; font: inherit; }
 pre.shiki { background: var(--code) !important; }
 pre.shiki code { font: inherit; }
@@ -201,6 +206,9 @@ pre.shiki code { font: inherit; }
 table { border-collapse: collapse; }
 th { font-weight: normal; text-decoration: underline; text-align: left; }
 th, td { padding: 1px 3ch 1px 0; vertical-align: top; }
+dl { margin: 0 0 14px; }
+dt { margin-top: 10px; font-weight: bold; } dt:first-child { margin-top: 0; }
+dd { margin: 0 0 0 4ch; }
 blockquote { margin: 0 0 14px; padding-left: 2ch; border-left: 1px solid var(--rule); }
 .path { color: var(--dim); }
 footer { display: flex; justify-content: space-between; }
