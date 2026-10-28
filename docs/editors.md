@@ -38,19 +38,17 @@ Each reports its output as a message, and every open file's status is refreshed.
 before adding it, and adds **ucm: Rename a definition** (and a **Rename** lens on saved definitions), which asks
 for the new name and runs `ucm mv`.
 
-The quickest install skips packaging: link the folder into VS Code's extensions and reload the window.
-
-```sh
-cd editors/vscode && npm install
-ln -s "$PWD" ~/.vscode/extensions/ucm-ts
-```
-
-Or build a `.vsix` (the first `npx` downloads vsce, which takes a while) and install it with **Extensions → … →
-Install from VSIX…** or `code --install-extension`:
+Build a `.vsix` (the first `npx` downloads vsce, which takes a while) and install it with **Extensions → … →
+Install from VSIX…**, or with VS Code's CLI (on macOS it's inside the app if `code` isn't on your PATH):
 
 ```sh
 cd editors/vscode && npm install && npx @vscode/vsce package
+"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --install-extension ucm-ts-0.1.0.vsix
 ```
+
+Don't symlink the folder into `~/.vscode/extensions`: VS Code only keeps extensions listed in its manifest, and
+marks unlisted folders as removed. A workspace you haven't trusted yet runs in Restricted Mode, where the
+extension stays off until you trust it.
 
 Set `ucm.path` if `ucm` isn't on your PATH: either the path to ucm's `packages/cli/bin/ucm.js` (spaces in the
 path are fine; it's run with Node), or a command line with quotes around words containing spaces. Inlay hints

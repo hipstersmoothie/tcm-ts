@@ -12,8 +12,8 @@ Starts `ucm lsp` in workspaces with a ucm-ts codebase (`.ucm/codebase.sqlite`). 
 Full documentation: `docs/editors.md` in the ucm-ts repository.
 
 ```sh
-cd editors/vscode && npm install
-ln -s "$PWD" ~/.vscode/extensions/ucm-ts      # then reload VS Code; or: npx @vscode/vsce package
+cd editors/vscode && npm install && npx @vscode/vsce package
+code --install-extension ucm-ts-0.1.0.vsix     # or Extensions → … → Install from VSIX…
 ```
 
 Set `ucm.path` if `ucm` isn't on your PATH: the path to ucm's `packages/cli/bin/ucm.js` works as is, spaces
