@@ -368,6 +368,12 @@ function writePairModule(name: string, recs: DefRecord[], src: DefSource, lay: L
 
 export const TRANSFORM_MARK = "// ucm: transform";
 
+/** Where test and watch runners' stdout goes: ours, unless that's a protocol channel (`ucm lsp`). */
+let runnerStdout: "inherit" | number = "inherit";
+export function sendRunnerOutputToStderr() {
+  runnerStdout = 2;
+}
+
 /** Node flags for processes ucm spawns; the transform hook, when the cache has one, compiles marked modules. */
 function nodeArgs(lay: Layout): string[] {
   const hook = path.join(lay.cacheDir, "ucm-transform.js");
@@ -471,7 +477,7 @@ for (const [hash, file, id] of tests) {
 save();
 `,
   );
-  spawnSync(process.execPath, [...nodeArgs(lay), runner], { stdio: ["ignore", "inherit", "inherit"], timeout: 5 * 60_000 });
+  spawnSync(process.execPath, [...nodeArgs(lay), runner], { stdio: ["ignore", runnerStdout, "inherit"], timeout: 5 * 60_000 });
   const done: TestRun[] = fs.existsSync(out) ? (JSON.parse(fs.readFileSync(out, "utf8")) as TestRun[]) : [];
   // a test that crashed the runner (e.g. process.exit) is the first one without a result
   return tests.map(
@@ -522,7 +528,7 @@ for (const [line, file, id] of watches) {
 writeFileSync(${JSON.stringify(out)}, JSON.stringify(results));
 `,
   );
-  spawnSync(process.execPath, [...nodeArgs(lay), runner], { stdio: "inherit", timeout: 10_000 });
+  spawnSync(process.execPath, [...nodeArgs(lay), runner], { stdio: ["inherit", runnerStdout, "inherit"], timeout: 10_000 });
   if (!fs.existsSync(out)) return watches.map((w) => ({ line: w.line, ok: false, value: "evaluation did not finish (timeout or crash)", infrastructure: true }));
   return JSON.parse(fs.readFileSync(out, "utf8")) as WatchResult[];
 }

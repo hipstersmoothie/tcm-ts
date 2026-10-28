@@ -43,7 +43,7 @@ export interface Analysis {
   diagnostics: Diagnostic[];
   errors: string[];
   warnings: string[];
-  defs: DefRecord[];
+  defs: ProjectDef[];
   watches: WatchRecord[];
   /** from a `// ucm: namespace a.b` pragma */
   namespace?: string;
@@ -52,6 +52,8 @@ export interface Analysis {
 export interface ProjectDef extends DefRecord {
   /** absolute path of the file declaring it */
   file: string;
+  /** where it is in that file (offsets): the whole declaration, and its name (for editors; not stored) */
+  range: { start: number; end: number; nameStart?: number; nameEnd?: number };
 }
 
 export interface ProjectAnalysis {
@@ -435,6 +437,11 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
       ...(r.transform ? { transform: true } : {}),
       doc: site.doc,
       file: site.sf.fileName,
+      range: {
+        start: site.nodes[0]!.getStart(site.sf),
+        end: site.nodes.at(-1)!.end,
+        ...(site.nameNode ? { nameStart: site.nameNode.getStart(site.sf), nameEnd: site.nameNode.end } : {}),
+      },
     };
   };
 

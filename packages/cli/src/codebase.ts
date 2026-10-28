@@ -207,8 +207,9 @@ export class Codebase {
     };
   }
 
-  analyze(file: string, saltFor: SaltFor | undefined, ignoreDiagnostics: number[] = []): Analysis {
-    return analyzeFile(file, { ...this.host(ignoreDiagnostics, saltFor), compile: this.compile });
+  /** `overlay`: unsaved text for files (an editor's buffers), used instead of what's on disk */
+  analyze(file: string, saltFor: SaltFor | undefined, ignoreDiagnostics: number[] = [], overlay?: ReadonlyMap<string, string>): Analysis {
+    return analyzeFile(file, { ...this.host(ignoreDiagnostics, saltFor), compile: (files, options) => this.compile(files, options, overlay) });
   }
 
   analyzeProject(files: string[], saltFor: SaltFor | undefined, ignoreDiagnostics: number[] = [], compilerOptions?: ts.CompilerOptions): ProjectAnalysis {

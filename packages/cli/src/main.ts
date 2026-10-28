@@ -1,16 +1,17 @@
 import fs from "node:fs";
 import path from "node:path";
-import { checkValue, isConflicted, matchShapes, queryShape, sameSpace, shortHash, type DefKind, type DefRecord, type WatchRecord } from "@ucm/core";
+import { checkValue, isConflicted, matchShapes, queryShape, sameSpace, shortHash, type DefKind, type DefRecord } from "@ucm/core";
 import { decode } from "./codec.ts";
 import { inspect } from "node:util";
 import { DatabaseSync } from "node:sqlite";
-import { evaluateWatches, render, run, type DefSource, type WatchResult } from "@ucm/loader";
+import { render, run, sendRunnerOutputToStderr } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { migrate } from "./migrate.ts";
+import { serveLsp } from "./lsp.ts";
 import { build, dev, listBuilds, migrateTable, parseHttpFlag, pruneBuilds, start } from "./web.ts";
 import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
-import { isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
+import { evaluateCached, isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
 import { diffNamespaces, printDiff, rewind, stateOf } from "./diff.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
 import { addRemote, listRemotes, newToken, pull, push, runOn, serve, tlsMaterial } from "./sync.ts";
@@ -105,33 +106,6 @@ function analyzeScratch(cb: Codebase, file: string, into?: string) {
     return undefined;
   }
   return a;
-}
-
-/**
- * Watch expression values, reused by hash. Like a test's, a watch expression's hash covers everything it
- * evaluates, so a value is only stale if it depends on the outside world (files, the clock): `fresh` re-runs.
- */
-function evaluateCached(cb: Codebase, watches: WatchRecord[], src: DefSource, fresh: boolean): Map<number, WatchResult & { cached: boolean }> {
-  const node = process.version;
-  const cached = new Map<string, { ok: boolean; value: string }>();
-  if (!fresh) for (const w of watches) {
-    const r = cb.store.watchResult(w.hash, node);
-    if (r) cached.set(w.hash, r);
-  }
-  const ran = evaluateWatches(watches.filter((w) => !cached.has(w.hash)), src, cb.lay);
-  const out = new Map<number, WatchResult & { cached: boolean }>();
-  for (const w of watches) {
-    const c = cached.get(w.hash);
-    if (c) {
-      out.set(w.line, { line: w.line, ...c, cached: true });
-      continue;
-    }
-    const r = ran.find((x) => x.line === w.line);
-    if (!r) continue;
-    out.set(w.line, { ...r, cached: false });
-    if (!r.infrastructure) cb.store.putWatchResult(w.hash, node, r);
-  }
-  return out;
 }
 
 function check(cb: Codebase, file: string, into?: string, fresh = false): boolean {
@@ -623,6 +597,7 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
   ucm [watch] [--fresh]          watch *.ts scratch files: typecheck, hash, evaluate watch expressions and tests
                                  (their results are cached by hash; --fresh re-runs them)
   ucm check [file] [--fresh]     one-shot version of watch
+  ucm lsp                        language server for editors (stdio): status, watch values, hovers, save commands
   ucm add [file] [--into ns]     add new definitions from a scratch file (default scratch.ts)
   ucm update [file] [--into ns]  add, and replace changed definitions; dependents are re-hashed
   ucm import <dir> [--into ns] [--update] [--exclude a,b] [--verbose]
@@ -708,6 +683,12 @@ square(12);
 
   // migrate opens codebases the version guard would refuse
   if (cmd === "migrate") return migrate(Codebase.findRoot(cwd)) ? 0 : 1;
+  // the editor says where the workspace is (initialize), so the codebase is found then
+  if (cmd === "lsp") {
+    sendRunnerOutputToStderr();
+    serveLsp((dir) => Codebase.find(dir), { classify, save: (cb, file, mode) => save(cb, file, mode), mv });
+    return -1; // serve until the editor says exit
+  }
 
   const cb = Codebase.find(cwd);
   switch (cmd) {

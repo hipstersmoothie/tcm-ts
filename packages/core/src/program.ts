@@ -1,5 +1,6 @@
 import ts from "typescript";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -122,7 +123,8 @@ export function createProgram(rootFiles: string[], oldProgram?: ts.Program, opti
   return ts.createProgram({ rootNames: rootFiles, options, oldProgram });
 }
 
-export type Compile = (rootFiles: string[], options: ts.CompilerOptions) => ts.Program;
+/** `overlay`: files' unsaved text (an editor's open buffers), read instead of the disk */
+export type Compile = (rootFiles: string[], options: ts.CompilerOptions, overlay?: ReadonlyMap<string, string>) => ts.Program;
 
 /**
  * A long-lived compiler for checking the same files again and again (the watcher). A plain program re-reads
@@ -138,24 +140,35 @@ export function incrementalCompiler(): Compile {
     const st = fs.statSync(file, { bigint: true, throwIfNoEntry: false });
     return st ? `${st.mtimeNs}:${st.size}` : "0";
   };
-  return (rootFiles, options) => {
+  let overlay: ReadonlyMap<string, string> = new Map();
+  const overlaid = new Map<string, string>();
+  const textVersion = (text: string) => createHash("sha1").update(text).digest("hex");
+  return (rootFiles, options, current = new Map()) => {
+    overlay = current;
     const key = JSON.stringify(options);
     let s = services.get(key);
     if (!s) {
       const entry = { roots: rootFiles } as { roots: string[]; service: ts.LanguageService };
       const host: ts.LanguageServiceHost = {
         getScriptFileNames: () => entry.roots,
-        getScriptVersion: version,
+        getScriptVersion: (f) => {
+          const text = overlay.get(f);
+          if (text === undefined) return version(f);
+          let v = overlaid.get(text);
+          if (!v) overlaid.set(text, (v = `buffer:${textVersion(text)}`));
+          if (overlaid.size > 200) overlaid.clear();
+          return v;
+        },
         getScriptSnapshot: (f) => {
-          const text = ts.sys.readFile(f);
+          const text = overlay.get(f) ?? ts.sys.readFile(f);
           return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text);
         },
         getCompilationSettings: () => options,
         getCurrentDirectory: () => ts.sys.getCurrentDirectory(),
         getDefaultLibFileName: (o) => ts.getDefaultLibFilePath(o),
         useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
-        fileExists: ts.sys.fileExists,
-        readFile: ts.sys.readFile,
+        fileExists: (f) => overlay.has(f) || ts.sys.fileExists(f),
+        readFile: (f) => overlay.get(f) ?? ts.sys.readFile(f),
         readDirectory: ts.sys.readDirectory,
         directoryExists: ts.sys.directoryExists,
         getDirectories: ts.sys.getDirectories,

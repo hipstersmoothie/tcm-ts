@@ -1,6 +1,6 @@
-import type { DefRecord } from "@ucm/core";
+import type { DefRecord, WatchRecord } from "@ucm/core";
 import type { TestResult } from "@ucm/store";
-import { runTests, type DefSource } from "@ucm/loader";
+import { evaluateWatches, runTests, type DefSource, type WatchResult } from "@ucm/loader";
 import type { Codebase } from "./codebase.ts";
 import { bold, dim, green, red } from "./style.ts";
 
@@ -50,3 +50,31 @@ export function summary(outcomes: TestOutcome[]): string {
   const text = `${outcomes.length - failed} passed, ${failed} failed${cached ? dim(` (${cached} cached)`) : ""}`;
   return failed ? red(text) : green(text);
 }
+
+/**
+ * Watch expression values, reused by hash. Like a test's, a watch expression's hash covers everything it
+ * evaluates, so a value is only stale if it depends on the outside world (files, the clock): `fresh` re-runs.
+ */
+export function evaluateCached(cb: Codebase, watches: WatchRecord[], src: DefSource, fresh: boolean): Map<number, WatchResult & { cached: boolean }> {
+  const node = process.version;
+  const cached = new Map<string, { ok: boolean; value: string }>();
+  if (!fresh) for (const w of watches) {
+    const r = cb.store.watchResult(w.hash, node);
+    if (r) cached.set(w.hash, r);
+  }
+  const ran = evaluateWatches(watches.filter((w) => !cached.has(w.hash)), src, cb.lay);
+  const out = new Map<number, WatchResult & { cached: boolean }>();
+  for (const w of watches) {
+    const c = cached.get(w.hash);
+    if (c) {
+      out.set(w.line, { line: w.line, ...c, cached: true });
+      continue;
+    }
+    const r = ran.find((x) => x.line === w.line);
+    if (!r) continue;
+    out.set(w.line, { ...r, cached: false });
+    if (!r.infrastructure) cb.store.putWatchResult(w.hash, node, r);
+  }
+  return out;
+}
+

@@ -66,4 +66,7 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
 
 Leading JSDoc on a definition is stored as its documentation (`ucm docs <name>`); it isn't part of the hash.
 
+In an editor, `ucm lsp` shows all of this inline: each definition's status with Add/Update actions, watch values
+and test results ([editors](editors.md)).
+
 Next: the [CLI reference](cli.md), or [browser apps](apps.md) for the app platform.
