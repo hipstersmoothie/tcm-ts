@@ -1,7 +1,7 @@
 import ts from "typescript";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
+import { builtinModules, createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -130,8 +130,38 @@ export function createProgram(rootFiles: string[], oldProgram?: ts.Program, opti
   return ts.createProgram({ rootNames: rootFiles, options, oldProgram });
 }
 
-/** `overlay`: files' unsaved text (an editor's open buffers), read instead of the disk */
-export type Compile = (rootFiles: string[], options: ts.CompilerOptions, overlay?: ReadonlyMap<string, string>) => ts.Program;
+/**
+ * Where a bare package import in a scratch file resolves when tcm provides the package: the specifier to resolve
+ * instead (`npm__react__19`, the cache's alias for the version chosen for that file) and the file to resolve it
+ * from. Undefined leaves the import to ordinary resolution (the project's own node_modules).
+ */
+export type PackageResolver = ((name: string, containingFile: string) => { specifier: string; from: string } | undefined) & {
+  /** identifies the mapping: a compiler keeps resolutions per key, so a changed mapping resolves afresh */
+  key?: string;
+};
+
+/** `overlay`: files' unsaved text (an editor's open buffers), read instead of the disk; `packages`: see PackageResolver */
+export type Compile = (rootFiles: string[], options: ts.CompilerOptions, overlay?: ReadonlyMap<string, string>, packages?: PackageResolver) => ts.Program;
+
+/** The package an import names: `react/jsx-runtime` → `react`, `@scope/pkg/sub` → `@scope/pkg`. */
+export function packageNameOf(specifier: string): string | undefined {
+  if (/^[./#]/.test(specifier) || specifier.startsWith("node:") || builtinModules.includes(specifier.split("/")[0]!)) return undefined;
+  const parts = specifier.split("/");
+  return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+}
+
+/** `resolveModuleNameLiterals` for a host: provided packages through `packages`, everything else as usual. */
+function resolvingThrough(packages: () => PackageResolver | undefined, options: () => ts.CompilerOptions, host: ts.ModuleResolutionHost) {
+  return (literals: readonly ts.StringLiteralLike[], containingFile: string, redirected: ts.ResolvedProjectReference | undefined, _o: ts.CompilerOptions, sf: ts.SourceFile): ts.ResolvedModuleWithFailedLookupLocations[] =>
+    literals.map((lit) => {
+      const o = options();
+      const mode = ts.getModeForUsageLocation(sf, lit, o);
+      const name = packageNameOf(lit.text);
+      const provided = name ? packages()?.(name, containingFile) : undefined;
+      if (provided) return ts.resolveModuleName(provided.specifier + lit.text.slice(name!.length), provided.from, o, host, undefined, redirected, mode);
+      return ts.resolveModuleName(lit.text, containingFile, o, host, undefined, redirected, mode);
+    });
+}
 
 /**
  * A long-lived compiler for checking the same files again and again (the watcher). A plain program re-reads
@@ -148,11 +178,13 @@ export function incrementalCompiler(): Compile {
     return st ? `${st.mtimeNs}:${st.size}` : "0";
   };
   let overlay: ReadonlyMap<string, string> = new Map();
+  let packages: PackageResolver | undefined;
   const overlaid = new Map<string, string>();
   const textVersion = (text: string) => createHash("sha1").update(text).digest("hex");
-  return (rootFiles, options, current = new Map()) => {
+  return (rootFiles, options, current = new Map(), provided) => {
     overlay = current;
-    const key = JSON.stringify(options);
+    packages = provided;
+    const key = JSON.stringify(options) + (provided?.key ?? "");
     let s = services.get(key);
     if (!s) {
       const entry = { roots: rootFiles } as { roots: string[]; service: ts.LanguageService };
@@ -181,6 +213,7 @@ export function incrementalCompiler(): Compile {
         getDirectories: ts.sys.getDirectories,
         realpath: ts.sys.realpath,
       };
+      host.resolveModuleNameLiterals = resolvingThrough(() => packages, () => options, host);
       entry.service = ts.createLanguageService(host, registry);
       services.set(key, (s = entry));
     }

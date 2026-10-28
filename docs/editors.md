@@ -156,6 +156,11 @@ must be enabled (`editor.inlayHints.enabled`, on by default) to see watch values
 Any LSP client can run `tcm lsp` for TypeScript files, next to its TypeScript server. The workspace root must be
 the codebase directory (or inside it).
 
+Packages tcm provides (ones the project hasn't installed; see [packages](packages.md)) are resolved for the
+editor by tcm's TypeScript plugin, `editors/vscode/ts-plugin`. Load it in your TypeScript server (as a
+`tsserver` plugin) to get the same resolution; without it, TypeScript reports those imports as missing, though
+tcm's own checks and diagnostics are unaffected.
+
 **Neovim** (0.10+):
 
 ```lua

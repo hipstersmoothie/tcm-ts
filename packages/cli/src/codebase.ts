@@ -64,6 +64,7 @@ registerHooks({
 }
 import { Store } from "@tcm/store";
 import { ensureExternals, externalsOf, layout, lockAtLeast, materialize, moduleFile, parseModule, render, usePackageLock, writeIfChanged, writeShim, type DefSource, type Layout } from "@tcm/loader";
+import { providePackages } from "./provided.ts";
 import { serverApiFiles } from "./server-api.ts";
 
 /** A dotted codebase name: `lib.util.sort`. */
@@ -249,7 +250,14 @@ export class Codebase {
 
   /** `overlay`: unsaved text for files (an editor's buffers), used instead of what's on disk */
   analyze(file: string, saltFor: SaltFor | undefined, ignoreDiagnostics: number[] = [], overlay?: ReadonlyMap<string, string>): Analysis {
-    return analyzeFile(file, { ...this.host(ignoreDiagnostics, saltFor), compile: (files, options) => this.compile(files, options, overlay) });
+    // packages the file imports that the project doesn't install: tcm provides them
+    const text = overlay?.get(file) ?? fs.readFileSync(file, "utf8");
+    const provided = providePackages(this, file, text, this.compilerOptions());
+    return analyzeFile(file, {
+      ...this.host(ignoreDiagnostics, saltFor),
+      compile: (files, options) => this.compile(files, options, overlay, provided.resolver),
+      packageDir: (name) => provided.dirs.get(name),
+    });
   }
 
   analyzeProject(files: string[], saltFor: SaltFor | undefined, ignoreDiagnostics: number[] = [], compilerOptions?: ts.CompilerOptions): ProjectAnalysis {

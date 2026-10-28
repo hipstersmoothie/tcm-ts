@@ -53,3 +53,34 @@ test("the VS Code TypeScript plugin drops Go to Definition answers inside tcm's 
   const local = wrapped.getDefinitionAndBoundSpan(file, at("local)"))!.definitions!;
   assert.equal(local[0]!.fileName, file);
 });
+
+test("the VS Code TypeScript plugin resolves packages tcm provides, as tcm does", () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "tcm ts-plugin packages ")));
+  const tcm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: root, env, encoding: "utf8" });
+  tcm("init");
+  const file = path.join(root, "scratch.ts");
+  // ms isn't installed in the project: tcm provides it
+  fs.writeFileSync(file, `import ms from "ms";\nexport const short = (n: number): string => ms(n);\n`);
+  const checked = tcm("check");
+  assert.equal(checked.status, 0, checked.stdout + checked.stderr);
+
+  const config = ts.getParsedCommandLineOfConfigFile(path.join(root, "tsconfig.json"), {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} })!;
+  const host: ts.LanguageServiceHost = {
+    getScriptFileNames: () => [file],
+    getScriptVersion: () => "1",
+    getScriptSnapshot: (f) => (fs.existsSync(f) ? ts.ScriptSnapshot.fromString(fs.readFileSync(f, "utf8")) : undefined),
+    getCompilationSettings: () => config.options,
+    getCurrentDirectory: () => root,
+    getDefaultLibFileName: (o) => ts.getDefaultLibFilePath(o),
+    fileExists: ts.sys.fileExists,
+    readFile: ts.sys.readFile,
+    readDirectory: ts.sys.readDirectory,
+    directoryExists: ts.sys.directoryExists,
+    getDirectories: ts.sys.getDirectories,
+  };
+  const errors = (service: ts.LanguageService) => service.getSemanticDiagnostics(file).map((d) => ts.flattenDiagnosticMessageText(d.messageText, " "));
+  assert.match(errors(ts.createLanguageService(host)).join("\n"), /Cannot find module 'ms'/, "TypeScript alone can't find it");
+  const pluginHost = { ...host };
+  (plugin as unknown as (m: { typescript: typeof ts }) => { create(info: object): ts.LanguageService })({ typescript: ts }).create({ languageService: ts.createLanguageService(pluginHost), languageServiceHost: pluginHost });
+  assert.deepEqual(errors(ts.createLanguageService(pluginHost)), [], "with the plugin, it resolves to tcm's copy, types included");
+});

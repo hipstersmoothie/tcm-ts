@@ -449,6 +449,25 @@ export class Store {
     this.db.prepare("INSERT OR REPLACE INTO packages (name, range, version) VALUES (?, ?, ?)").run(name, range, version);
   }
 
+  /**
+   * The ranges of package `name` that named definitions use (all, or those at `prefix` and below), with how many
+   * definitions use each.
+   */
+  packageRanges(name: string, prefix = ""): Map<string, number> {
+    const rows = this.db
+      .prepare(
+        `SELECT d.to_ref AS ref, COUNT(DISTINCT n.hash) AS n FROM names n JOIN deps d ON d.from_hash = n.hash
+         WHERE n.branch_id = ? AND (? = '' OR n.path = ? OR n.path LIKE ?) AND d.to_ref LIKE ? GROUP BY d.to_ref`,
+      )
+      .all(this.branch().id, prefix, prefix, `${prefix}.%`, `npm:${name}@%`) as { ref: string; n: number }[];
+    const out = new Map<string, number>();
+    for (const r of rows) {
+      const range = r.ref.slice(`npm:${name}@`.length).split("#")[0]!;
+      out.set(range, (out.get(range) ?? 0) + r.n);
+    }
+    return out;
+  }
+
   /** Every locked package, by name then range. */
   lockedPackages(): { name: string; range: string; version: string }[] {
     return this.db.prepare("SELECT name, range, version FROM packages ORDER BY name, range").all() as { name: string; range: string; version: string }[];

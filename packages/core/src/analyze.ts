@@ -33,6 +33,8 @@ export interface AnalyzeHost {
    * a salt identical code at two places would wrongly become one definition. Return undefined for none.
    */
   saltFor?(file: string, name: string, targetPath?: string): string | undefined;
+  /** where package `name` is for imports in `file`, when tcm provides it (see PackageResolver) */
+  packageDir?(name: string, file: string): string | undefined;
 }
 
 export interface WatchRecord extends DefRecord {
@@ -141,6 +143,15 @@ function analyzeWith(files: string[], host: AnalyzeHost, mode: ExtractMode): Omi
   return { ...result, program, diagnostics: [] };
 }
 
+function readPackage(dir: string): { name: string; version: string } | undefined {
+  try {
+    const json = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) as { name: string; version: string };
+    return { name: json.name, version: json.version };
+  } catch {
+    return undefined;
+  }
+}
+
 function findPackage(name: string, fromDir: string): { name: string; version: string } | undefined {
   for (let dir = fromDir; ; dir = path.dirname(dir)) {
     const pj = path.join(dir, "node_modules", name, "package.json");
@@ -184,7 +195,7 @@ function importClassifier(file: string, host: AnalyzeHost) {
       }
       r = { kind: "hash", hash };
     } else {
-      r = { kind: "ext", ext: externalModule(spec, file, d, exportName) };
+      r = { kind: "ext", ext: externalModule(spec, file, d, exportName, host) };
     }
     cache.set(key, r);
     return r;
@@ -200,13 +211,15 @@ function isServerApiFile(spec: string, file: string, host: AnalyzeHost): boolean
 }
 
 /** A Node builtin or an npm package (version pinned from node_modules), as imported from `file`. */
-function externalModule(spec: string, file: string, at: ts.Node, exportName: string): ExtRef {
+function externalModule(spec: string, file: string, at: ts.Node, exportName: string, host?: AnalyzeHost): ExtRef {
   if (spec === SERVER_API) return { module: SERVER_API_MODULE, subpath: "", export: exportName };
   if (isBuiltin(spec)) return { module: spec.startsWith("node:") ? spec : `node:${spec}`, subpath: "", export: exportName };
   const parts = spec.split("/");
   const pkgName = spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
   const subpath = parts.slice(pkgName.split("/").length).join("/");
-  const pkg = findPackage(pkgName, path.dirname(file));
+  // a package tcm provides (not installed in the project) is where the file's imports resolved it
+  const provided = host?.packageDir?.(pkgName, file);
+  const pkg = provided ? readPackage(provided) : findPackage(pkgName, path.dirname(file));
   if (!pkg) throw new TcmError(`cannot find package '${pkgName}' in node_modules`, at);
   // the hash records the range semver calls compatible; the codebase's lock picks the version within it
   const module = `npm:${pkg.name}@${compatRange(pkg.version)}`;
@@ -216,12 +229,12 @@ function externalModule(spec: string, file: string, at: ts.Node, exportName: str
 }
 
 /** `import("pkg")` loads a package lazily; it's as content-addressable as a static import of the same package. */
-function dynamicImportClassifier(file: string) {
+function dynamicImportClassifier(file: string, host?: AnalyzeHost) {
   return (spec: string, at: ts.Node): ExtRef => {
     if (spec === "#codebase" || spec.startsWith("#codebase/") || spec.startsWith(".") || spec.startsWith("/")) {
       throw new TcmError("dynamic `import()` of codebase or local modules isn't supported; import definitions statically", at);
     }
-    return externalModule(spec, file, at, "*");
+    return externalModule(spec, file, at, "*", host);
   };
 }
 
@@ -370,12 +383,12 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
     projectFiles: new Set(sfs),
     allowTransformed: mode === "import",
     classifyImport: (d, meaning) => classifiers.get(d.getSourceFile())!(d, meaning),
-    classifyDynamicImport: (spec, at) => dynamicImportClassifier(at.getSourceFile().fileName)(spec, at),
+    classifyDynamicImport: (spec, at) => dynamicImportClassifier(at.getSourceFile().fileName, host)(spec, at),
     jsxRuntime: (at) => {
       const sf = at.getSourceFile();
       // generated modules name their (aliased) runtime in a pragma; scratch files use the project's setting
       const source = /@jsxImportSource\s+(\S+)/.exec(sf.text.slice(0, 2000))?.[1] ?? options.jsxImportSource ?? "react";
-      return externalModule(`${source}/jsx-runtime`, sf.fileName, at, "*");
+      return externalModule(`${source}/jsx-runtime`, sf.fileName, at, "*", host);
     },
     kindOf: (def) => sites[def]!.kind,
     isLet: (def) => sites[def]!.tag === "Let",

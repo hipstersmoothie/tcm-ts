@@ -6,7 +6,9 @@ saving, changing, fixing, renaming and undoing.
 ## Scratch files
 
 Any `.ts` or `.tsx` file at the top of your codebase directory is a scratch file (`tcm init` makes `scratch.ts`). It's
-ordinary TypeScript: your editor checks it, and `node scratch.ts` runs it.
+ordinary TypeScript: your editor checks it, and it imports packages without installing them
+([packages](packages.md)). `node scratch.ts` runs it when what it imports is installed in the project; `tcm check`
+runs its watch expressions either way.
 
 - **Namespaces.** `// tcm: namespace lib.util` as the first line puts the file's definitions under `lib.util`.
   Without it they go at the root. `tcm add --into lib.util` does the same from the command line.

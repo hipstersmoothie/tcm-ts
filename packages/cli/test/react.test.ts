@@ -10,7 +10,7 @@ import { CHROME, hydrated, withPage } from "./browser.ts";
 
 // React apps end to end: placement of hooks, classes and contexts; server components streaming <Suspense>
 // boundaries; the first paint rendered on the server and hydrated, in tcm dev and in a production build.
-// Installs React from npm.
+// Nothing is installed in the project: tcm provides React from its cache.
 
 const BIN = process.env.TCM_BIN ? path.resolve(process.env.TCM_BIN) : fileURLToPath(new URL("../bin/tcm.js", import.meta.url));
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcm react "));
@@ -124,8 +124,6 @@ export function App() {
 test("React: hooks, classes and contexts are placed; <Suspense> streams; the first paint is server-rendered", { skip: !CHROME && "no Chrome" }, async () => {
   tcm("init");
   fs.rmSync(path.join(dir, "scratch.ts"));
-  const npm = spawnSync("npm", ["install", "--silent", "--no-audit", "--no-fund", "react@19", "react-dom@19", "@types/react@19", "@types/react-dom@19"], { cwd: dir, encoding: "utf8" });
-  assert.equal(npm.status, 0, npm.stderr);
   fs.writeFileSync(path.join(dir, "ui.tsx"), APP);
   tcm("add", "ui.tsx");
 

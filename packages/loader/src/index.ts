@@ -561,4 +561,4 @@ writeFileSync(${JSON.stringify(out)}, JSON.stringify(results));
 }
 
 export { writeIfChanged };
-export { ensureExternals, lockAtLeast, npmAlias, packageManager, parseModule, usePackageLock, type PackageLock } from "./packages.ts";
+export { ensureExternals, lockAtLeast, newestVersion, npmAlias, packageManager, parseModule, usePackageLock, type PackageLock } from "./packages.ts";

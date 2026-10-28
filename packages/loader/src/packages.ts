@@ -128,6 +128,13 @@ function pickVersions(wanted: { name: string; range: string }[], lock: PackageLo
   }
 }
 
+/** The newest version of `name` (its `latest` tag), from the registry; undefined if there's no such package. */
+export function newestVersion(name: string): string | undefined {
+  const r = spawnSync(packageManager(), ["view", name, "version"], { encoding: "utf8" });
+  const v = r.status === 0 ? r.stdout.trim() : "";
+  return v || undefined;
+}
+
 // ---- installing ----------------------------------------------------------------------------------------------
 
 interface CachePackageJson {

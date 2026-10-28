@@ -1,10 +1,7 @@
 # npm packages and Node builtins
 
-Use packages the way you always do: install them, import them.
-
-```sh
-npm install ms @types/ms
-```
+Import a package; that's all. There's no `npm install` and no `package.json` to keep up to date: tcm provides
+the package, with its types, from its own cache.
 
 ```ts
 // tcm: namespace time
@@ -21,10 +18,27 @@ $ tcm check
 scratch.ts → time
   + new       time.short : (millis: number) => string
 installing ms@2.1.3
+installing @types/ms@2.1.0
 
     7 │ short(90_000)
       ⧩ '2m'
 ```
+
+Your editor sees the same package: tcm's VS Code extension resolves a scratch file's imports where tcm does.
+
+## Which version a scratch file gets
+
+Each package a scratch file imports gets a [compatible range](#versions) from the code around it:
+
+1. the range used by the codebase definitions the file imports, so a new component beside React 18 components
+   gets React 18;
+2. else the range used in the file's namespace;
+3. else the project's own copy, if `node_modules` has it installed (it's used as is, as before);
+4. else the newest range the codebase already runs;
+5. else the newest release.
+
+What you save records that range. Other code keeps whatever range it was written against, so two apps in one
+codebase can be on different majors of the same package.
 
 ## Versions
 

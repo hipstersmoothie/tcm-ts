@@ -1,6 +1,7 @@
 #!/bin/sh
 # Build the notes example as a tcm codebase in <dir> (default ./notes-demo), then open <dir> in your editor.
-# Uses this checkout's tcm unless TCM is set (e.g. TCM=tcm for an installed one). Installs React from npm.
+# Uses this checkout's tcm unless TCM is set (e.g. TCM=tcm for an installed one). Nothing to install: tcm
+# provides React (and every other package the code imports) from its cache.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 dir=${1:-$PWD/notes-demo}
@@ -17,8 +18,6 @@ mkdir -p "$dir"
 cd "$dir"
 tcm init > /dev/null
 rm -f scratch.ts
-# React and its types: definitions pin the versions installed here
-npm install --silent --no-audit --no-fund react@19 react-dom@19 @types/react@19 @types/react-dom@19
 
 # the code goes into the codebase file by file, as you'd add it from scratch files; then the files go away:
 # from here on the code lives in .tcm, and the editor shows it from there

@@ -34,10 +34,11 @@ export function App() {                                           // renders any
 ```
 
 ```sh
-npm install react react-dom @types/react @types/react-dom
 tcm add notes.tsx
 tcm dev notes.App
 ```
+
+There's nothing to install: tcm provides React, React DOM and their types ([packages](packages.md)).
 
 `tcm dev` (and `tcm build`/`tcm start`) accept a component as the app. tcm renders its first paint on the
 server, then the browser takes it over (hydrates it) with React DOM ([below](#the-first-paint)). A `main`
@@ -154,9 +155,9 @@ the browser component can import what it needs itself
 ## Packages and versions
 
 JSX compiles to calls into `react/jsx-runtime` (or your tsconfig's `jsxImportSource`). That runtime is pinned
-like an import: a component's hash includes the React version it was written against, and its generated module
-imports that version. tcm also installs the project's `@types/react` for it, and makes the packages React
-installs beside it (React DOM's `react`) use the same copy, so there's one React.
+like an import, by compatible range: a component's hash says it was written against React 19, and the codebase
+runs one React 19.x for all of them, with React DOM at the matching version, so there's one React
+([packages](packages.md#versions)).
 
 ## Trying components out
 

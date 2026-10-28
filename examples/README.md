@@ -31,7 +31,7 @@ callable from the browser by hash), `polls.main` in the browser.
 ## notes: React server components
 
 ```sh
-examples/notes/setup.sh /tmp/notes      # installs React, builds the codebase there, runs its tests
+examples/notes/setup.sh /tmp/notes      # builds the codebase there and runs its tests
 cd /tmp/notes && tcm dev notes.App      # or ▶ Start in VS Code's Apps view
 ```
 
