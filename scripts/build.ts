@@ -69,6 +69,8 @@ const bin = fs
 if (bin.includes(".ts")) throw new Error("bin still imports TypeScript source");
 fs.writeFileSync(path.join(out, "bin", "ucm.js"), bin, { mode: 0o755 });
 fs.copyFileSync(path.join(repo, "README.md"), path.join(out, "README.md"));
+// the README links into docs/, so the package carries it too
+fs.cpSync(path.join(repo, "docs"), path.join(out, "docs"), { recursive: true });
 fs.writeFileSync(
   path.join(out, "package.json"),
   JSON.stringify(
@@ -81,7 +83,7 @@ fs.writeFileSync(
       bin: { ucm: "bin/ucm.js", "ucm-ts": "bin/ucm.js" },
       engines: { node: ">=22.18" },
       dependencies,
-      files: ["bin", "core", "store", "loader", "cli", "README.md"],
+      files: ["bin", "core", "store", "loader", "cli", "README.md", "docs"],
     },
     null,
     2,
