@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { Marked, type Tokens } from "marked";
+import { createHighlighter } from "shiki";
 
 const repo = path.resolve(import.meta.dirname, "..");
 const out = path.resolve(process.argv[2] ?? path.join(repo, "dist", "site"));
@@ -35,6 +36,11 @@ for (const m of index.matchAll(/^\| \[([^\]]+)\]\(([^)]+)\) \|/gm)) {
   pages.push({ src, file: `${name}.html`, label, n: pages.length });
 }
 const bySrc = new Map(pages.map((p) => [p.src, p]));
+
+// code is highlighted when the site is built (no script on the page): a light and a dark theme, as CSS variables,
+// so the colours follow the system like the rest of the page
+const LANGS = ["ts", "typescript", "js", "json", "sh", "bash", "toml", "lua"];
+const highlighter = await createHighlighter({ themes: ["github-light", "github-dark"], langs: LANGS });
 
 /** GitHub's heading anchors (what the docs' own links use). */
 const slug = (text: string) => text.trim().toLowerCase().replace(/<[^>]+>/g, "").replace(/[^\w\- ]/g, "").replace(/ /g, "-");
@@ -88,6 +94,9 @@ function render(page: Page): { html: string; title: string; toc: { id: string; t
         return `<a href="${to.file}${anchor ? `#${anchor}` : ""}">${text}</a>`;
       },
       code({ text, lang }: Tokens.Code) {
+        if (lang && LANGS.includes(lang)) {
+          return highlighter.codeToHtml(text, { lang, themes: { light: "github-light", dark: "github-dark" }, defaultColor: false }) + "\n";
+        }
         return `<pre${lang ? ` data-lang="${esc(lang)}"` : ""}>${esc(text)}</pre>\n`;
       },
       table(token: Tokens.Table) {
@@ -184,6 +193,10 @@ ul, ol { padding-left: 4ch; } li { margin: 2px 0; }
 code { font: inherit; }
 p code, li code, td code { white-space: nowrap; }
 pre { margin: 0 0 14px; padding: 8px 2ch; background: var(--code); overflow-x: auto; font: inherit; }
+pre.shiki { background: var(--code) !important; }
+pre.shiki code { font: inherit; }
+.shiki span { color: var(--shiki-light); }
+@media (prefers-color-scheme: dark) { .shiki span { color: var(--shiki-dark); } }
 .table { overflow-x: auto; }
 table { border-collapse: collapse; }
 th { font-weight: normal; text-decoration: underline; text-align: left; }
