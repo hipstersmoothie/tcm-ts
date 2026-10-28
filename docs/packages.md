@@ -63,6 +63,12 @@ package and range, so everything on React 19 runs on the same React 19.x:
 - A new major is a different range: code on `lodash` 3 and code on `lodash` 4 run side by side, each on its own
   version.
 
+**A locked version is one tarball.** The first install records its integrity (the registry's sha512 of the
+tarball) in the lock, and an install that gets different bytes for that version is refused. Pushing and pulling
+carry the lock entries for the code they send: received code runs on the versions, and the exact tarballs, it was
+written against. A range the receiving codebase doesn't lock yet takes the sender's version; within a range both
+lock, the newer one wins.
+
 Each locked version is installed into `.tcm/cache` under an alias for its range (`npm__ms__2`), separately from
 your `node_modules`. tcm uses pnpm when it's installed, which keeps one copy of each exact version, peers included,
 and npm otherwise. A package without types of its own gets its DefinitelyTyped types (`@types/react`) installed

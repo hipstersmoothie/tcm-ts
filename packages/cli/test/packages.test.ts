@@ -96,4 +96,40 @@ test("packages: an app can't mix ranges of a package others build against; upgra
   const moved = tcm("upgrade", "react@18", "app");
   assert.match(moved, /with react-dom 18/);
   assert.match(tcm("deps", "app.main"), /npm:react-dom@18\/client#createRoot/);
+  // with both majors in the cache, each React DOM runs on the React its peer range accepts
+  const reactSeenBy = (alias: string) =>
+    spawnSync(process.execPath, ["-e", 'console.log(require("react/package.json").version)'], { cwd: path.join(dir, ".tcm", "cache", "node_modules", alias), encoding: "utf8" }).stdout.trim();
+  assert.match(reactSeenBy("npm__react-dom__18"), /^18\./);
+  assert.match(reactSeenBy("npm__react-dom__19"), /^19\./);
+});
+
+test("packages: a locked version is one tarball, and it travels with the code", () => {
+  // hold ms 1 back at an older version than the registry's newest, installed and recorded
+  const there = fs.mkdtempSync(path.join(os.tmpdir(), "tcm packages remote "));
+  spawnSync(process.execPath, [BIN, "init"], { cwd: there, env });
+  sql("UPDATE packages SET version = '1.0.0', integrity = NULL WHERE name = 'ms' AND range = '1'");
+  fs.rmSync(path.join(dir, ".tcm", "cache", "node_modules"), { recursive: true, force: true });
+  assert.match(tcm("check", "--fresh"), /⧩ '2m'/);
+  const mine = sql("SELECT version, integrity FROM packages WHERE name = 'ms' AND range = '1'")[0]!;
+  assert.equal(mine.version, "1.0.0");
+  assert.match(mine.integrity!, /^sha(512|1)-/, "the install recorded the tarball's hash");
+
+  // pushed code brings the versions it runs on, not whatever is newest over there
+  tcm("remote", "add", "there", there);
+  tcm("push", "there");
+  const theirs = (() => {
+    const db = new DatabaseSync(path.join(there, ".tcm", "codebase.sqlite"), { readOnly: true });
+    try {
+      return db.prepare("SELECT version, integrity FROM packages WHERE name = 'ms' AND range = '1'").get() as Record<string, string>;
+    } finally {
+      db.close();
+    }
+  })();
+  assert.deepEqual({ ...theirs }, { ...mine });
+
+  // different bytes under a locked version are refused
+  sql("UPDATE packages SET integrity = 'sha512-not-what-the-registry-serves' WHERE name = 'ms' AND range = '1'");
+  fs.rmSync(path.join(dir, ".tcm", "cache", "node_modules"), { recursive: true, force: true });
+  assert.match(fails("check", "--fresh"), /ms@1\.0\.0: the installed tarball .* isn't the one this codebase locked/);
+  sql("UPDATE packages SET integrity = ? WHERE name = 'ms' AND range = '1'", mine.integrity!);
 });

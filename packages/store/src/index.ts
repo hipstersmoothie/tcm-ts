@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS patches (branch_id INTEGER NOT NULL, old_hash TEXT NO
 CREATE TABLE IF NOT EXISTS todo (branch_id INTEGER NOT NULL, hash TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY (branch_id, hash));
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 -- the package lock: definitions pin a package by compatible range (npm:ms@2); the codebase runs one version of each
-CREATE TABLE IF NOT EXISTS packages (name TEXT NOT NULL, range TEXT NOT NULL, version TEXT NOT NULL, PRIMARY KEY (name, range));
+-- integrity: the registry's hash of the version's tarball (sha512-…), recorded when first installed and checked after
+CREATE TABLE IF NOT EXISTS packages (name TEXT NOT NULL, range TEXT NOT NULL, version TEXT NOT NULL, integrity TEXT, PRIMARY KEY (name, range));
 CREATE TABLE IF NOT EXISTS test_results (
   hash TEXT NOT NULL, node_version TEXT NOT NULL, ok INTEGER NOT NULL, message TEXT NOT NULL,
   output TEXT NOT NULL, duration_ms INTEGER NOT NULL, ts INTEGER NOT NULL,
@@ -98,6 +99,10 @@ export class Store {
     this.db = new DatabaseSync(file);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
     this.db.exec(SCHEMA);
+    // codebases from before integrity was recorded
+    if (!(this.db.prepare("PRAGMA table_info(packages)").all() as { name: string }[]).some((c) => c.name === "integrity")) {
+      this.db.exec("ALTER TABLE packages ADD COLUMN integrity TEXT");
+    }
     const cols = this.db.prepare("PRAGMA table_info(name_log)").all() as { name: string }[];
     if (!cols.some((c) => c.name === "batch")) this.db.exec("ALTER TABLE name_log ADD COLUMN batch INTEGER NOT NULL DEFAULT 0");
     this.db.prepare("INSERT OR IGNORE INTO branches (name) VALUES ('main')").run();
@@ -445,8 +450,16 @@ export class Store {
     return (this.db.prepare("SELECT version FROM packages WHERE name = ? AND range = ?").get(name, range) as { version: string } | undefined)?.version;
   }
 
-  lockVersion(name: string, range: string, version: string) {
-    this.db.prepare("INSERT OR REPLACE INTO packages (name, range, version) VALUES (?, ?, ?)").run(name, range, version);
+  /** Lock `name` within `range` to `version`; the integrity recorded for a previous version doesn't carry over. */
+  lockVersion(name: string, range: string, version: string, integrity?: string) {
+    const was = this.db.prepare("SELECT version, integrity FROM packages WHERE name = ? AND range = ?").get(name, range) as { version: string; integrity: string | null } | undefined;
+    const keep = was?.version === version ? (was.integrity ?? undefined) : undefined;
+    this.db.prepare("INSERT OR REPLACE INTO packages (name, range, version, integrity) VALUES (?, ?, ?, ?)").run(name, range, version, integrity ?? keep ?? null);
+  }
+
+  /** The integrity recorded for the locked version of `name` within `range`. */
+  lockedIntegrity(name: string, range: string): string | undefined {
+    return (this.db.prepare("SELECT integrity FROM packages WHERE name = ? AND range = ?").get(name, range) as { integrity: string | null } | undefined)?.integrity ?? undefined;
   }
 
   /**
@@ -469,8 +482,10 @@ export class Store {
   }
 
   /** Every locked package, by name then range. */
-  lockedPackages(): { name: string; range: string; version: string }[] {
-    return this.db.prepare("SELECT name, range, version FROM packages ORDER BY name, range").all() as { name: string; range: string; version: string }[];
+  lockedPackages(): { name: string; range: string; version: string; integrity?: string }[] {
+    return (this.db.prepare("SELECT name, range, version, integrity FROM packages ORDER BY name, range").all() as { name: string; range: string; version: string; integrity: string | null }[]).map(
+      (r) => ({ name: r.name, range: r.range, version: r.version, ...(r.integrity ? { integrity: r.integrity } : {}) }),
+    );
   }
 
   // ---- test results ----------------------------------------------------------

@@ -3,6 +3,7 @@ import path from "node:path";
 import { registerHooks } from "node:module";
 import type ts from "typescript";
 import {
+  compareVersions,
   analyzeFile,
   incrementalCompiler,
   analyzeProject,
@@ -65,6 +66,14 @@ registerHooks({
 import { Store } from "@tcm/store";
 import { ensureExternals, externalsOf, layout, lockAtLeast, materialize, moduleFile, parseModule, render, usePackageLock, writeIfChanged, writeShim, type DefSource, type Layout } from "@tcm/loader";
 import { providePackages } from "./provided.ts";
+
+/** One package lock entry, as codebases exchange them. */
+export interface LockEntry {
+  name: string;
+  range: string;
+  version: string;
+  integrity?: string;
+}
 import { serverApiFiles } from "./server-api.ts";
 
 /** A dotted codebase name: `lib.util.sort`. */
@@ -106,7 +115,8 @@ export class Codebase {
     // the versions generated modules run with
     usePackageLock(this.lay, {
       get: (name, range) => this.store.lockedVersion(name, range),
-      set: (name, range, version) => this.store.lockVersion(name, range, version),
+      set: (name, range, version, integrity) => this.store.lockVersion(name, range, version, integrity),
+      integrity: (name, range) => this.store.lockedIntegrity(name, range),
       all: () => this.store.lockedPackages(),
     });
     // the #tcm/server runtime every generated module and runner in this codebase shares
@@ -448,6 +458,37 @@ export class Codebase {
       const { name, version: range } = parseModule(module);
       const was = lockAtLeast(this.lay, name, range, version);
       if (was) process.stderr.write(`${name} ${was} → ${version} (code was checked against ${version})\n`);
+    }
+  }
+
+  /**
+   * The lock entries for the packages `records` use (`name@range`, their @types included): what another codebase
+   * needs to run them on exactly these versions.
+   */
+  packagesUsedBy(records: DefRecord[], from = this.store.lockedPackages()): LockEntry[] {
+    const used = new Set<string>();
+    for (const r of records) {
+      for (const d of r.deps) {
+        const m = /^npm:((?:@[^/@]+\/)?[^@/]+)@([^/#]+)/.exec(d.ref);
+        if (m) used.add(`${m[1]}@${m[2]}`), used.add(`@types/${m[1]!.replace(/^@/, "").replace("/", "__")}@${m[2]}`);
+      }
+    }
+    return from.filter((l) => used.has(`${l.name}@${l.range}`));
+  }
+
+  /**
+   * Take lock entries from another codebase, for code received from it. A range not locked here is locked at its
+   * version; within a range, the newer version wins (semver: newer only adds). The same version must be the same
+   * tarball on both sides.
+   */
+  adoptPackages(entries: LockEntry[]) {
+    for (const e of entries) {
+      const was = this.store.lockedVersion(e.name, e.range);
+      if (was === e.version) {
+        const mine = this.store.lockedIntegrity(e.name, e.range);
+        if (mine && e.integrity && mine !== e.integrity) throw new Error(`${e.name}@${e.version} is a different tarball there than here; refusing it`);
+        if (!mine && e.integrity) this.store.lockVersion(e.name, e.range, e.version, e.integrity);
+      } else if (!was || compareVersions(e.version, was) > 0) this.store.lockVersion(e.name, e.range, e.version, e.integrity);
     }
   }
 

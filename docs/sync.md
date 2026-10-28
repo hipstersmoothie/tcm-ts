@@ -10,7 +10,8 @@ directory. `tcm remote` lists them; `tcm remote rm <name>` removes one.
 
 ## Push and pull
 
-- **Sync is by hash:** only components the other side lacks are sent.
+- **Sync is by hash:** only components the other side lacks are sent, along with the package lock entries they
+  use (versions and tarball hashes; see [packages](packages.md#versions)).
 - **`tcm pull [remote] [branch]`** mirrors into `<remote>/<branch>` (e.g. `origin/main`). It fast-forwards your
   branch if you haven't changed it, and [merges](history.md#merging) otherwise.
 - **`tcm push [remote] [--as branch] [--force]`** sends definitions plus this branch's names. It refuses if the

@@ -9,7 +9,7 @@ import { randomBytes, timingSafeEqual, X509Certificate } from "node:crypto";
 import { shortHash, type DefRecord } from "@tcm/core";
 import type { NameRow } from "@tcm/store";
 import { runStreaming } from "@tcm/loader";
-import { Codebase, IDENT_PATH } from "./codebase.ts";
+import { Codebase, IDENT_PATH, type LockEntry } from "./codebase.ts";
 import { diffNamespaces, printDiff, stateOf } from "./diff.ts";
 import { mergeBranch, recordMergeBase } from "./merge.ts";
 import { bold, dim, green, red, yellow } from "./style.ts";
@@ -30,6 +30,10 @@ export interface Remote {
   /** full components containing these definition hashes */
   get(hashes: string[]): Promise<DefRecord[]>;
   put(records: DefRecord[]): Promise<{ stored: number }>;
+  /** its package lock: the versions (and tarball hashes) its code runs on */
+  packages(): Promise<LockEntry[]>;
+  /** lock entries for code about to be sent (before `put`, so it's verified on those versions) */
+  putPackages(entries: LockEntry[]): Promise<void>;
   branch(name: string): Promise<BranchState | null>;
   /** replace a branch's names, only if its state is still `expect` (null: branch must not exist) */
   setBranch(name: string, names: NameRow[], expect: string | null, command: string): Promise<void>;
@@ -63,6 +67,14 @@ export class Peer {
 
   put(records: DefRecord[]): { stored: number } {
     return this.cb.receive(records);
+  }
+
+  packages(): LockEntry[] {
+    return this.cb.store.lockedPackages();
+  }
+
+  putPackages(entries: LockEntry[]) {
+    this.cb.adoptPackages(entries);
   }
 
   branch(name: string): BranchState | null {
@@ -114,6 +126,12 @@ class DirectoryRemote implements Remote {
   }
   async put(r: DefRecord[]) {
     return this.peer.put(r);
+  }
+  async packages() {
+    return this.peer.packages();
+  }
+  async putPackages(e: LockEntry[]) {
+    this.peer.putPackages(e);
   }
   async branch(n: string) {
     return this.peer.branch(n);
@@ -201,6 +219,12 @@ class HttpRemote implements Remote {
   put(records: DefRecord[]) {
     return this.call<{ stored: number }>("put", { records });
   }
+  async packages() {
+    return (await this.call<{ packages: LockEntry[] }>("packages", {})).packages;
+  }
+  async putPackages(entries: LockEntry[]) {
+    await this.call("put-packages", { packages: entries });
+  }
   async branch(name: string) {
     return (await this.call<{ branch: BranchState | null }>("branch", { name })).branch;
   }
@@ -270,7 +294,11 @@ async function sendClosure(cb: Codebase, remote: Remote, hashes: string[]): Prom
   const comps = [...cb.closureComponents(hashes)];
   const missing = await remote.missing(comps);
   const records = missing.flatMap((c) => cb.store.componentMembers(c));
-  if (records.length) await remote.put(records);
+  if (records.length) {
+    // the versions the code runs on go first: the other side verifies it on them
+    await remote.putPackages(cb.packagesUsedBy(records));
+    await remote.put(records);
+  }
   return records.length;
 }
 
@@ -321,6 +349,8 @@ export async function pull(cb: Codebase, spec: string, remoteBranch: string | un
   const theirs = await remote.branch(branch);
   if (!theirs) throw new Error(`${name} has no branch '${branch}'`);
   const records = await fetchClosure(cb, remote, theirs.names.map((n) => n.hash));
+  // the versions their code runs on, then the code (verified on them)
+  if (records.length) cb.adoptPackages(cb.packagesUsedBy(records, await remote.packages()));
   const { stored } = cb.receive(records);
   const tracking = `${name}/${branch}`;
   cb.store.setBranchNames(tracking, theirs.names, `pull ${name}`);
@@ -437,6 +467,11 @@ export function serve(cb: Codebase, opts: ServeOptions, insecure = false): http.
           console.log(dim(`received ${r.stored} definition(s)`));
           return reply(200, r);
         }
+        case "packages":
+          return reply(200, { packages: peer.packages() });
+        case "put-packages":
+          peer.putPackages(body.packages ?? []);
+          return reply(200, {});
         case "branch":
           return reply(200, { branch: peer.branch(String(body.name)) });
         case "set-branch":

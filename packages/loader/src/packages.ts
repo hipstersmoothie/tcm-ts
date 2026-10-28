@@ -20,8 +20,10 @@ import type { Layout } from "./index.ts";
 /** The codebase's package lock: the exact version of each package used within each compatible range. */
 export interface PackageLock {
   get(name: string, range: string): string | undefined;
-  set(name: string, range: string, version: string): void;
-  all(): { name: string; range: string; version: string }[];
+  /** `integrity`: the tarball's hash; omitted, the one recorded for the same version is kept */
+  set(name: string, range: string, version: string, integrity?: string): void;
+  integrity(name: string, range: string): string | undefined;
+  all(): { name: string; range: string; version: string; integrity?: string }[];
 }
 
 const locks = new Map<string, PackageLock>();
@@ -32,11 +34,15 @@ export function usePackageLock(lay: Layout, lock: PackageLock): void {
 }
 
 function memoryLock(): PackageLock {
-  const m = new Map<string, string>();
+  const m = new Map<string, { version: string; integrity?: string }>();
   return {
-    get: (n, r) => m.get(`${n}@${r}`),
-    set: (n, r, v) => void m.set(`${n}@${r}`, v),
-    all: () => [...m].map(([k, version]) => ({ name: k.slice(0, k.lastIndexOf("@")), range: k.slice(k.lastIndexOf("@") + 1), version })),
+    get: (n, r) => m.get(`${n}@${r}`)?.version,
+    set: (n, r, version, integrity) => {
+      const was = m.get(`${n}@${r}`);
+      m.set(`${n}@${r}`, { version, integrity: integrity ?? (was?.version === version ? was.integrity : undefined) });
+    },
+    integrity: (n, r) => m.get(`${n}@${r}`)?.integrity,
+    all: () => [...m].map(([k, v]) => ({ name: k.slice(0, k.lastIndexOf("@")), range: k.slice(k.lastIndexOf("@") + 1), ...v })),
   };
 }
 
@@ -245,28 +251,95 @@ export function ensureExternals(lay: Layout, exts: Iterable<ExtRef>): void {
   }
   write();
   if (typeMissing.length) install(lay, typeMissing);
-  if (packageManager() === "npm") linkPeers(lay, deps);
+  if (missing.length || typeMissing.length) {
+    checkIntegrity(lay, lock);
+    linkPeers(lay, lock);
+  }
+}
+
+/** What the cache's install got, by `name@version`: the integrity its package manager recorded for each tarball. */
+function installedIntegrity(lay: Layout): Map<string, string> {
+  const out = new Map<string, string>();
+  const pnpmLock = path.join(lay.cacheDir, "pnpm-lock.yaml");
+  if (fs.existsSync(pnpmLock)) {
+    // packages:\n  'name@version':\n    resolution: {integrity: sha512-…}
+    for (const m of fs.readFileSync(pnpmLock, "utf8").matchAll(/^ {2}'?(@?[^@'\s]+)@([^'\s:(]+)'?:\n {4}resolution: \{integrity: ([^,}\s]+)/gm)) out.set(`${m[1]}@${m[2]}`, m[3]!);
+  }
+  const npmLock = path.join(lay.cacheDir, "package-lock.json");
+  if (fs.existsSync(npmLock)) {
+    const lock = JSON.parse(fs.readFileSync(npmLock, "utf8")) as { packages?: Record<string, { name?: string; version?: string; integrity?: string }> };
+    for (const [where, p] of Object.entries(lock.packages ?? {})) {
+      const name = p.name ?? where.replace(/^.*node_modules\//, "");
+      if (p.version && p.integrity) out.set(`${name}@${p.version}`, p.integrity);
+    }
+  }
+  return out;
 }
 
 /**
- * npm installs a package's peers (React DOM's `react`) under their plain names, beside the aliases. Two copies of
- * one package break packages that must be a single instance (React's hooks), so a peer at a version the codebase
- * locks becomes a link to the alias's copy. (pnpm needs none of this: it keeps one copy per exact version.)
+ * A locked version means exactly one tarball: the first install records its integrity (the registry's sha512),
+ * and an install that got different bytes for the same version is refused.
  */
-function linkPeers(lay: Layout, deps: Record<string, string>) {
-  const modules = path.join(lay.cacheDir, "node_modules");
-  for (const [alias, spec] of Object.entries(deps)) {
-    const m = /^npm:((?:@[^/]+\/)?[^@]+)@(.+)$/.exec(spec);
-    if (!m || alias.startsWith("@types/")) continue;
-    const plain = path.join(modules, m[1]!);
+function checkIntegrity(lay: Layout, lock: PackageLock) {
+  const installed = installedIntegrity(lay);
+  for (const l of lock.all()) {
+    const got = installed.get(`${l.name}@${l.version}`);
+    if (!got) continue;
+    if (!l.integrity) lock.set(l.name, l.range, l.version, got);
+    else if (l.integrity !== got) {
+      throw new Error(`${l.name}@${l.version}: the installed tarball (${got.slice(0, 20)}…) isn't the one this codebase locked (${l.integrity.slice(0, 20)}…); refusing to run it`);
+    }
+  }
+}
+
+/** Where a locked package range is installed: its alias, `@types/<alias>` for DefinitelyTyped packages. */
+function installDir(lay: Layout, name: string, range: string): string {
+  const alias = name.startsWith("@types/") ? `@types/${npmAlias(`npm:${name.slice("@types/".length)}@${range}`)}` : npmAlias(`npm:${name}@${range}`);
+  return path.join(lay.cacheDir, "node_modules", alias);
+}
+
+/** Where Node (and Vite, and TypeScript) would find package `name` from inside directory `dir`. */
+function resolvesTo(name: string, dir: string): string | undefined {
+  for (let d = dir; ; d = path.dirname(d)) {
+    const candidate = path.join(d, "node_modules", name);
+    if (fs.existsSync(path.join(candidate, "package.json"))) return fs.realpathSync(candidate);
+    if (path.dirname(d) === d) return undefined;
+  }
+}
+
+/**
+ * Point each installed package's peers at the locked range its peer range accepts. Package managers resolve a
+ * peer by name across the whole install, so with two ranges of React in the cache, React DOM 18 could get React
+ * 19 (pnpm), or a second copy at the same version (npm). Two copies of one React break it, and the wrong one
+ * breaks it worse. A link inside the package wins: Node resolution looks there first.
+ */
+function linkPeers(lay: Layout, lock: PackageLock) {
+  const locked = lock.all();
+  for (const l of locked) {
+    const dir = installDir(lay, l.name, l.range);
+    let real: string;
+    let peers: Record<string, string>;
     try {
-      if (fs.lstatSync(plain).isSymbolicLink()) continue;
-      if ((JSON.parse(fs.readFileSync(path.join(plain, "package.json"), "utf8")) as { version: string }).version !== m[2]) continue;
+      real = fs.realpathSync(dir);
+      peers = (JSON.parse(fs.readFileSync(path.join(real, "package.json"), "utf8")) as { peerDependencies?: Record<string, string> }).peerDependencies ?? {};
     } catch {
       continue;
     }
-    fs.rmSync(plain, { recursive: true, force: true });
-    fs.symlinkSync(path.relative(path.dirname(plain), path.join(modules, alias)), plain, "dir");
+    for (const [peer, range] of Object.entries(peers)) {
+      const fits = locked.filter((p) => p.name === peer && satisfies(p.version, range)).sort((a, b) => compareVersions(b.version, a.version))[0];
+      if (!fits) continue;
+      let target: string;
+      try {
+        target = fs.realpathSync(installDir(lay, fits.name, fits.range));
+      } catch {
+        continue;
+      }
+      if (resolvesTo(peer, real) === target) continue;
+      const link = path.join(real, "node_modules", peer);
+      fs.mkdirSync(path.dirname(link), { recursive: true });
+      fs.rmSync(link, { recursive: true, force: true });
+      fs.symlinkSync(target, link, "dir");
+    }
   }
 }
 
