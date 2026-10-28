@@ -122,8 +122,18 @@ The `#` icon in the activity bar opens three views:
   - Rows stored as an older row type are badged, and the header offers **Migrate rows**.
   - It's live: open viewers refresh as a running app writes rows. It's read-only; changing rows by hand would
     bypass the table's own type checks and migrations.
+- **Packages.** The npm packages the codebase runs ([packages](packages.md)): each package with its locked
+  version and how many definitions use it, by range when it runs more than one (React 18 and 19, say), and
+  under each, the definitions using it. Click one to open its **package page**:
+  - its README (the `@types` package's, when it has none), description, license, homepage and npm links;
+  - its API as its types declare it: every export, with its signature and JSDoc;
+  - what uses it, linking to those definitions' pages, and the other ranges the codebase runs;
+  - **Upgrade** (`tcm upgrade <package>`: newest versions within the range, nothing re-hashed) and **Move to
+    another range** (`tcm upgrade <package>@<range> [namespace]`).
 
-All three refresh when the codebase changes (including from a terminal), and the Data view also when the data
+  A definition page's **Packages** list links to these pages too.
+
+All four refresh when the codebase changes (including from a terminal), and the Data view also when the data
 does, so rows appear as a running app writes them.
 - **tcm: Find by type** (the search icon in the sidebar, or the command palette): type a TypeScript type, pick a
   match, and it opens.

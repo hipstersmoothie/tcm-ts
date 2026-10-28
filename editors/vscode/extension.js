@@ -181,6 +181,55 @@ class DataTree {
   }
 }
 
+/**
+ * The packages the codebase runs: each package, then (when it runs more than one) each compatible range, then the
+ * definitions that use it. A package or range opens its page (README, API, users).
+ */
+class PackagesTree {
+  constructor() {
+    this.changed = new vscode.EventEmitter();
+    this.onDidChangeTreeData = this.changed.event;
+  }
+  refresh() {
+    this.changed.fire();
+  }
+  async getChildren(element) {
+    if (!client || client.state !== 2) return [];
+    if (!element) return (await client.sendRequest("tcm/packages", {})).map((p) => (p.ranges.length === 1 ? { kind: "range", name: p.name, ...p.ranges[0], only: true } : { kind: "package", ...p }));
+    if (element.kind === "package") return element.ranges.map((r) => ({ kind: "range", name: element.name, ...r }));
+    if (element.kind === "range") return (await client.sendRequest("tcm/packageUsers", { name: element.name, range: element.range })).map((u) => ({ kind: "user", ...u }));
+    return [];
+  }
+  getTreeItem(e) {
+    if (e.kind === "user") {
+      const item = new vscode.TreeItem(e.path, vscode.TreeItemCollapsibleState.None);
+      item.description = e.kind === "type" ? "type" : e.signature;
+      item.iconPath = new vscode.ThemeIcon(e.kind === "type" ? "symbol-interface" : "symbol-function");
+      item.command = { command: "tcm.openPage", title: "Open page", arguments: [{ hash: e.hash }] };
+      return item;
+    }
+    if (e.kind === "package") {
+      const item = new vscode.TreeItem(e.name, vscode.TreeItemCollapsibleState.Collapsed);
+      item.id = `package:${e.name}`;
+      item.description = `${e.ranges.length} ranges: ${e.ranges.map((r) => r.version).join(", ")}`;
+      item.iconPath = new vscode.ThemeIcon("package");
+      item.contextValue = "package";
+      return item;
+    }
+    const label = e.only ? e.name : `${e.name} ${e.range}`;
+    const item = new vscode.TreeItem(label, e.users ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
+    item.id = `package:${e.name}@${e.range}`;
+    item.description = `${e.version} · ${e.users ? `${e.users} use${e.users === 1 ? "" : "s"}` : "unused"}`;
+    item.iconPath = new vscode.ThemeIcon(e.only ? "package" : "tag");
+    item.tooltip = new vscode.MarkdownString(
+      `**${e.name}** ${e.version} (range ${e.range})${e.types ? `\n\ntypes: @types ${e.types}` : ""}${e.integrity ? `\n\n\`${e.integrity.slice(0, 30)}…\`` : ""}`,
+    );
+    item.contextValue = "packageRange";
+    item.command = { command: "tcm.openPackagePage", title: "Open page", arguments: [e] };
+    return item;
+  }
+}
+
 async function activate(context) {
   const [command, ...args] = tcmCommand();
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -192,6 +241,8 @@ async function activate(context) {
     (method, params) => client.sendRequest(method, params),
     {
       source: (p) => vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(p.uri)),
+      upgradePackage: (p) => vscode.commands.executeCommand("tcm.upgradePackage", p),
+      upgradePackageTo: (p) => vscode.commands.executeCommand("tcm.upgradePackageTo", p),
       edit: (p) => vscode.commands.executeCommand("tcm.editDefinition", p.names[0]),
       usages: (p) => vscode.commands.executeCommand("tcm.findUsages", p.uri),
       run: (p) => vscode.commands.executeCommand("tcm.runDefinition", p.names[0]),
@@ -206,6 +257,15 @@ async function activate(context) {
   const views = new vscode.EventEmitter();
   const apps = new AppsTree(running);
   const data = new DataTree();
+  const packages = new PackagesTree();
+  const upgrade = async (name, target, namespace) => {
+    const label = target ? `${name} → ${target}${namespace ? ` in ${namespace}` : ""}` : name;
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Upgrading ${label}…` }, () =>
+      client.sendRequest("workspace/executeCommand", { command: "tcm.upgrade", arguments: [name, target, namespace] }),
+    );
+    packages.refresh();
+    tree.refresh();
+  };
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = "tcm.openApp";
   const showStatus = () => {
@@ -289,6 +349,19 @@ async function activate(context) {
     vscode.window.createTreeView("tcm.codebase", { treeDataProvider: tree, showCollapseAll: true }),
     vscode.window.createTreeView("tcm.apps", { treeDataProvider: apps }),
     vscode.window.createTreeView("tcm.data", { treeDataProvider: data }),
+    vscode.window.createTreeView("tcm.packages", { treeDataProvider: packages }),
+    vscode.commands.registerCommand("tcm.openPackagePage", (x) => x?.name && pages.open({ package: { name: x.name, range: x.range ?? x.ranges?.[0]?.range } })),
+    // within the ranges in use: no hashes change, everything using it is re-checked
+    vscode.commands.registerCommand("tcm.upgradePackage", (x) => x?.name && upgrade(x.name)),
+    // to another range (a new major), in one namespace or everywhere: re-pinned and re-hashed, as an update
+    vscode.commands.registerCommand("tcm.upgradePackageTo", async (x) => {
+      if (!x?.name) return;
+      const target = await vscode.window.showInputBox({ prompt: `Move code using ${x.name} to which range?`, value: "latest", placeHolder: "latest, or a major like 19" });
+      if (!target) return;
+      const namespace = await vscode.window.showInputBox({ prompt: "Only in a namespace? (empty for all code)", placeHolder: "app" });
+      if (namespace === undefined) return;
+      await upgrade(x.name, target, namespace || undefined);
+    }),
     vscode.commands.registerCommand("tcm.openTableDefinition", (t) => t?.uri && vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(t.uri))),
     vscode.commands.registerCommand("tcm.migrateTable", async (t) => {
       if (!t?.table) return;
@@ -435,6 +508,7 @@ async function activate(context) {
     tree.refresh();
     apps.refresh();
     data.refresh();
+    packages.refresh();
     refreshTables();
     pages.refresh();
     for (const d of vscode.workspace.textDocuments) if (d.uri.scheme === "tcm") views.fire(d.uri);
@@ -448,6 +522,7 @@ async function activate(context) {
   tree.refresh();
   apps.refresh();
   data.refresh();
+  packages.refresh();
 }
 
 function deactivate() {

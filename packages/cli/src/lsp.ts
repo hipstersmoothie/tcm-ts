@@ -20,6 +20,8 @@ import { searchByType } from "./search.ts";
 import { decode } from "./codec.ts";
 import { renderDoc } from "./docs.ts";
 import { definitionPage, docSummary, find } from "./pages.ts";
+import { packageList, packagePage, packageUsers } from "./package-pages.ts";
+import { upgradeTo, upgradeWithin } from "./upgrade.ts";
 
 /** What the language server needs from the CLI (passed in, so this module doesn't import the CLI's entry). */
 export interface LspTools {
@@ -379,6 +381,15 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       const r = capture(() => tools.edit(c, args.map(String), file, false));
       if (!r.ok) message(1, r.output);
       return r.ok ? pathToFileURL(file).href : null;
+    }
+    if (command === "tcm.upgrade") {
+      // [name] within its ranges; [name, target, namespace?] to another range
+      const [name, target, namespace] = args.map((a) => (a === undefined || a === null ? undefined : String(a)));
+      const r = capture(() => (target ? upgradeTo(c, name!, target, namespace) : upgradeWithin(c, name!, false)));
+      message(r.ok ? 3 : 1, r.output || (r.ok ? "upgraded" : "upgrade failed"));
+      c.refreshShim();
+      refreshAll();
+      return r.ok;
     }
     if (command === "tcm.dataMigrate") {
       return (async () => {
@@ -829,7 +840,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
               hoverProvider: true,
               codeLensProvider: { resolveProvider: false },
               inlayHintProvider: true,
-              executeCommandProvider: { commands: ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.dataMigrate"] },
+              executeCommandProvider: { commands: ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.dataMigrate", "tcm.upgrade"] },
               definitionProvider: true,
               referencesProvider: true,
               documentSymbolProvider: true,
@@ -968,6 +979,21 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         return;
       case "tcm/apps":
         send({ id: m.id, result: cb ? apps() : [] });
+        return;
+      // the packages the codebase runs: the lock, what uses each, and a page per package and range
+      case "tcm/packages":
+        send({ id: m.id, result: cb ? packageList(cb) : [] });
+        return;
+      case "tcm/packageUsers":
+        send({ id: m.id, result: cb ? packageUsers(cb, String(p?.name), String(p?.range)) : [] });
+        return;
+      case "tcm/packagePage":
+        try {
+          const page = packagePage(cb!, String(p?.name), String(p?.range));
+          send({ id: m.id, result: { ...page, users: page.users.map((u) => ({ ...u, uri: viewUri(u.hash) })) } });
+        } catch (e) {
+          send({ id: m.id, error: { code: -32602, message: (e as Error).message } });
+        }
         return;
       case "tcm/source": {
         const row = /^tcm:\/*\.data\/([^/]+)\/([^/]+)\.txt$/.exec(String(p?.uri));

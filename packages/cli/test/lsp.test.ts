@@ -86,7 +86,7 @@ square(12);
   const c = client();
   const init = await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir).href, capabilities: {}, clientInfo: { name: "test" } });
   assert.ok(init.capabilities.codeLensProvider && init.capabilities.inlayHintProvider && init.capabilities.hoverProvider);
-  assert.deepEqual(init.capabilities.executeCommandProvider.commands, ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.dataMigrate"]);
+  assert.deepEqual(init.capabilities.executeCommandProvider.commands, ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.dataMigrate", "tcm.upgrade"]);
   c.notify("initialized", {});
   c.notify("textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text } });
   const doc = { textDocument: { uri } };
@@ -374,4 +374,33 @@ export type README = never;
   assert.deepEqual(byDoc.map((i: any) => [i.path, i.match]), [["geo.perimeter", "doc"]]);
   const byType = await c.request("tcm/find", { query: "(a: Point, b: Point) => number" });
   assert.deepEqual(byType.map((i: any) => [i.path, i.match]), [["geo.dist", "type"]]);
+});
+
+test("packages in the editor: the lock, what uses each package, a page with its README and API, upgrading", async () => {
+  const dir5 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "tcm lsp packages ")));
+  const tcm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: dir5, env, encoding: "utf8" });
+  tcm("init");
+  // nothing installed: tcm provides ms
+  fs.writeFileSync(path.join(dir5, "scratch.ts"), `// tcm: namespace time\nimport ms from "ms";\nexport const short = (n: number): string => ms(n);\n`);
+  assert.equal(tcm("add").status, 0);
+  spawnSync("sqlite3", [path.join(dir5, ".tcm", "codebase.sqlite"), "update packages set version = '2.1.1', integrity = null where name = 'ms'"]);
+
+  const c = client();
+  await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir5).href, capabilities: {}, clientInfo: { name: "Visual Studio Code" } });
+  c.notify("initialized", {});
+  const list = await c.request("tcm/packages", {});
+  const ms = list.find((p: { name: string }) => p.name === "ms");
+  assert.deepEqual(ms.ranges.map((r: { range: string; version: string; users: number; types?: string }) => [r.range, r.version, r.users, !!r.types]), [["2", "2.1.1", 1, true]]);
+  assert.deepEqual((await c.request("tcm/packageUsers", { name: "ms", range: "2" })).map((u: { path: string }) => u.path), ["time.short"]);
+
+  const page = await c.request("tcm/packagePage", { name: "ms", range: "2" });
+  assert.equal(page.version, "2.1.1");
+  assert.match(page.readme, /^# ms/m, "the package's README");
+  assert.ok(page.api.some((a: { name: string; kind: string }) => a.name === "default" && a.kind === "function"), "its API, from its types");
+  assert.match(page.users[0].uri, /^tcm:\/time\/short\.ts$/);
+
+  const upgraded = await c.request("workspace/executeCommand", { command: "tcm.upgrade", arguments: ["ms"] });
+  assert.equal(upgraded, true);
+  assert.notEqual((await c.request("tcm/packages", {})).find((p: { name: string }) => p.name === "ms").ranges[0].version, "2.1.1");
+  c.child.kill();
 });

@@ -83,7 +83,8 @@ a [web app](apps.md).
 
 ## Seeing and upgrading packages
 
-`tcm packages` lists what the codebase runs: each package and range, its locked version, and how many
+`tcm packages` lists what the codebase runs (in VS Code, the Packages view, with a page per package showing its
+README and API; see [editors](editors.md)): each package and range, its locked version, and how many
 definitions use it.
 
 ```text

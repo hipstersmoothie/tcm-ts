@@ -16,7 +16,7 @@ class Pages {
   }
 
   async open(target) {
-    const key = target.hash ? `def:${target.hash}` : `ns:${target.namespace}`;
+    const key = target.package ? `pkg:${target.package.name}@${target.package.range}` : target.hash ? `def:${target.hash}` : `ns:${target.namespace}`;
     const open = this.panels.get(key);
     if (open) {
       open.panel.reveal();
@@ -27,8 +27,9 @@ class Pages {
     this.panels.set(key, { panel, target });
     panel.onDidDispose(() => this.panels.delete(key));
     panel.webview.onDidReceiveMessage((m) => {
-      if (m.type === "open") return this.open(m.hash ? { hash: m.hash } : { namespace: m.namespace });
+      if (m.type === "open") return this.open(m.package ? { package: m.package } : m.hash ? { hash: m.hash } : { namespace: m.namespace });
       if (m.type === "action") return this.actions[m.action]?.(m.page);
+      if (m.type === "external") return vscode.env.openExternal(vscode.Uri.parse(m.url));
     });
     panel.webview.html = html(panel.webview);
     await this.render(key);
@@ -40,7 +41,12 @@ class Pages {
     if (!open) return;
     const { panel, target } = open;
     try {
-      if (target.hash) {
+      if (target.package) {
+        const page = await this.request("tcm/packagePage", target.package);
+        panel.title = `${page.name} ${page.range} (package)`;
+        const docs = await Promise.all(page.api.map((a) => (a.doc ? markdown(a.doc) : "")));
+        panel.webview.postMessage({ type: "page", card: { kind: "package", page, readmeHtml: page.readme ? await markdown(page.readme) : "", docs } });
+      } else if (target.hash) {
         const page = await this.request("tcm/page", { hash: target.hash });
         const name = page.names[0] ?? page.short;
         panel.title = name.slice(name.lastIndexOf(".") + 1);
@@ -152,12 +158,34 @@ function defCard(c) {
   const lists = [];
   if (p.uses.length) lists.push('<div class="list"><h4>Uses</h4><ul>' + p.uses.map((u) => "<li>" + link(u, c.key) + "</li>").join("") + "</ul></div>");
   if (p.usedBy.length) lists.push('<div class="list"><h4>Used by</h4><ul>' + p.usedBy.map((u) => "<li>" + link(u, c.key) + "</li>").join("") + "</ul></div>");
-  if (p.externals.length) lists.push('<div class="list"><h4>Packages</h4><ul>' + p.externals.map((e) => "<li>" + esc(e) + "</li>").join("") + "</ul></div>");
+  // react@19 opens the package page; builtins and #tcm/server are just named
+  const pkgLink = (e) => { const m = /^((?:@[^/@]+\\/)?[^@/]+)@([^/#]+)/.exec(e); return m ? '<a data-package-name="' + esc(m[1]) + '" data-package-range="' + esc(m[2]) + '">' + esc(e) + "</a>" : esc(e); };
+  if (p.externals.length) lists.push('<div class="list"><h4>Packages</h4><ul>' + p.externals.map((e) => "<li>" + pkgLink(e) + "</li>").join("") + "</ul></div>");
   if (lists.length) h += '<div class="lists">' + lists.join("") + "</div>";
   return h;
 }
 
 const ROLES = [["app", "Apps"], ["type", "Types"], ["table", "Data"], ["schedule", "Jobs"], ["server", "Server"], ["browser", "Browser"], ["shared", "Shared"], ["test", "Tests"]];
+function packageCard(c) {
+  const p = c.page;
+  let h = '<div class="head"><h2>' + esc(p.name) + '</h2><span class="badge">range ' + esc(p.range) + '</span><span class="hash">' + esc(p.version) + "</span>" +
+    (p.license ? '<span class="badge">' + esc(p.license) + "</span>" : "") +
+    '<div class="actions"><button data-action="upgradePackage">Upgrade</button><button data-action="upgradePackageTo">Move to another range</button>' +
+    (p.homepage ? '<button data-url="' + esc(p.homepage) + '">Homepage</button>' : "") + '<button data-url="https://www.npmjs.com/package/' + esc(p.name) + '/v/' + esc(p.version) + '">npm</button></div></div>';
+  if (p.description) h += '<div class="section why">' + esc(p.description) + "</div>";
+  const facts = [p.types ? "types from @types (" + esc(p.types) + ")" : "", p.integrity ? "tarball " + esc(p.integrity.slice(0, 24)) + "…" : "",
+    p.otherRanges.length ? "also runs " + p.otherRanges.map((r) => '<a data-package-name="' + esc(p.name) + '" data-package-range="' + esc(r) + '">' + esc(r) + "</a>").join(", ") : ""].filter(Boolean);
+  if (facts.length) h += '<div class="section why">' + facts.join(" · ") + "</div>";
+  if (p.users.length) h += '<div class="lists"><div class="list"><h4>Used by</h4><ul>' + p.users.map((u) => "<li>" + link({ hash: u.hash, name: u.path, kind: u.kind, signature: u.signature }, c.key) + "</li>").join("") + "</ul></div></div>";
+  if (c.readmeHtml) h += '<div class="group"><h3>README</h3></div><div class="doc">' + c.readmeHtml + "</div>";
+  if (p.api.length) {
+    h += '<div class="group"><h3>API (' + p.api.length + ")</h3></div>";
+    h += p.api.map((a, i) => '<div class="section"><b class="f">' + esc(a.name) + '</b> <span class="badge">' + esc(a.kind) + "</span>" +
+      (a.signature ? '<pre class="src">' + esc(a.signature) + "</pre>" : "") + (c.docs[i] ? '<div class="doc">' + c.docs[i] + "</div>" : "") + "</div>").join("");
+  }
+  return h;
+}
+
 function namespaceCard(c) {
   const p = c.page;
   let h = '<div class="head"><h2>' + esc(p.namespace || "(root)") + '</h2><span class="badge">namespace</span></div>';
@@ -176,12 +204,14 @@ window.addEventListener("message", (e) => {
   if (m.type !== "page") return;
   const c = m.card;
   const root = document.getElementById("cards");
-  root.innerHTML = '<div class="card">' + (c.error ? '<div class="problem">' + esc(c.error) + "</div>" : c.kind === "def" ? defCard(c) : namespaceCard(c)) + "</div>";
+  root.innerHTML = '<div class="card">' + (c.error ? '<div class="problem">' + esc(c.error) + "</div>" : c.kind === "def" ? defCard(c) : c.kind === "package" ? packageCard(c) : namespaceCard(c)) + "</div>";
   root.firstChild.addEventListener("click", (ev) => {
     const a = ev.target.closest("a, button");
     if (!a) return;
     if (a.dataset.hash) return vscode.postMessage({ type: "open", hash: a.dataset.hash });
     if (a.dataset.namespace !== undefined) return vscode.postMessage({ type: "open", namespace: a.dataset.namespace });
+    if (a.dataset.packageName) return vscode.postMessage({ type: "open", package: { name: a.dataset.packageName, range: a.dataset.packageRange } });
+    if (a.dataset.url) return vscode.postMessage({ type: "external", url: a.dataset.url });
     const href = a.getAttribute("href") || "";
     if (href.startsWith("tcm-page:")) { ev.preventDefault(); return vscode.postMessage({ type: "open", hash: href.slice(9) }); }
     if (a.dataset.action) return vscode.postMessage({ type: "action", action: a.dataset.action, page: c.page });

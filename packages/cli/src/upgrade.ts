@@ -20,7 +20,7 @@ interface Move {
 }
 
 /** Named, live definitions that use `name` (at `range`, or any), with the ranges they use. */
-function usersOf(cb: Codebase, name: string, range?: string, namespace?: string): Map<string, string> {
+export function usersOf(cb: Codebase, name: string, range?: string, namespace?: string): Map<string, string> {
   const out = new Map<string, string>();
   const live = cb.liveHashes();
   for (const n of cb.store.names()) {
