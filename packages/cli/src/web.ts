@@ -210,6 +210,47 @@ function serverApiHost(cb: Codebase): () => Promise<ServerApiHost> {
   return () => (api ??= import(pathToFileURL(path.join(cb.lay.cacheDir, "ucm-server.js")).href) as Promise<ServerApiHost>);
 }
 
+/**
+ * `ucm data migrate <table>`: bring every stored row of a table up to its current row type now, through the
+ * table's current code (its `migrate` steps), instead of as rows are read. `target` is a table name ("users") or
+ * the name of its definition ("crm.users").
+ */
+export async function migrateTable(cb: Codebase, target: string): Promise<boolean> {
+  const src = cb.source();
+  const named = [...new Set(cb.store.names().map((n) => n.hash))];
+  const byName = cb.lookup(target).filter((h) => src.get(h)?.table);
+  const hashes = byName.length ? byName : named.filter((h) => src.get(h)?.table?.name === target);
+  if (hashes.length !== 1) {
+    const which = hashes.map((h) => cb.displayRef(`#${h}`)).join(", ");
+    console.log(red(hashes.length ? `"${target}" is declared by ${hashes.length} definitions (${which}); name one` : `no table "${target}" (a table name, or the definition declaring it)`));
+    return false;
+  }
+  const hash = hashes[0]!;
+  const rec = src.get(hash)!;
+  const name = rec.table!.name ?? target;
+  materialize([hash], src, cb.lay);
+  const api = await serverApiHost(cb)();
+  const mod = (await import(pathToFileURL(path.join(cb.lay.cacheDir, `${rec.componentHash}.ts`)).href)) as Record<string, Record<symbol, () => Promise<unknown>>>;
+  const t = mod[exportId(hash)]!;
+  const call = { method: "CLI", url: "/", headers: {}, ip: undefined, signal: new AbortController().signal };
+  const r = await api.withCall(call, { secure: false, dataDir: dataDir(cb) }, () => t[Symbol.for("ucm.migrateAll")]!.call(t));
+  if (!r.ok) throw r.error;
+  const { total, restamped, migrated, newer, failed } = r.value as { total: number; restamped: number; migrated: number; newer: number; failed: { id: string; why: string }[] };
+  const already = total - restamped - migrated - newer - failed.length;
+  console.log(`table "${name}": ${total} row(s): ${already} already current, ${migrated} migrated, ${restamped} still fit as stored`);
+  for (const f of failed) console.log(red(`  ${f.id}: ${f.why}`));
+  if (newer) console.log(yellow(`  ${newer} row(s) were written by newer code than the codebase's; left as they are`));
+  if (failed.length || newer) return !failed.length;
+  console.log(
+    green(
+      rec.table!.steps?.length
+        ? `every row now has the current row type, so migrate has nothing left to do: you can remove it from table("${name}"). Keep it while an older build that writes the old type is still running.`
+        : "every row now has the current row type",
+    ),
+  );
+  return true;
+}
+
 /** App data (sessions) lives apart from the codebase: .ucm/data. */
 function dataDir(cb: Codebase): string {
   const d = path.join(cb.lay.ucmDir, "data");

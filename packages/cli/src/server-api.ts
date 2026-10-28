@@ -384,13 +384,44 @@ export function createServerApi(deps: {
   // of a row written under another schema checks that it still fits, else migrates it, else refuses: stored data
   // never silently disagrees with the code reading it. Rows from newer code mean the caller is a stale page (410).
   const SCHEMA_MARK = Symbol.for("ucm.schema");
+  /** for the CLI (`ucm data migrate`): bring every stored row up to the current row type now */
+  const MIGRATE_ALL = Symbol.for("ucm.migrateAll");
   type Db = InstanceType<typeof DatabaseSync>;
-  interface RowSchema {
+  type Checked = { s: Parameters<typeof checkValue>[0]; defs: Parameters<typeof checkValue>[3] };
+  interface RowSchema extends Checked {
     name?: string;
     hash: string;
-    s: Parameters<typeof checkValue>[0];
-    defs: Parameters<typeof checkValue>[3];
+    /** each migrate step's parameter type, in order */
+    steps?: Checked[];
   }
+  type Row = { id: string; data: string; schema_hash: string; updated: number };
+  type Step = (old: unknown) => unknown;
+  interface TableOptions {
+    migrate?: Step | Step[];
+    unique?: string[];
+    index?: string[];
+    renamedFrom?: string;
+  }
+  interface FindOptions {
+    orderBy?: string;
+    desc?: boolean;
+    limit?: number;
+    offset?: number;
+  }
+  const TABLE_NAME = /^[\w.-]+$/;
+  const FIELD = /^[A-Za-z_$][\w$]*$/;
+  // a row field as SQL (indexes are on exactly this expression). Table names and fields are validated, so they can
+  // be inlined, which a partial index needs in order to be usable.
+  const fieldSql = (f: string) => `json_extract(data, '$."${f}"')`;
+  const isScalar = (v: unknown) => v === null || typeof v === "string" || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v));
+  // what json_extract gives for a stored value: scalars as themselves (true as 1), anything else as its JSON text
+  const sqlValue = (v: unknown) => (typeof v === "boolean" ? Number(v) : isScalar(v) ? v : deps.encode(v)) as string | number | null;
+  const sortKey = (v: unknown): [number, number | string] =>
+    v === undefined || v === null ? [0, 0] : typeof v === "number" ? [1, v] : v instanceof Date ? [2, v.getTime()] : typeof v === "string" ? [3, v] : [4, deps.encode(v)];
+  const compare = (a: unknown, b: unknown) => {
+    const [x, y] = [sortKey(a), sortKey(b)];
+    return x[0] - y[0] || (x[1] < y[1] ? -1 : x[1] > y[1] ? 1 : 0);
+  };
   const dataDbs = new Map<string, Db>();
   const dataDb = (dataDir: string | undefined): Db => {
     const file = dataDir ? `${dataDir}/store.sqlite` : ":memory:";
@@ -399,7 +430,8 @@ export function createServerApi(deps: {
       db = new deps.DatabaseSync(file);
       db.exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;
         CREATE TABLE IF NOT EXISTS rows (tbl TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, schema_hash TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (tbl, id));
-        CREATE TABLE IF NOT EXISTS schemas (tbl TEXT NOT NULL, hash TEXT NOT NULL, schema TEXT NOT NULL, first_seen INTEGER NOT NULL, PRIMARY KEY (tbl, hash));`);
+        CREATE TABLE IF NOT EXISTS schemas (tbl TEXT NOT NULL, hash TEXT NOT NULL, schema TEXT NOT NULL, first_seen INTEGER NOT NULL, PRIMARY KEY (tbl, hash));
+        CREATE INDEX IF NOT EXISTS rows_by_schema ON rows (tbl, schema_hash);`);
       dataDbs.set(file, db);
     }
     return db;
@@ -407,11 +439,21 @@ export function createServerApi(deps: {
 
   class Table<T> {
     readonly name: string;
-    readonly #migrate?: (old: unknown) => T | Promise<T>;
-    constructor(name: string, opts: { migrate?: (old: unknown) => T | Promise<T> } = {}) {
-      if (!/^[\w.-]+$/.test(name)) throw new Error(`invalid table name '${name}'`);
+    readonly #steps: Step[];
+    readonly #unique: string[];
+    readonly #index: string[];
+    readonly #renamedFrom?: string;
+    #prepared?: Db;
+    constructor(name: string, opts: TableOptions = {}) {
+      if (!TABLE_NAME.test(name)) throw new Error(`invalid table name '${name}'`);
       this.name = name;
-      this.#migrate = opts.migrate;
+      this.#steps = opts.migrate === undefined ? [] : Array.isArray(opts.migrate) ? opts.migrate : [opts.migrate];
+      if (this.#steps.some((f) => typeof f !== "function")) throw new TypeError(`table "${name}": migrate is a function, or an array of them`);
+      this.#unique = opts.unique ?? [];
+      this.#index = opts.index ?? [];
+      for (const f of [...this.#unique, ...this.#index]) if (!FIELD.test(f)) throw new Error(`table "${name}": can't index '${f}': fields are plain names`);
+      if (opts.renamedFrom !== undefined && (!TABLE_NAME.test(opts.renamedFrom) || opts.renamedFrom === name)) throw new Error(`table "${name}": invalid renamedFrom '${opts.renamedFrom}'`);
+      this.#renamedFrom = opts.renamedFrom;
     }
     #schema(): RowSchema {
       const s = (this as unknown as Record<symbol, RowSchema | undefined>)[SCHEMA_MARK];
@@ -420,38 +462,113 @@ export function createServerApi(deps: {
     }
     #db(): Db {
       const db = dataDb(dataDirNow());
-      const s = this.#schema();
-      db.prepare("INSERT OR IGNORE INTO schemas (tbl, hash, schema, first_seen) VALUES (?, ?, ?, ?)").run(this.name, s.hash, JSON.stringify({ s: s.s, defs: s.defs }), Date.now());
+      if (this.#prepared !== db) {
+        const s = this.#schema();
+        db.prepare("INSERT OR IGNORE INTO schemas (tbl, hash, schema, first_seen) VALUES (?, ?, ?, ?)").run(this.name, s.hash, JSON.stringify({ s: s.s, defs: s.defs }), Date.now());
+        const id = (f: string, kind: string) => `ucm_${kind}_${this.name.replace(/[^A-Za-z0-9]/g, (c) => `_${c.charCodeAt(0).toString(16)}_`)}__${f}`;
+        for (const f of this.#index) db.exec(`CREATE INDEX IF NOT EXISTS "${id(f, "index")}" ON rows (${fieldSql(f)}) WHERE tbl = '${this.name}'`);
+        for (const f of this.#unique) {
+          try {
+            db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS "${id(f, "unique")}" ON rows (${fieldSql(f)}) WHERE tbl = '${this.name}'`);
+          } catch {
+            const dup = db.prepare(`SELECT ${fieldSql(f)} AS v, count(*) AS n FROM rows WHERE tbl = '${this.name}' GROUP BY v HAVING n > 1 LIMIT 1`).get() as { v: unknown; n: number } | undefined;
+            throw new Error(`table "${this.name}": can't make ${f} unique: ${dup ? `${dup.n} stored rows have ${f} = ${JSON.stringify(dup.v)}` : "stored rows share values"}`);
+          }
+        }
+        this.#prepared = db;
+      }
+      // rows still under the old name move over: all of them the first time, and any an older build writes since
+      const old = this.#renamedFrom;
+      if (old && db.prepare("SELECT 1 FROM rows WHERE tbl = ? LIMIT 1").get(old)) {
+        this.#atomically(db, () => {
+          db.prepare("INSERT OR IGNORE INTO schemas (tbl, hash, schema, first_seen) SELECT ?, hash, schema, first_seen FROM schemas WHERE tbl = ?").run(this.name, old);
+          db.prepare("UPDATE OR IGNORE rows SET tbl = ? WHERE tbl = ?").run(this.name, old);
+        });
+      }
       return db;
+    }
+    #atomically<R>(db: Db, fn: () => R): R {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const r = fn();
+        db.exec("COMMIT");
+        return r;
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
     }
     #check(value: unknown, what: string) {
       const s = this.#schema();
       const bad = deps.checkValue(s.s, value, what, s.defs);
       if (bad) throw new TypeError(`table "${this.name}": ${bad}`);
     }
-    async #read(db: Db, row: { id: string; data: string; schema_hash: string }): Promise<T> {
+    #fits(value: unknown): boolean {
+      const s = this.#schema();
+      return deps.checkValue(s.s, value, "row", s.defs) === undefined;
+    }
+    #write(db: Db, id: string, value: unknown) {
+      // an upsert on the id only: a clash on a unique field is an error, never a silent replacement of the other row
+      try {
+        db.prepare(
+          "INSERT INTO rows (tbl, id, data, schema_hash, updated) VALUES (?, ?, ?, ?, ?) ON CONFLICT (tbl, id) DO UPDATE SET data = excluded.data, schema_hash = excluded.schema_hash, updated = excluded.updated",
+        ).run(this.name, id, deps.encode(value, `a ${this.name} row`), this.#schema().hash, Date.now());
+      } catch (e) {
+        if (!/UNIQUE constraint failed/.test(String((e as Error)?.message))) throw e;
+        for (const f of this.#unique) {
+          const v = (value as Record<string, unknown>)[f];
+          const other = db.prepare(`SELECT id FROM rows WHERE tbl = '${this.name}' AND ${fieldSql(f)} = ? AND id != ?`).get(sqlValue(v), id) as { id: string } | undefined;
+          if (other) throw new HttpError(409, `table "${this.name}": another row (${other.id}) already has ${f} = ${JSON.stringify(v)}`);
+        }
+        throw e;
+      }
+    }
+    /** Run a value written as an older type through the migrate steps: each takes the values its parameter type fits. */
+    async #migrate(value: unknown, id: string): Promise<unknown> {
+      const params = this.#schema().steps ?? [];
+      const refusal = (i: number, v: unknown) => (params[i] ? deps.checkValue(params[i]!.s, v, "row", params[i]!.defs) : undefined);
+      let v = value;
+      for (let from = 0; ; ) {
+        let i = from;
+        while (i < this.#steps.length && refusal(i, v) !== undefined) i++;
+        if (i === this.#steps.length) {
+          if (from > 0) return v; // the caller checks the result against the row type
+          const why = this.#steps.map((f, j) => `step ${j + 1}${f.name ? ` (${f.name})` : ""}: ${refusal(j, v)}`);
+          throw new Error(`table "${this.name}": row ${id} was written as an older type that no migrate step takes (${why.join("; ")})`);
+        }
+        v = await this.#steps[i]!(v);
+        from = i + 1;
+        if (this.#fits(v)) return v;
+      }
+    }
+    async #read(db: Db, row: Row): Promise<T> {
       const s = this.#schema();
       const value = deps.decode(row.data);
       if (row.schema_hash === s.hash) return value as T;
       // written under another schema: fine if it still fits, otherwise migrate it (and store the result)
-      if (deps.checkValue(s.s, value, "row", s.defs) === undefined) return value as T;
+      if (this.#fits(value)) return value as T;
       const seen = db.prepare("SELECT hash, first_seen FROM schemas WHERE tbl = ? AND hash IN (?, ?)").all(this.name, row.schema_hash, s.hash) as { hash: string; first_seen: number }[];
       const firstSeen = (h: string) => seen.find((x) => x.hash === h)?.first_seen ?? 0;
       if (firstSeen(row.schema_hash) > firstSeen(s.hash)) {
         throw new HttpError(410, `table "${this.name}": row ${row.id} was written by a newer version of this app; reload for the current version`);
       }
-      if (!this.#migrate) {
+      if (!this.#steps.length) {
         throw new Error(`table "${this.name}": row ${row.id} was written as an older type and doesn't fit the current one (${deps.checkValue(s.s, value, "row", s.defs)}). Give table() a migrate function: table<Row>("${this.name}", { migrate: (old) => ... })`);
       }
-      const next = await this.#migrate(value);
+      const next = await this.#migrate(value, row.id);
       this.#check(next, `migrated row ${row.id}`);
-      db.prepare("UPDATE rows SET data = ?, schema_hash = ?, updated = ? WHERE tbl = ? AND id = ? AND schema_hash = ?").run(deps.encode(next), s.hash, Date.now(), this.name, row.id, row.schema_hash);
-      return next;
+      db.prepare("UPDATE rows SET data = ?, schema_hash = ? WHERE tbl = ? AND id = ? AND schema_hash = ?").run(deps.encode(next), s.hash, this.name, row.id, row.schema_hash);
+      return next as T;
+    }
+    /** Rows not written as the current row type: they must be read (maybe migrated) before they can be compared. */
+    #stale(db: Db): Row[] {
+      const h = this.#schema().hash;
+      return db.prepare("SELECT id, data, schema_hash, updated FROM rows WHERE tbl = ? AND (schema_hash < ? OR schema_hash > ?)").all(this.name, h, h) as Row[];
     }
     /** Store `value` under `id`, replacing what was there; it must fit the row type. */
     async put(id: string, value: T): Promise<void> {
       this.#check(value, "value");
-      this.#db().prepare("INSERT OR REPLACE INTO rows (tbl, id, data, schema_hash, updated) VALUES (?, ?, ?, ?, ?)").run(this.name, id, deps.encode(value, `a ${this.name} row`), this.#schema().hash, Date.now());
+      this.#write(this.#db(), id, value);
     }
     /** Store a new row; returns its id. */
     async insert(value: T): Promise<string> {
@@ -461,29 +578,108 @@ export function createServerApi(deps: {
     }
     async get(id: string): Promise<T | undefined> {
       const db = this.#db();
-      const row = db.prepare("SELECT id, data, schema_hash FROM rows WHERE tbl = ? AND id = ?").get(this.name, id) as { id: string; data: string; schema_hash: string } | undefined;
+      const row = db.prepare("SELECT id, data, schema_hash, updated FROM rows WHERE tbl = ? AND id = ?").get(this.name, id) as Row | undefined;
       return row ? this.#read(db, row) : undefined;
     }
     async delete(id: string): Promise<boolean> {
       return this.#db().prepare("DELETE FROM rows WHERE tbl = ? AND id = ?").run(this.name, id).changes > 0;
     }
-    /** Rows whose fields equal `where`'s (all rows if omitted), oldest first. */
-    async find(where: Partial<T> = {}): Promise<{ id: string; value: T }[]> {
+    /**
+     * Change one row atomically: `fn` gets its current value and returns the new one, synchronously, so nothing
+     * can write in between. Returns the new value, or undefined if there's no such row.
+     */
+    async update(id: string, fn: (current: T) => T): Promise<T | undefined> {
       const db = this.#db();
-      const out: { id: string; value: T }[] = [];
-      const keys = Object.entries(where as Record<string, unknown>).map(([k, v]) => [k, deps.encode(v)] as const);
-      for (const row of db.prepare("SELECT id, data, schema_hash FROM rows WHERE tbl = ? ORDER BY updated, id").all(this.name) as { id: string; data: string; schema_hash: string }[]) {
-        const value = await this.#read(db, row);
-        if (keys.every(([k, v]) => deps.encode((value as Record<string, unknown>)[k]) === v)) out.push({ id: row.id, value });
+      for (;;) {
+        // bring the row up to the current type first: migrating may be async
+        if ((await this.get(id)) === undefined) return undefined;
+        const r = this.#atomically(db, () => {
+          const row = db.prepare("SELECT data FROM rows WHERE tbl = ? AND id = ?").get(this.name, id) as { data: string } | undefined;
+          if (!row) return { done: true, value: undefined };
+          const current = deps.decode(row.data);
+          if (!this.#fits(current)) return { done: false, value: undefined }; // rewritten as another type meanwhile: again
+          const next = fn(current as T);
+          if (typeof (next as { then?: unknown } | undefined)?.then === "function") {
+            throw new TypeError(`table "${this.name}": update()'s function must return the new value, not a promise (it runs while the row is locked)`);
+          }
+          this.#check(next, "value");
+          this.#write(db, id, next);
+          return { done: true, value: next };
+        });
+        if (r.done) return r.value;
       }
-      return out;
+    }
+    /**
+     * Rows whose fields equal `where`'s (all rows if omitted), oldest first or by `orderBy`. Fields in the table's
+     * `index` or `unique` lists are looked up by index.
+     */
+    async find(where: Partial<T> = {}, opts: FindOptions = {}): Promise<{ id: string; value: T }[]> {
+      const db = this.#db();
+      const entries = Object.entries(where as Record<string, unknown>);
+      for (const f of [...entries.map(([k]) => k), ...(opts.orderBy ? [opts.orderBy] : [])]) if (!FIELD.test(f)) throw new Error(`table "${this.name}": no field '${f}'`);
+      const wanted = entries.map(([k, v]) => [k, deps.encode(v)] as const);
+      const matches = (v: unknown) => wanted.every(([k, x]) => deps.encode((v as Record<string, unknown>)[k]) === x);
+      const whole = (n: number | undefined) => (n === undefined ? undefined : Math.max(0, Math.floor(n)));
+      const limit = whole(opts.limit);
+      const offset = whole(opts.offset) ?? 0;
+      const stale = this.#stale(db);
+      const scalar = entries.filter(([, v]) => isScalar(v));
+      // with every row current and every condition expressible in SQL, SQLite does all of it (with indexes)
+      const pushdown = !stale.length && scalar.length === entries.length;
+      const order = opts.orderBy ? `${fieldSql(opts.orderBy)} ${opts.desc ? "DESC" : "ASC"}, ` : "";
+      const page = pushdown && limit !== undefined ? ` LIMIT ${limit} OFFSET ${offset}` : "";
+      const sql = `SELECT id, data, schema_hash, updated FROM rows WHERE tbl = '${this.name}' AND schema_hash = ?${scalar.map(([k]) => ` AND ${fieldSql(k)} = ?`).join("")} ORDER BY ${order}updated, id${page}`;
+      const out: { id: string; value: T; updated: number }[] = [];
+      for (const row of db.prepare(sql).all(this.#schema().hash, ...scalar.map(([, v]) => sqlValue(v))) as Row[]) {
+        const value = deps.decode(row.data);
+        if (matches(value)) out.push({ id: row.id, value: value as T, updated: row.updated });
+      }
+      if (pushdown) return out.map(({ id, value }) => ({ id, value }));
+      for (const row of stale) {
+        const value = await this.#read(db, row);
+        if (matches(value)) out.push({ id: row.id, value, updated: row.updated });
+      }
+      const by = opts.orderBy;
+      const field = (r: { value: T }) => (r.value as Record<string, unknown>)[by!];
+      out.sort((a, b) => (by ? compare(field(a), field(b)) * (opts.desc ? -1 : 1) : 0) || a.updated - b.updated || (a.id < b.id ? -1 : 1));
+      return out.slice(offset, limit === undefined ? undefined : offset + limit).map(({ id, value }) => ({ id, value }));
+    }
+    /** The first row `find` would return, or undefined. */
+    async findOne(where: Partial<T> = {}, opts: Omit<FindOptions, "limit"> = {}): Promise<{ id: string; value: T } | undefined> {
+      return (await this.find(where, { ...opts, limit: 1 }))[0];
     }
     async count(where: Partial<T> = {}): Promise<number> {
-      return (await this.find(where)).length;
+      const db = this.#db();
+      const entries = Object.entries(where as Record<string, unknown>);
+      if (this.#stale(db).length || !entries.every(([k, v]) => FIELD.test(k) && isScalar(v))) return (await this.find(where)).length;
+      const sql = `SELECT count(*) AS n FROM rows WHERE tbl = '${this.name}' AND schema_hash = ?${entries.map(([k]) => ` AND ${fieldSql(k)} = ?`).join("")}`;
+      return (db.prepare(sql).get(this.#schema().hash, ...entries.map(([, v]) => sqlValue(v))) as { n: number }).n;
+    }
+    /** Read every row written as another type now, storing it as the current one (rows that fit are just restamped). */
+    async [MIGRATE_ALL](): Promise<{ total: number; restamped: number; migrated: number; newer: number; failed: { id: string; why: string }[] }> {
+      const db = this.#db();
+      const s = this.#schema();
+      const total = (db.prepare("SELECT count(*) AS n FROM rows WHERE tbl = ?").get(this.name) as { n: number }).n;
+      const r = { total, restamped: 0, migrated: 0, newer: 0, failed: [] as { id: string; why: string }[] };
+      for (const row of this.#stale(db)) {
+        if (this.#fits(deps.decode(row.data))) {
+          db.prepare("UPDATE rows SET schema_hash = ? WHERE tbl = ? AND id = ? AND schema_hash = ?").run(s.hash, this.name, row.id, row.schema_hash);
+          r.restamped++;
+          continue;
+        }
+        try {
+          await this.#read(db, row);
+          r.migrated++;
+        } catch (e) {
+          if (e instanceof HttpError && e.status === 410) r.newer++;
+          else r.failed.push({ id: row.id, why: (e as Error)?.message ?? String(e) });
+        }
+      }
+      return r;
     }
   }
   /** A typed, durable table: `export const users = table<User>("users")`. */
-  const table = <T>(name: string, opts?: { migrate?: (old: unknown) => T | Promise<T> }) => new Table<T>(name, opts);
+  const table = <T>(name: string, opts?: TableOptions) => new Table<T>(name, opts);
 
   /** For the host: the Set-Cookie headers the current call has produced so far (a stream sends them up front). */
   const pendingCookies = (): string[] => storage.getStore()?.setCookies ?? [];
@@ -598,7 +794,27 @@ export declare function every(spec: string, fn: () => unknown): RecurringJob;
  * row type's schema: writes are checked against it, and rows written under an older type are checked, migrated
  * with \`migrate\` (if given) or refused when read. Data lives in .ucm/data/store.sqlite.
  */
-export declare function table<T>(name: string, opts?: { migrate?: (old: any) => T | Promise<T> }): Table<T>;
+export declare function table<T>(name: string, opts?: TableOptions<T>): Table<T>;
+export interface TableOptions<T> {
+  /**
+   * Upgrades rows stored as an earlier row type. One function, or one step per earlier type, oldest first:
+   * \`[fromV1, fromV2]\`. A row goes through the first step whose parameter type it fits, then the later ones,
+   * until it fits \`T\`. The result is checked, and stored. \`ucm data migrate <table>\` upgrades every row now.
+   */
+  migrate?: ((old: any) => T | Promise<T>) | readonly ((old: any) => unknown)[];
+  /** Fields no two rows may share: a write that would duplicate one fails with a 409. Indexed. */
+  unique?: readonly (keyof T & string)[];
+  /** Fields to index, so \`find\` on them doesn't read every row. */
+  index?: readonly (keyof T & string)[];
+  /** The table's previous name: its rows move to this table when it's first used. */
+  renamedFrom?: string;
+}
+export interface FindOptions<T> {
+  orderBy?: keyof T & string;
+  desc?: boolean;
+  limit?: number;
+  offset?: number;
+}
 export interface Table<T> {
   readonly name: string;
   /** Store a new row; returns its id. */
@@ -607,8 +823,15 @@ export interface Table<T> {
   put(id: string, value: T): Promise<void>;
   get(id: string): Promise<T | undefined>;
   delete(id: string): Promise<boolean>;
-  /** Rows whose fields equal \`where\`'s (all rows if omitted), oldest first. */
-  find(where?: Partial<T>): Promise<{ id: string; value: T }[]>;
+  /**
+   * Change one row atomically: \`fn\` gets the current value and returns the new one, synchronously, so nothing can
+   * write in between. Returns the new value, or undefined if there's no such row.
+   */
+  update(id: string, fn: (current: T) => T): Promise<T | undefined>;
+  /** Rows whose fields equal \`where\`'s (all rows if omitted), oldest first or by \`orderBy\`. */
+  find(where?: Partial<T>, opts?: FindOptions<T>): Promise<{ id: string; value: T }[]>;
+  /** The first row \`find\` would return. */
+  findOne(where?: Partial<T>, opts?: Omit<FindOptions<T>, "limit">): Promise<{ id: string; value: T } | undefined>;
   count(where?: Partial<T>): Promise<number>;
 }
 /** For tests: run the queued jobs that are due (all of them with \`{ all: true }\`), inline. */

@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { evaluateWatches, render, run } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { migrate } from "./migrate.ts";
-import { build, dev, listBuilds, parseHttpFlag, pruneBuilds, start } from "./web.ts";
+import { build, dev, listBuilds, migrateTable, parseHttpFlag, pruneBuilds, start } from "./web.ts";
 import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
 import { isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
@@ -196,15 +196,34 @@ function checkStoredRows(cb: Codebase, defs: DefRecord[]) {
     for (const d of defs) {
       const t = d.table;
       if (!t?.name) continue;
-      const stale = db.prepare("SELECT id, data FROM rows WHERE tbl = ? AND schema_hash != ?").all(t.name, t.hash) as { id: string; data: string }[];
-      if (!stale.length) continue;
-      const misfits = stale.map((r) => ({ id: r.id, why: checkValue(t.s, decode(r.data), "row", t.defs) })).filter((m) => m.why);
       const label = `  table "${t.name}"`;
-      if (!misfits.length) console.log(dim(`${label}: ${stale.length} stored row(s) were written as an earlier type and still fit the new one`));
-      else if (t.hasOptions) console.log(yellow(`${label}: ${misfits.length} stored row(s) don't fit the new type; they'll go through migrate() when read`));
-      else {
+      // a renamed table's rows are still under the old name until it's first used
+      const tables = [t.name, ...(t.renamedFrom ? [t.renamedFrom] : [])];
+      const inTables = `tbl IN (${tables.map(() => "?").join(", ")})`;
+      if (t.renamedFrom) {
+        const moving = (db.prepare("SELECT count(*) AS n FROM rows WHERE tbl = ?").get(t.renamedFrom) as { n: number }).n;
+        if (moving) console.log(dim(`${label}: renamed from "${t.renamedFrom}"; its ${moving} row(s) move over when the table is first used`));
+      }
+      const stale = (db.prepare(`SELECT id, data FROM rows WHERE ${inTables} AND schema_hash != ?`).all(...tables, t.hash) as { id: string; data: string }[]).map((r) => ({ id: r.id, value: decode(r.data) }));
+      const misfits = stale.map((r) => ({ ...r, why: checkValue(t.s, r.value, "row", t.defs) })).filter((m) => m.why);
+      if (stale.length && !misfits.length) console.log(dim(`${label}: ${stale.length} stored row(s) were written as an earlier type and still fit the new one`));
+      else if (misfits.length && t.steps?.length) {
+        // a migrate step takes a row if the row fits its parameter type
+        const untaken = misfits.filter((m) => !t.steps!.some((st) => checkValue(st.s, m.value, "row", st.defs) === undefined));
+        if (!untaken.length) console.log(yellow(`${label}: ${misfits.length} stored row(s) don't fit the new type; migrate takes them as they're read (or all now: ucm data migrate ${t.name})`));
+        else {
+          const e = untaken[0]!;
+          console.log(red(`${label}: ${untaken.length} stored row(s) fit neither the new type nor any migrate step's parameter type, e.g. ${e.id}: ${e.why}`));
+          console.log(red(`    reading them will fail; add a step that takes them`));
+        }
+      } else if (misfits.length && t.hasOptions) console.log(yellow(`${label}: ${misfits.length} stored row(s) don't fit the new type; they'll go through migrate() when read`));
+      else if (misfits.length) {
         console.log(red(`${label}: ${misfits.length} stored row(s) don't fit the new type, e.g. ${misfits[0]!.id}: ${misfits[0]!.why}`));
         console.log(red(`    reading them will fail until table() gets a migrate function: table<Row>("${t.name}", { migrate: (old) => ... })`));
+      }
+      for (const f of t.unique ?? []) {
+        const dup = db.prepare(`SELECT json_extract(data, '$."${f}"') AS v, count(*) AS n FROM rows WHERE ${inTables} GROUP BY v HAVING n > 1 AND v IS NOT NULL LIMIT 1`).get(...tables) as { v: unknown; n: number } | undefined;
+        if (dup) console.log(red(`${label}: ${dup.n} stored rows have ${f} = ${JSON.stringify(dup.v)}, so ${f} can't be unique: using the table will fail until they differ`));
       }
     }
   } finally {
@@ -219,7 +238,7 @@ function data(cb: Codebase, table?: string, limit = 20) {
     if (!table) {
       const rows = db.prepare("SELECT tbl, count(*) AS n, count(DISTINCT schema_hash) AS versions FROM rows GROUP BY tbl ORDER BY tbl").all() as { tbl: string; n: number; versions: number }[];
       if (!rows.length) return console.log(dim("no rows stored yet"));
-      for (const r of rows) console.log(`${bold(r.tbl.padEnd(20))} ${String(r.n).padStart(6)} row(s)${r.versions > 1 ? yellow(`  written under ${r.versions} row types`) : ""}`);
+      for (const r of rows) console.log(`${bold(r.tbl.padEnd(20))} ${String(r.n).padStart(6)} row(s)${r.versions > 1 ? yellow(`  written under ${r.versions} row types (ucm data migrate ${r.tbl} upgrades them all)`) : ""}`);
       return;
     }
     const rows = db.prepare("SELECT id, data, schema_hash FROM rows WHERE tbl = ? ORDER BY updated DESC LIMIT ?").all(table, limit) as { id: string; data: string; schema_hash: string }[];
@@ -568,6 +587,7 @@ const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeSc
                                  serve a browser app from the codebase; what needs the server runs there, called by hash
   ucm build <app> [--force]      production build into .ucm/apps/<hash>/ (immutable; reused if it exists)
   ucm data [table [n]]           typed tables (table<Row>() from #ucm/server): row counts, or a table's rows
+  ucm data migrate <table>       upgrade every stored row to the current row type now, through migrate
   ucm jobs [n] | retry <id> | cancel <id>
                                  background jobs: enqueue() / every() from #ucm/server, run by ucm start / ucm dev
   ucm apps [prune [--keep 3]]    list builds (* = current); prune keeps the current build plus the newest N others
@@ -644,6 +664,10 @@ square(12);
       await dev(cb, args[0]!, Number(typeof flags.port === "string" ? flags.port : 5173), typeof flags.http === "string" ? parseHttpFlag(flags.http) : undefined);
       return -1; // keep serving
     case "data":
+      if (args[0] === "migrate") {
+        need(2, "data migrate <table>");
+        return (await migrateTable(cb, args[1]!)) ? 0 : 1;
+      }
       data(cb, args[0], Number(args[1] ?? 20));
       return 0;
     case "jobs": {

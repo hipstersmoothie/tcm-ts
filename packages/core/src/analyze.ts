@@ -279,7 +279,28 @@ function tableOf(site: DefSite, checker: ts.TypeChecker): TableSchema | undefine
   const { s, defs } = typeSchema(checker, checker.getTypeFromTypeNode(init.typeArguments[0]!));
   const arg = init.arguments[0];
   const hash = createHash("sha256").update(JSON.stringify({ s, defs })).digest("hex").slice(0, 32);
-  return { ...(arg && ts.isStringLiteralLike(arg) ? { name: arg.text } : {}), ...(init.arguments.length > 1 ? { hasOptions: true } : {}), hash, s, defs };
+  return { ...(arg && ts.isStringLiteralLike(arg) ? { name: arg.text } : {}), ...(init.arguments.length > 1 ? { hasOptions: true } : {}), hash, s, defs, ...tableOptions(init.arguments[1], checker) };
+}
+
+/** What a table's options literal says about migration steps, constraints and renames. */
+function tableOptions(opts: ts.Expression | undefined, checker: ts.TypeChecker): Partial<TableSchema> {
+  if (!opts || !ts.isObjectLiteralExpression(opts)) return {};
+  const out: Partial<TableSchema> = {};
+  const strings = (e: ts.Expression) => (ts.isArrayLiteralExpression(e) ? e.elements.filter(ts.isStringLiteralLike).map((x) => x.text) : []);
+  for (const p of opts.properties) {
+    if (!ts.isPropertyAssignment(p) || !ts.isIdentifier(p.name)) continue;
+    const v = p.initializer;
+    if (p.name.text === "migrate") {
+      // each step's parameter type: what a row must look like for that step to take it
+      const fns = ts.isArrayLiteralExpression(v) ? [...v.elements] : [v];
+      out.steps = fns.map((f) => {
+        const param = checker.getTypeAtLocation(f).getCallSignatures()[0]?.parameters[0];
+        return param ? typeSchema(checker, checker.getTypeOfSymbolAtLocation(param, f)) : { s: { t: "any" }, defs: [] };
+      });
+    } else if (p.name.text === "unique" || p.name.text === "index") out[p.name.text] = strings(v);
+    else if (p.name.text === "renamedFrom" && ts.isStringLiteralLike(v)) out.renamedFrom = v.text;
+  }
+  return out;
 }
 
 function signatureOf(site: DefSite, checker: ts.TypeChecker): string {

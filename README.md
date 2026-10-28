@@ -258,19 +258,46 @@ export async function me(): Promise<string> {
   await users.find({ name: "ada" });                    // also get / put / delete / count
   ```
 
+  Options cover how the data evolves and how it's queried:
+
+  ```ts
+  export const users = table<User>("users", {
+    migrate: [fromV1, fromV2],   // one step per earlier row type, picked by its parameter type
+    unique: ["email"],           // a duplicate write fails with a 409
+    index: ["plan"],             // find({ plan: "pro" }) uses an index
+    renamedFrom: "members",      // the old table's rows move over
+  });
+  await users.find({ plan: "pro" }, { orderBy: "joined", desc: true, limit: 10 });
+  await users.findOne({ email });
+  await users.update(id, (u) => ({ ...u, logins: u.logins + 1 }));   // atomic read-modify-write
+  ```
+
   TypeScript erases `User` at runtime, but ucm sees it where the table is declared. It derives a schema from
   it and attaches that schema, with its hash, to the table.
   - **Writes are checked** against `User`. Each row records the schema it was written with, in
     `.ucm/data/store.sqlite`. Dates, maps and sets round-trip.
   - **When `User` changes,** each stored row is checked as it's read:
     - rows that still fit the new type (e.g. a new optional field) just work;
-    - rows that don't are converted by `table<User>("users", { migrate: (old) => … })`, the result is checked,
-      and the upgraded row is written back;
+    - rows that don't are converted by `migrate`, the result is checked, and the upgraded row is written back.
+      `migrate` is one function, or a chain of typed steps, oldest first:
+      `[(old: V1) => V2, (old: V2) => User]`. ucm records each step's parameter type, and a row goes through the
+      first step whose parameter it fits, then the later ones, until it fits `User`. Type changes accumulate
+      without one function having to handle every past shape;
     - with no `migrate`, reading refuses with the reason, never returning the wrong shape.
   - **`ucm update` reports this up front.** It checks the stored rows the moment the type changes and says
-    whether they fit, will be migrated, or need a `migrate` first.
+    whether they fit, will be migrated (some step takes them), or need a step first. It also reports stored
+    duplicates that would break a new `unique` field.
+  - **`ucm data migrate <table>` migrates every row now** through the current code, rather than as rows are
+    read. Afterwards it says whether `migrate` still has work: once every row has the current type, it can be
+    removed. Keep it while an older build that writes the old type is still serving.
   - **Old pages reload instead of misreading.** A page from an older build (old builds keep serving) that reads
     rows written by newer code gets a 410, and its browser reloads onto the current version.
+  - **Queries.** `find(where, { orderBy, desc, limit, offset })`, `findOne` and `count`. `unique` and `index`
+    fields get SQLite expression indexes. When every row has the current type (e.g. after `ucm data migrate`),
+    filtering, ordering and paging run in SQL. Otherwise rows of older types are read through `migrate` first,
+    so results never depend on whether a row was migrated yet.
+  - **`update(id, fn)`** is atomic: `fn` is synchronous and runs while the row is locked. There are no
+    multi-row transactions.
   - `ucm data` lists tables and row counts, and `ucm data <table>` shows rows. Tables live in memory under
     `ucm test`.
 - **Background jobs.** `enqueue(sendWelcome, user.id)` from a server function returns at once; the work runs

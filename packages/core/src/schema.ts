@@ -33,6 +33,17 @@ export interface TableSchema {
   hash: string;
   s: Schema;
   defs: Schema[];
+  /**
+   * the parameter type of each `migrate` step, in order (one for a single function): a stored row goes through
+   * the first step whose parameter it fits, then the later ones, until it fits the row type
+   */
+  steps?: { s: Schema; defs: Schema[] }[];
+  /** fields no two rows may share */
+  unique?: string[];
+  /** fields with an index, for `find` */
+  index?: string[];
+  /** the table's previous name: its rows move to this one */
+  renamedFrom?: string;
 }
 
 export interface ParamsSchema {

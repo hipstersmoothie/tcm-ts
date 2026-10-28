@@ -120,7 +120,7 @@ test("typed tables: writes are checked; changed row types are verified, migrated
 
   // with a migration: rows are upgraded as they're read, and the result is checked too
   crm({ field: `; plan?: "free" | "pro"; active: boolean`, opts: `, { migrate: (old: Omit<User, "active">) => ({ ...old, active: true }) }`, value: `, plan: "pro" as const, active: true` });
-  assert.match(ucm("update"), /they'll go through migrate\(\) when read/);
+  assert.match(ucm("update"), /migrate takes them as they.re read \(or all now: ucm data migrate users\)/);
   await waitFor(async () => (await call(url, hashOf("crm.listUsers"), [])).body === `["ada","grace"]`);
   assert.doesNotMatch(ucm("data"), /written under \d+ row types/, "every row now has the current row type");
 
@@ -144,4 +144,99 @@ export const testUntyped = async () => {
   );
   ucm("add");
   assert.match(ucm("test", "loose"), /1 passed, 0 failed/);
+});
+
+test("migration chains, eager migration, renames, unique and indexed fields, atomic updates", () => {
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "ucm data2 "));
+  const run = (...args: string[]) => {
+    const r = spawnSync(process.execPath, [BIN, ...args], { cwd: dir2, encoding: "utf8", env });
+    return { status: r.status, out: (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "") };
+  };
+  const ok = (...args: string[]) => {
+    const r = run(...args);
+    if (r.status !== 0) throw new Error(`ucm ${args.join(" ")} exited ${r.status}:\n${r.out}`);
+    return r.out;
+  };
+  ok("init");
+  // rows an earlier app wrote under the table's old name, as two earlier row types (and one no step takes)
+  fs.mkdirSync(path.join(dir2, ".ucm", "data"), { recursive: true });
+  const store = new DatabaseSync(path.join(dir2, ".ucm", "data", "store.sqlite"));
+  store.exec(`CREATE TABLE rows (tbl TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, schema_hash TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (tbl, id));
+    CREATE TABLE schemas (tbl TEXT NOT NULL, hash TEXT NOT NULL, schema TEXT NOT NULL, first_seen INTEGER NOT NULL, PRIMARY KEY (tbl, hash));`);
+  const seed = store.prepare("INSERT INTO rows VALUES ('memos', ?, ?, ?, ?)");
+  seed.run("r1", JSON.stringify({ body: "first" }), "v1", 1);
+  seed.run("r2", JSON.stringify({ text: "second", tags: ["x"] }), "v2", 2);
+  seed.run("r3", JSON.stringify({ title: 3 }), "v1", 3);
+  store.close();
+
+  fs.writeFileSync(
+    path.join(dir2, "scratch.ts"),
+    `// ucm: namespace notes
+import assert from "node:assert/strict";
+import { table } from "#ucm/server";
+
+export type Note = { text: string; tags: string[]; pinned: boolean; at: number };
+export function fromV1(old: { body: string }) {
+  return { text: old.body, tags: [] as string[] };
+}
+export function fromV2(old: { text: string; tags: string[] }): Note {
+  return { ...old, pinned: false, at: 0 };
+}
+export const notes = table<Note>("notes", { migrate: [fromV1, fromV2], unique: ["text"], index: ["pinned"], renamedFrom: "memos" });
+
+// (tests share one in-memory store: this one's rows are tagged "f", and only it stores pinned rows)
+export const testFindOptions = async () => {
+  for (const [text, at] of [["c", 3], ["a", 1], ["b", 2]] as const) await notes.insert({ text, tags: ["f"], pinned: at > 1, at });
+  // a non-scalar condition is compared in JS; a scalar one is a SQL query (with the index)
+  assert.deepEqual((await notes.find({ tags: ["f"] }, { orderBy: "at" })).map((r) => r.value.text), ["a", "b", "c"]);
+  assert.deepEqual((await notes.find({ pinned: true }, { orderBy: "at", desc: true, limit: 1 })).map((r) => r.value.text), ["c"]);
+  assert.deepEqual((await notes.find({ tags: ["f"] }, { orderBy: "text", offset: 1 })).map((r) => r.value.text), ["b", "c"]);
+  assert.equal((await notes.findOne({ text: "b" }))?.value.at, 2);
+  assert.equal(await notes.findOne({ text: "zzz" }), undefined);
+  assert.equal(await notes.count({ pinned: true }), 2);
+};
+export const testUnique = async () => {
+  const id = await notes.insert({ text: "only once", tags: [], pinned: false, at: 0 });
+  await assert.rejects(notes.insert({ text: "only once", tags: [], pinned: true, at: 1 }), (e: Error & { status?: number }) => e.status === 409 && /another row \\(\\S+\\) already has text = "only once"/.test(e.message));
+  await notes.put(id, { text: "only once", tags: ["kept"], pinned: false, at: 0 }); // replacing itself is fine
+  assert.deepEqual((await notes.get(id))?.tags, ["kept"]);
+};
+export const testAtomicUpdate = async () => {
+  const id = await notes.insert({ text: "counter", tags: [], pinned: false, at: 0 });
+  await Promise.all([1, 2, 3].map(() => notes.update(id, (n) => ({ ...n, at: n.at + 1 }))));
+  assert.equal((await notes.get(id))?.at, 3);
+  assert.equal(await notes.update("missing", (n) => n), undefined);
+  await assert.rejects(notes.update(id, (async (n: Note) => n) as unknown as (n: Note) => Note), /must return the new value, not a promise/);
+};
+`,
+  );
+  const added = ok("add");
+  assert.match(added, /table "notes": renamed from "memos"; its 3 row\(s\) move over when the table is first used/);
+  assert.match(added, /table "notes": 1 stored row\(s\) fit neither the new type nor any migrate step's parameter type, e\.g\. r3/);
+  assert.match(ok("test", "notes"), /3 passed, 0 failed/);
+
+  // eagerly: r1 goes through both steps, r2 through the second; r3 fits no step and says why
+  const first = run("data", "migrate", "notes");
+  assert.equal(first.status, 1);
+  assert.match(first.out, /table "notes": 3 row\(s\): 0 already current, 2 migrated, 0 still fit as stored/);
+  assert.match(first.out, /r3: .*no migrate step takes \(step 1 \(fromV1\): row\.body is missing; step 2 \(fromV2\): row\.text is missing\)/);
+
+  const db = new DatabaseSync(path.join(dir2, ".ucm", "data", "store.sqlite"));
+  db.prepare("DELETE FROM rows WHERE id = 'r3'").run();
+  const rows = db.prepare("SELECT tbl, id, data FROM rows ORDER BY id").all() as { tbl: string; id: string; data: string }[];
+  assert.deepEqual(rows.map((r) => [r.tbl, r.id, JSON.parse(r.data)]), [
+    ["notes", "r1", { text: "first", tags: [], pinned: false, at: 0 }],
+    ["notes", "r2", { text: "second", tags: ["x"], pinned: false, at: 0 }],
+  ]);
+  // the declared fields are indexed, and find's queries use them
+  const indexes = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'ucm_%' ORDER BY name").all() as { name: string }[]).map((r) => r.name);
+  assert.deepEqual(indexes, ["ucm_index_notes__pinned", `ucm_unique_notes__text`]);
+  const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT id FROM rows WHERE tbl = 'notes' AND schema_hash = ? AND json_extract(data, '$."pinned"') = ?`).all("h", 1) as { detail: string }[];
+  assert.match(plan.map((p) => p.detail).join("\n"), /USING INDEX ucm_index_notes__pinned/);
+  db.close();
+
+  const second = ok("data", "migrate", "notes");
+  assert.match(second, /2 row\(s\): 2 already current/);
+  assert.match(second, /every row now has the current row type, so migrate has nothing left to do: you can remove it from table\("notes"\)/);
+  assert.match(ok("data"), /notes\s+2 row\(s\)$/m);
 });
