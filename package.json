@@ -11,10 +11,12 @@
     "selfhost": "scripts/selfhost.sh",
     "compare-ts": "scripts/compare-ts-versions.sh",
     "build": "node scripts/build.ts",
-    "test:package": "scripts/test-package.sh"
+    "test:package": "scripts/test-package.sh",
+    "docs:site": "node scripts/docs-site.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "marked": "^18.1.2",
     "typescript": "^6.0.3"
   },
   "bin": {
