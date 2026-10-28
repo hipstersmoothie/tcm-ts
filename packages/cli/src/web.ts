@@ -15,6 +15,7 @@ import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import type { Plugin } from "vite";
 import { checkArgs, exportId, SERVER_API_MODULE, shortHash } from "@tcm/core";
@@ -178,6 +179,9 @@ function entrySource(cb: Codebase, appName: string, s: AppState, cacheRel: strin
       `import { createElement } from "${s.react.react}";`,
       `import { createRoot, hydrateRoot } from "${s.react.dom}/client";`,
       `import { ${exportId(rec.hash)} as App } from "${from}";`,
+      `// cookies the server set while streaming this page, after its headers had gone out`,
+      `declare const __TCM_COOKIES__: string | undefined;`,
+      `if (typeof __TCM_COOKIES__ === "string") void fetch("/__tcm/cookies/" + __TCM_COOKIES__, { method: "POST" });`,
       `const root = document.getElementById("app")!;`,
       `// the server rendered the first paint: take it over, rather than render it again`,
       `if (root.hasChildNodes()) hydrateRoot(root, createElement(App));`,
@@ -526,6 +530,25 @@ interface SsrRequest {
 const ssrRequests = new AsyncLocalStorage<SsrRequest>();
 
 /**
+ * Cookies a page's server components set after its headers went out (in a boundary that streamed later): the
+ * page tells the browser a one-time token, and the browser collects them with it (`POST /__tcm/cookies/<token>`).
+ */
+const lateCookies = new Map<string, { cookies: string[]; expires: number }>();
+
+/** Answers `POST /__tcm/cookies/<token>` with the cookies kept under that token, once. */
+const lateCookieHandler: Middleware = (req, res, next) => {
+  const m = /^\/__tcm\/cookies\/([\w-]{20,})$/.exec((req.url ?? "").split("?")[0]!);
+  if (!m) return next();
+  const now = Date.now();
+  for (const [k, v] of lateCookies) if (v.expires < now) lateCookies.delete(k);
+  const kept = req.method === "POST" ? lateCookies.get(m[1]!) : undefined;
+  lateCookies.delete(m[1]!);
+  if (kept) res.setHeader("set-cookie", kept.cookies);
+  res.statusCode = kept ? 204 : 404;
+  res.end();
+};
+
+/**
  * What the browser runtime's stubs use while a page renders on the server (`globalThis.__tcmSsr`), and the page's
  * `location`, so browser code reading the URL renders the same on both sides. Both follow the request being
  * rendered; outside one, `location` is undefined, as it always is in Node.
@@ -566,6 +589,12 @@ async function renderPage(
   const host = await serverApiHost(cb)();
   const data = dataDir(cb);
   const trees: SsrRequest["trees"] = {};
+  // cookies server components set: in the page's headers if they're set before those go out, else collected
+  // by the browser afterwards
+  let started = false;
+  const early: string[] = [];
+  const late: string[] = [];
+  const keep = (cookies: string[]) => (started ? late : early).push(...cookies);
   const page: SsrRequest = {
     url: new URL(req.url ?? "/", `${opts.secure ? "https" : "http"}://${req.headers.host ?? "localhost"}`),
     cache: new Map(),
@@ -582,18 +611,24 @@ async function renderPage(
       const describe = (e: unknown) => errorReply(e as Error, e instanceof host.HttpError, name, opts.production).body;
       const call = { method: "GET", url: req.url ?? "/", headers: req.headers, ip: req.socket.remoteAddress, signal: new AbortController().signal };
       // the page's request is the server component's request: its cookies and session
+      let taken = 0;
+      const take = (all: string[]) => {
+        keep(all.slice(taken));
+        taken = all.length;
+      };
       const r = await host.withCall(call, { secure: opts.secure, dataDir: data }, () =>
         renderComponent(cb, fn, args[0], components, describe, (msg) => {
+          take(host.pendingCookies());
           if ("s" in msg) recorded.chunks[msg.s] = "e" in msg ? { e: msg.e } : { v: msg.v };
           else recorded.root = msg.v;
           onMessage(msg);
         }),
       );
+      take(r.setCookies);
       if (!r.ok) throw r.error;
     },
   };
   const [head, tail] = template.split('<div id="app"></div>') as [string, string];
-  let started = false;
   try {
     const { done } = await ssrRequests.run(page, () =>
       render(
@@ -601,6 +636,7 @@ async function renderPage(
           if (!started) {
             started = true;
             res.setHeader("content-type", "text/html");
+            if (early.length) res.setHeader("set-cookie", early);
             res.write(`${head}<div id="app">`);
           }
           res.write(html);
@@ -616,9 +652,15 @@ async function renderPage(
     return false;
   }
   if (!started) res.write(`${head}<div id="app">`);
-  // after the HTML, before the page's script: the trees it hydrates with
+  // after the HTML, before the page's script: the trees it hydrates with, and the token for late cookies
   const payload = JSON.stringify(encode(trees, "the server component trees of the page")).replace(/</g, "\\u003c");
-  res.end(`</div><script>var __TCM_TREES__ = ${payload};</script>${tail}`);
+  let cookies = "";
+  if (late.length) {
+    const token = randomBytes(18).toString("base64url");
+    lateCookies.set(token, { cookies: late, expires: Date.now() + 60_000 });
+    cookies = ` var __TCM_COOKIES__ = ${JSON.stringify(token)};`;
+  }
+  res.end(`</div><script>var __TCM_TREES__ = ${payload};${cookies}</script>${tail}`);
   return true;
 }
 
@@ -844,6 +886,7 @@ export async function dev(cb: Codebase, appName: string, port: number, routes?: 
         name: "tcm-rpc",
         configureServer: (s) => {
           s.middlewares.use(rpc);
+          s.middlewares.use(lateCookieHandler);
           if (routes) s.middlewares.use(httpHandler(cb, routes, { production: false, secure: false }));
           // a component app's pages are rendered on the server first, then hydrated
           s.middlewares.use(async (req, res, next) => {
@@ -1071,7 +1114,7 @@ export async function start(cb: Codebase, appName: string, opts: StartOptions): 
   };
   const routes = opts.http ? httpHandler(cb, opts.http, { production: true, secure: !!opts.tls }) : (_q: http.IncomingMessage, _s: http.ServerResponse, next: () => void) => next();
   const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
-    rpc(req, res, () => routes(req, res, () => {
+    rpc(req, res, () => lateCookieHandler(req, res, () => routes(req, res, () => {
       const url = decodeURIComponent((req.url ?? "/").split("?")[0]!);
       const asset = /^\/_app\/([a-z2-7]{52})\/(.+)$/.exec(url);
       if (asset) {
@@ -1105,7 +1148,7 @@ export async function start(cb: Codebase, appName: string, opts: StartOptions): 
         }
         serveFile(res, page, false);
       })();
-    }));
+    })));
   };
   const server = opts.tls ? https.createServer(opts.tls, handler) : http.createServer(handler);
   await new Promise<void>((r) => server.listen(opts.port, opts.host, r));

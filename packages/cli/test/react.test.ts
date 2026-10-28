@@ -62,13 +62,16 @@ async function timed(res: Response): Promise<{ ms: number; text: string }[]> {
 }
 
 const APP = `// tcm: namespace ui
-import { Suspense, createContext, useContext } from "react";
+import { Suspense, createContext, lazy, useContext } from "react";
 import * as React from "react";
+import { setCookie } from "#tcm/server";
 
 export const Theme = createContext("light");
 
 export async function Slow({ ms }: { ms: number }) {
   await new Promise((r) => setTimeout(r, ms));
+  // set after the page's headers have gone out
+  setCookie("late", "yes", { httpOnly: false });
   return <p id="slow">slow part, {ms}ms</p>;
 }
 
@@ -82,6 +85,9 @@ export function Counter() {
   return <button id="count" onClick={() => setN(n + 1)}>{n}</button>;
 }
 
+// code split: loads in the browser
+export const LazyCounter = lazy(async () => ({ default: Counter }));
+
 export class Clock extends React.Component<{ label: string }, { ticks: number }> {
   state = { ticks: 0 };
   render() {
@@ -90,8 +96,11 @@ export class Clock extends React.Component<{ label: string }, { ticks: number }>
 }
 
 export async function Page() {
+  setCookie("early", "yes", { httpOnly: false });
   return (
     <Theme value="dark">
+      <Theme.Consumer>{(t) => <i id="consumed">{t}</i>}</Theme.Consumer>
+      <LazyCounter />
       <h1 id="title">streaming</h1>
       <Themed />
       <Counter />
@@ -103,8 +112,12 @@ export async function Page() {
   );
 }
 
+export async function Outside() {
+  return <Theme.Consumer>{(t) => <i id="default">{t}</i>}</Theme.Consumer>;
+}
+
 export function App() {
-  return <main><Page /></main>;
+  return <main><Page /><Outside /></main>;
 }
 `;
 
@@ -119,10 +132,16 @@ test("React: hooks, classes and contexts are placed; <Suspense> streams; the fir
   assert.match(tcm("view", "ui.Counter"), /renders in the browser: it uses react\.useState/, "a hook through the React namespace");
   assert.match(tcm("view", "ui.Clock"), /renders in the browser: it is a class component/);
   assert.match(tcm("view", "ui.Themed"), /renders in the browser: it uses useContext/);
-  assert.match(tcm("view", "ui.Page"), /renders on the server: it is an async component/);
+  assert.match(tcm("view", "ui.Page"), /renders on the server: it uses #tcm\/server \(setCookie\); the browser fetches its rendered tree by hash/);
+  assert.match(tcm("view", "ui.Outside"), /renders on the server: it is an async component/);
   assert.match(tcm("view", "ui.Theme"), /runs anywhere/);
 
   const check = async (url: string) => {
+    // cookies set while the page renders: before its headers go out, they're in them
+    const first = await fetch(url, { headers: { accept: "text/html" } });
+    assert.match(first.headers.getSetCookie().join("\n"), /early=yes/);
+    assert.doesNotMatch(first.headers.getSetCookie().join("\n"), /late=yes/);
+    assert.match(await first.text(), /var __TCM_COOKIES__ = "[\w-]+"/, "later ones are left for the browser to collect");
     // the server component's own response: the tree at once, the boundary's contents when they're ready
     const lines = (await timed(await fetch(new URL(`/__tcm/rpc/${hashOf("ui.Page")}`, url), { method: "POST", headers: { "content-type": "application/json" }, body: "[{}]" })))
       .flatMap((c) => c.text.split("\n").filter(Boolean).map((text) => ({ ms: c.ms, text })));
@@ -135,7 +154,8 @@ test("React: hooks, classes and contexts are placed; <Suspense> streams; the fir
     const html = chunks.map((c) => c.text).join("");
     const shell = chunks.find((c) => c.text.includes('id="title"'))!;
     const rest = chunks.find((c) => c.text.includes("slow part"))!;
-    assert.match(shell.text, /<b id="theme">dark<\/b>.*<p id="slow">loading<\/p>/s, "the first paint has the context's value and the fallback");
+    assert.match(shell.text, /<i id="consumed">dark<\/i>.*<b id="theme">dark<\/b>.*<p id="slow">loading<\/p>/s, "the first paint has the context's value and the fallback");
+    assert.match(html, /<i id="default">light<\/i>/, "a consumer with no provider above it in the server tree reads the default");
     assert.ok(rest.ms - shell.ms >= 800, `the shell doesn't wait for the slow part (${shell.ms}ms, then ${rest.ms}ms)`);
     assert.ok(html.indexOf("__TCM_TREES__") > html.indexOf("slow part"));
 
@@ -147,6 +167,9 @@ test("React: hooks, classes and contexts are placed; <Suspense> streams; the fir
       assert.equal(await p.waitFor<string>(text("#count"), (t) => t === "1", 3000), "1");
       await p.evaluate(`document.querySelector("#clock").click()`);
       assert.equal(await p.waitFor<string>(text("#clock"), (t) => t === "ticks 1", 3000), "ticks 1");
+      // the lazy component, sent by hash, loaded and rendered in the browser
+      assert.equal(await p.evaluate(`document.querySelectorAll("#count").length`), 2);
+      assert.match(await p.waitFor<string>("document.cookie", (c) => /late=yes/.test(c ?? "")), /early=yes.*late=yes|late=yes.*early=yes/);
       assert.deepEqual(p.errors, []);
     });
   };

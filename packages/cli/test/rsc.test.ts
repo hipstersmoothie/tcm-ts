@@ -76,3 +76,18 @@ test("a context provided on the server is sent by its hash, with its value", asy
   const Anonymous = () => el({ $$typeof: Symbol.for("react.context") }, { value: 1, children: null });
   await assert.rejects(renderServerComponent(Anonymous as never, {}, ctx([])), /must be a top-level definition/);
 });
+
+test("a consumer on the server reads the provider above it in the tree, else the default; lazy goes to the browser", async () => {
+  const Theme = Object.defineProperty({ $$typeof: Symbol.for("react.context"), _currentValue: "light" }, Symbol.for("tcm.hash"), { value: "theme" });
+  const Consumer = { $$typeof: Symbol.for("react.consumer"), _context: Theme };
+  const read = el(Consumer, { children: (t: string) => el("i", { children: t }) });
+  const Page = () => [el(Theme, { value: "dark", children: read }), read];
+  const { root } = await renderServerComponent(Page as never, {}, ctx([]));
+  assert.deepEqual(root, [
+    { $tcm: "x", ref: "theme", key: null, value: "dark", children: { $tcm: "e", type: "i", key: null, props: { children: "dark" } } },
+    { $tcm: "e", type: "i", key: null, props: { children: "light" } },
+  ]);
+  const Chart = Object.defineProperty({ $$typeof: Symbol.for("react.lazy") }, Symbol.for("tcm.hash"), { value: "chart" });
+  const WithChart = () => el(Chart, { points: [1, 2] });
+  assert.deepEqual((await renderServerComponent(WithChart as never, {}, ctx([]))).root, { $tcm: "c", ref: "chart", key: null, props: { points: [1, 2] } });
+});

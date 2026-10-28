@@ -278,9 +278,9 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
     for (const m of members) {
       if (m.kind === "type") continue;
       const local = memberNames.get(m.hash)!;
-      // and so do React contexts, which a server component's tree can provide to the browser components under it
+      // and so do React contexts and lazy components, which a server component's tree can send to the browser
       lines.push(
-        `if (typeof ${local} === "function" || (${local} as any)?.$$typeof === Symbol.for("react.context")) Object.defineProperty(${local}, Symbol.for("tcm.hash"), { value: ${JSON.stringify(m.hash)} });`,
+        `if (typeof ${local} === "function" || [Symbol.for("react.context"), Symbol.for("react.lazy")].includes((${local} as any)?.$$typeof)) Object.defineProperty(${local}, Symbol.for("tcm.hash"), { value: ${JSON.stringify(m.hash)} });`,
       );
       // a table learns its row type's schema here (the type itself is erased)
       if (m.table) lines.push(`Object.defineProperty(${local}, Symbol.for("tcm.schema"), { value: ${JSON.stringify(m.table)} });`);

@@ -156,10 +156,13 @@ export class Placement {
     return !!rec && (rec.kind === "term" || rec.kind === "class") && !!rec.jsx && /^[A-Z]/.test(rec.nameHint);
   }
 
-  /** `const Theme = createContext(…)`: server components can render its provider; the browser needs the object. */
-  isContext(h: string): boolean {
+  /**
+   * `const Theme = createContext(…)` or `const Chart = lazy(…)`: objects a server component's tree sends to the
+   * browser by hash (a provider, a code-split component), so the browser needs them.
+   */
+  isSentObject(h: string): boolean {
     const rec = this.cb.store.getDef(h);
-    return !!rec && rec.kind === "term" && rec.spans.some((s) => s.ext && /^npm:react@/.test(s.ext.module) && s.ext.export === "createContext");
+    return !!rec && rec.kind === "term" && rec.spans.some((s) => s.ext && /^npm:react@/.test(s.ext.module) && (s.ext.export === "createContext" || s.ext.export === "lazy"));
   }
 
   /** Renders on the server, so the browser fetches its rendered tree: needs the server, or is async. */
@@ -353,8 +356,9 @@ export class Placement {
         if (seen.has(x)) return;
         seen.add(x);
         for (const d of this.valueDeps(x)) {
-          // a context the tree provides: the browser components under it read the same object
-          if (this.isContext(d)) {
+          // a context the tree provides (the browser components under it read the same object), or a lazy
+          // component (it loads in the browser)
+          if (this.isSentObject(d)) {
             refs.add(d);
             visit(d, [...chain, this.name(root)]);
             continue;

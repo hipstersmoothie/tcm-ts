@@ -24,7 +24,9 @@ The same module provides [tables and transactions](data.md) and [jobs](jobs.md).
 ## Request context
 
 - **`request()`** gives the method, URL, `Headers`, cookies, client IP, and an `AbortSignal` that fires if the
-  client disconnects. The context follows the call through any depth of `await`s (AsyncLocalStorage).
+  client disconnects. The context follows the call through any depth of `await`s (AsyncLocalStorage). Server
+  components get the same context, both when they're fetched and when they render a page's first paint (the
+  page's request; [React](react.md#cookies)).
 - **`cookie(name)`, `setCookie`, `deleteCookie`.** Cookies default to `HttpOnly` and `SameSite=Lax`, and to
   `Secure` over TLS.
 

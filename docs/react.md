@@ -185,10 +185,31 @@ export async function Layout() {
 }
 ```
 
-The provider is sent as the context's hash and its value, which must be plain data. Server components can't
-read a context themselves: they render before the browser does. Pass what they need as props.
+The provider is sent as the context's hash and its value, which must be plain data.
 
-## Limits
+On the server, a `<Theme.Consumer>` reads the value provided above it in the same server-rendered tree, or the
+context's default when there's none. A server component can't see providers in browser components above it:
+it renders on the server, before the browser has any. Pass what it needs as props.
 
-- **`lazy` components render only in the browser**, as do context consumers (`<Theme.Consumer>`).
-- **Cookies set while rendering the first paint aren't sent**; set them in a server function instead.
+## Code splitting
+
+A `lazy` component a server component renders loads and renders in the browser. It's sent as a reference to
+its definition's hash, like a browser component, so its code is still split out of the page:
+
+```tsx
+export const Chart = lazy(() => import("chart-lib"));     // a top-level definition, so it has a hash
+
+export async function Report() {
+  const points = await loadPoints();
+  return <Chart points={points} />;                        // the browser loads chart-lib, then renders it
+}
+```
+
+The first paint renders it on the server, as React server rendering does.
+
+## Cookies
+
+A server component can set cookies (`setCookie` from `#tcm/server`), when it's fetched and when it renders the
+first paint. Cookies set before the page's headers go out are in them. Ones set later (in a `<Suspense>`
+boundary that streams after the shell) are kept under a one-time token in the page, and the browser collects
+them right away (`POST /__tcm/cookies/<token>`, within a minute), so `httpOnly` cookies work too.

@@ -27,6 +27,8 @@ const MEMO = Symbol.for("react.memo");
 const FORWARD_REF = Symbol.for("react.forward_ref");
 const CONTEXT = Symbol.for("react.context");
 const PROVIDER = Symbol.for("react.provider");
+const CONSUMER = Symbol.for("react.consumer");
+const LAZY = Symbol.for("react.lazy");
 const TCM_HASH = Symbol.for("tcm.hash");
 
 interface Element {
@@ -37,6 +39,8 @@ interface Element {
 }
 
 type Props = Record<string, unknown>;
+/** The contexts provided above, in this server-rendered tree: what a `<Context.Consumer>` in it reads. */
+type Scope = Map<unknown, unknown>;
 export type Wire =
   | null
   | string
@@ -111,36 +115,36 @@ class Render {
 /** Render `component(props)` on the server into plain data: the tree, then its boundaries' contents. */
 export async function renderServerComponent(component: (props: Props) => unknown, props: Props, ctx: RenderContext): Promise<Rendered> {
   const r = new Render(ctx);
-  const root = await render({ $$typeof: Symbol.for("react.transitional.element"), type: component, key: null, props }, r, []);
+  const root = await render({ $$typeof: Symbol.for("react.transitional.element"), type: component, key: null, props }, r, [], new Map());
   return { root, chunks: r.chunks() };
 }
 
-async function render(node: unknown, r: Render, path: string[]): Promise<Wire> {
+async function render(node: unknown, r: Render, path: string[], scope: Scope): Promise<Wire> {
   const { ctx } = r;
   if (node === null || node === undefined || typeof node === "boolean") return null;
   if (typeof node === "string" || typeof node === "number" || typeof node === "bigint") return node;
-  if (isThenable(node)) return render(await node, r, path);
-  if (Array.isArray(node)) return Promise.all(node.map((n) => render(n, r, path)));
+  if (isThenable(node)) return render(await node, r, path, scope);
+  if (Array.isArray(node)) return Promise.all(node.map((n) => render(n, r, path, scope)));
   if (!isElement(node)) {
-    if (typeof node === "object" && Symbol.iterator in node) return Promise.all([...(node as Iterable<unknown>)].map((n) => render(n, r, path)));
+    if (typeof node === "object" && Symbol.iterator in node) return Promise.all([...(node as Iterable<unknown>)].map((n) => render(n, r, path, scope)));
     throw new Error(`${where(path)}: can't render ${typeof node === "function" ? "a function" : "an object"} as a child`);
   }
   const { type, key, props } = node;
-  if (typeof type === "string") return { $tcm: "e", type, key, props: await hostProps(type, props, r, path) };
+  if (typeof type === "string") return { $tcm: "e", type, key, props: await hostProps(type, props, r, path, scope) };
   if (type === SUSPENSE) {
     // the id before any await, so boundaries are numbered in tree order
-    const id = r.boundary(() => render(props.children, r, path));
-    return { $tcm: "s", id, key, fallback: await render(props.fallback, r, path) };
+    const id = r.boundary(() => render(props.children, r, path, scope));
+    return { $tcm: "s", id, key, fallback: await render(props.fallback, r, path, scope) };
   }
-  if (typeof type === "symbol" && PASS_THROUGH.has(type)) return render(props.children, r, path);
+  if (typeof type === "symbol" && PASS_THROUGH.has(type)) return render(props.children, r, path, scope);
   if (typeof type === "function") {
     const hash = (type as unknown as Record<symbol, unknown>)[TCM_HASH];
     // codebase components by their current names
     const at = [...path, typeof hash === "string" ? ctx.name(hash) : nameOf(type)];
-    if (typeof hash === "string" && ctx.isClientRef(hash)) return { $tcm: "c", ref: hash, key, props: await clientProps(props, r, at) };
+    if (typeof hash === "string" && ctx.isClientRef(hash)) return { $tcm: "c", ref: hash, key, props: await clientProps(props, r, at, scope) };
     if ((type.prototype as { isReactComponent?: unknown } | undefined)?.isReactComponent) throw new Error(`${where(at)}: class components only render in the browser`);
     try {
-      return await render(await (type as (p: unknown) => unknown)(props), r, at);
+      return await render(await (type as (p: unknown) => unknown)(props), r, at, scope);
     } catch (e) {
       // a hook outside a component instance: React's own message doesn't say where or why
       if (e instanceof TypeError && /reading 'use\w*'/.test(e.message)) throw new Error(`${where(at)} uses a React hook, but renders on the server`);
@@ -149,25 +153,40 @@ async function render(node: unknown, r: Render, path: string[]): Promise<Wire> {
   }
   if (type && typeof type === "object") {
     const t = type as { $$typeof?: symbol; type?: unknown; render?: (p: unknown, r: null) => unknown; _context?: unknown };
-    if (t.$$typeof === MEMO) return render({ ...node, type: t.type }, r, path);
-    if (t.$$typeof === FORWARD_REF) return render(await t.render!(props, null), r, [...path, t.render!.name || "forwardRef"]);
+    if (t.$$typeof === MEMO) return render({ ...node, type: t.type }, r, path, scope);
+    if (t.$$typeof === FORWARD_REF) return render(await t.render!(props, null), r, [...path, t.render!.name || "forwardRef"], scope);
     if (t.$$typeof === CONTEXT || t.$$typeof === PROVIDER) {
-      // the browser components below read it: send which context (by hash) and its value
+      // the browser components below read it: send which context (by hash) and its value. Consumers rendered here
+      // on the server read it too.
       const context = (t.$$typeof === PROVIDER ? t._context : t) as Record<symbol, unknown>;
       const hash = context[TCM_HASH];
       if (typeof hash !== "string") throw new Error(`${where(path)}: a context provided on the server must be a top-level definition, so the browser can find it by hash`);
-      return { $tcm: "x", ref: hash, key, value: await clientValue(props.value, "value", r, path), children: await render(props.children, r, path) };
+      const inner = new Map(scope).set(context, props.value);
+      return { $tcm: "x", ref: hash, key, value: await clientValue(props.value, "value", r, path, scope), children: await render(props.children, r, path, inner) };
+    }
+    if (t.$$typeof === CONSUMER) {
+      // the value provided above in this tree, else the context's default
+      const context = t._context as { _currentValue?: unknown };
+      const value = scope.has(context) ? scope.get(context) : context._currentValue;
+      if (typeof props.children !== "function") throw new Error(`${where(path)}: a context consumer's child must be a function of the value`);
+      return render((props.children as (v: unknown) => unknown)(value), r, path, scope);
+    }
+    if (t.$$typeof === LAZY) {
+      // code split for the browser: it loads and renders there, by the hash of the definition holding it
+      const hash = (t as Record<symbol, unknown>)[TCM_HASH];
+      if (typeof hash !== "string") throw new Error(`${where(path)}: a lazy component rendered on the server must be a top-level definition, so the browser can find it by hash`);
+      return { $tcm: "c", ref: hash, key, props: await clientProps(props, r, [...path, ctx.name(hash)], scope) };
     }
   }
-  throw new Error(`${where(path)}: <${typeof type === "symbol" ? type.description : nameOf(type)}> (lazy components, context consumers) only renders in the browser; render it from a browser component`);
+  throw new Error(`${where(path)}: can't render <${typeof type === "symbol" ? type.description : nameOf(type)}> on the server`);
 }
 
 const where = (path: string[]) => (path.length ? path.join(" > ") : "server component");
 
-async function hostProps(tag: string, props: Props, r: Render, path: string[]): Promise<Props> {
+async function hostProps(tag: string, props: Props, r: Render, path: string[], scope: Scope): Promise<Props> {
   const out: Props = {};
   for (const [k, v] of Object.entries(props)) {
-    if (k === "children") out.children = await render(v, r, path);
+    if (k === "children") out.children = await render(v, r, path, scope);
     else if (typeof v === "function") throw new Error(`${where(path)}: \`${k}\` on <${tag}> is a function, and functions only run in the browser`);
     else out[k] = v;
   }
@@ -175,8 +194,8 @@ async function hostProps(tag: string, props: Props, r: Render, path: string[]): 
 }
 
 /** A value for the browser: plain data, with any elements in it rendered here. */
-async function clientValue(v: unknown, k: string, r: Render, path: string[]): Promise<unknown> {
-  if (isElement(v) || isThenable(v)) return render(v, r, path);
+async function clientValue(v: unknown, k: string, r: Render, path: string[], scope: Scope): Promise<unknown> {
+  if (isElement(v) || isThenable(v)) return render(v, r, path, scope);
   if (typeof v === "function") {
     const hash = (v as unknown as Record<symbol, unknown>)[TCM_HASH];
     throw new Error(
@@ -184,18 +203,18 @@ async function clientValue(v: unknown, k: string, r: Render, path: string[]): Pr
         `the browser component can import what it needs itself`,
     );
   }
-  if (Array.isArray(v)) return Promise.all(v.map((x) => clientValue(x, k, r, path)));
+  if (Array.isArray(v)) return Promise.all(v.map((x) => clientValue(x, k, r, path, scope)));
   if (v && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype) {
     const o: Props = {};
-    for (const [kk, x] of Object.entries(v)) o[kk] = await clientValue(x, `${k}.${kk}`, r, path);
+    for (const [kk, x] of Object.entries(v)) o[kk] = await clientValue(x, `${k}.${kk}`, r, path, scope);
     return o;
   }
   return v;
 }
 
-async function clientProps(props: Props, r: Render, path: string[]): Promise<Props> {
+async function clientProps(props: Props, r: Render, path: string[], scope: Scope): Promise<Props> {
   const out: Props = {};
-  for (const [k, v] of Object.entries(props)) out[k] = await clientValue(v, k, r, path);
+  for (const [k, v] of Object.entries(props)) out[k] = await clientValue(v, k, r, path, scope);
   return out;
 }
 
