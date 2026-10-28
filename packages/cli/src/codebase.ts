@@ -495,16 +495,30 @@ export class Codebase {
     return live;
   }
 
+  /** Typecheck these definitions again, as stored (after the packages they use moved): the problems found. */
+  recheck(hashes: Iterable<string>): string[] {
+    const src = this.source();
+    const comps = new Set([...hashes].map((h) => src.get(h)?.componentHash).filter((c): c is string => !!c));
+    return comps.size ? this.rehash(src, comps).problems : [];
+  }
+
   /**
    * After names moved to new hashes (`patches`: old → new), re-derive every live dependent:
    * re-render its stored source against the patched references, typecheck, and re-hash.
    * Dependents that no longer typecheck go to `todo` and keep their old hash.
+   *
+   * `repin` re-derives some definitions against other package versions too (`tcm upgrade`): those definitions,
+   * rendered with their imports re-pinned, then everything that depends on them.
    */
-  propagate(patches: Map<string, string>, exclude: Set<string>): { updated: string[]; failed: string[] } {
+  propagate(
+    patches: Map<string, string>,
+    exclude: Set<string>,
+    repin?: { hashes: Set<string>; module: (module: string) => string; command: string },
+  ): { updated: string[]; failed: string[] } {
     const { store, lay } = this;
     const live = this.liveHashes();
-    const affected = new Set<string>();
-    const queue = [...patches.keys()];
+    const affected = new Set<string>(repin?.hashes ?? []);
+    const queue = [...patches.keys(), ...(repin?.hashes ?? [])];
     while (queue.length) {
       for (const dep of store.dependents(queue.pop()!)) {
         if (live.has(dep) && !patches.has(dep) && !exclude.has(dep) && !affected.has(dep)) {
@@ -555,7 +569,9 @@ export class Codebase {
       const deps = members.flatMap((m) => m.spans.filter((s) => s.hash && !memberSet.has(s.hash)).map((s) => resolve(s.hash!)));
       materialize(deps, src, lay);
       ensureExternals(lay, externalsOf(members));
-      const rendered = render(members, src, lay, { style: "internal", remap: resolve });
+      const repinned = !!repin && members.some((m) => repin.hashes.has(m.hash));
+      if (repinned) ensureExternals(lay, externalsOf(members).map((e) => ({ ...e, module: repin.module(e.module) })));
+      const rendered = render(members, src, lay, { style: "internal", remap: resolve, ...(repinned ? { remapPackage: repin.module } : {}) });
       const tmp = path.join(lay.cacheDir, `_update_${moduleFile(c, src)}`);
       fs.writeFileSync(tmp, rendered.text);
       // untyped npm packages are fine here: the definition was already checked against their types when added
@@ -589,7 +605,7 @@ export class Codebase {
           store.addPatch(old, d.hash);
           for (const p of store.pathsOf(old)) {
             // only this hash moves: a conflicted name keeps its other definitions
-            store.replaceName(p, old, d.hash, d.kind, "update (propagated)");
+            store.replaceName(p, old, d.hash, d.kind, repin?.command ?? "update (propagated)");
             updated.push(p);
           }
         }

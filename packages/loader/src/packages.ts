@@ -85,7 +85,21 @@ interface Candidate {
 
 const viewed = new Map<string, Candidate[]>();
 
-/** Versions of `name` in `range` with their peer dependencies, newest first. */
+/** Versions of `name` in npm range `range` with their peer dependencies, newest first (no prereleases, unless asked). */
+export function versionsIn(name: string, range: string): { version: string; peers: Record<string, string> }[] {
+  return candidates(name, range);
+}
+
+/** The peer dependencies of the installed copy of a pinned module. */
+export function installedPeers(lay: Layout, module: string): Record<string, string> {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(lay.cacheDir, "node_modules", npmAlias(module), "package.json"), "utf8")) as { peerDependencies?: Record<string, string> };
+    return pkg.peerDependencies ?? {};
+  } catch {
+    return {};
+  }
+}
+
 function candidates(name: string, range: string): Candidate[] {
   const key = `${name}@${range}`;
   const hit = viewed.get(key);

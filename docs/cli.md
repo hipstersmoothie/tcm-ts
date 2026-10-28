@@ -25,6 +25,9 @@
 | `tcm alias <name> <new>` | add another name for a definition |
 | `tcm rm <name> [--force]` | remove a name. If it's the definition's last name and named definitions use it, refuses unless `--force` (they keep working either way) |
 | `tcm todo` | conflicts, plus dependents that need fixing after an update |
+| `tcm packages` | the npm packages the codebase runs: range, locked version, what uses them ([packages](packages.md)) |
+| `tcm upgrade <pkg> [--force]` | newest versions within the ranges in use (and of what's built against it); no hashes change, everything using them is re-checked |
+| `tcm upgrade <pkg>@<range\|latest> [namespace]` | re-pin code to another range: re-hashed, dependents follow |
 | `tcm resolve <name> <#hash>` | pick one definition for a conflicted name |
 | `tcm test [namespace] [--fresh]` | run tests, cached by hash ([testing](testing.md)) |
 | `tcm verify` | re-render and re-hash every live definition; must be the identity ([hashing](hashing.md)) |

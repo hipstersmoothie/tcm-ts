@@ -462,7 +462,7 @@ export class Store {
       .all(this.branch().id, prefix, prefix, `${prefix}.%`, `npm:${name}@%`) as { ref: string; n: number }[];
     const out = new Map<string, number>();
     for (const r of rows) {
-      const range = r.ref.slice(`npm:${name}@`.length).split("#")[0]!;
+      const range = /^[^/#]+/.exec(r.ref.slice(`npm:${name}@`.length))![0];
       out.set(range, (out.get(range) ?? 0) + r.n);
     }
     return out;

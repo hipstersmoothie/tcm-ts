@@ -19,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isBuiltin } from "node:module";
 import { SERVER_API_MODULE, type IR } from "@tcm/core";
-import { npmAlias } from "@tcm/loader";
+import { installedPeers, npmAlias, parseModule } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 
 const NODE_GLOBALS = new Set(["process", "Buffer", "require", "__dirname", "__filename", "global", "setImmediate", "clearImmediate"]);
@@ -123,6 +123,8 @@ export interface AppPlan {
   /** endpoints that are async generators, streamed chunk by chunk */
   streaming: Set<string>;
   errors: string[];
+  /** worth knowing, but it runs: the same package at two ranges in the browser, say */
+  warnings: string[];
   state: AppState;
 }
 
@@ -340,10 +342,36 @@ export class Placement {
     );
   }
 
+  /**
+   * One page loads one copy of each package range. Two ranges of a package that others build against (React,
+   * with React DOM as its peer) can't share a page: an error. Two ranges of anything else just ship both.
+   */
+  private checkPackageRanges(plan: AppPlan) {
+    const users = new Map<string, Map<string, string[]>>();
+    for (const h of plan.browser) {
+      const rec = this.cb.store.getDef(h);
+      if (!rec) continue;
+      const modules = [...rec.spans.flatMap((s) => (s.ext?.module.startsWith("npm:") && s.pos === "value" ? [s.ext.module] : [])), ...(rec.jsx?.startsWith("npm:") ? [rec.jsx] : [])];
+      for (const m of new Set(modules)) {
+        const { name, version: range } = parseModule(m);
+        const byRange = users.get(name) ?? new Map<string, string[]>();
+        users.set(name, byRange);
+        byRange.set(range, [...(byRange.get(range) ?? []), this.name(h)]);
+      }
+    }
+    for (const [name, byRange] of users) {
+      if (byRange.size < 2) continue;
+      const which = [...byRange].map(([range, defs]) => `${name} ${range} (${defs.slice(0, 3).join(", ")}${defs.length > 3 ? ", …" : ""})`).join(" and ");
+      const peered = this.cb.store.lockedPackages().some((l) => name in installedPeers(this.cb.lay, `npm:${l.name}@${l.range}`));
+      if (peered) plan.errors.push(`the app uses ${which}; one page can only run one ${name}, since other packages are built against it. Move them to one range: \`tcm upgrade ${name}@<range> <namespace>\`.`);
+      else plan.warnings.push(`the app ships ${which}`);
+    }
+  }
+
   /** What a browser app rooted at `entry` ships, which server functions it calls, and what's wrong with it. */
   planApp(entry: string): AppPlan {
     const plan: AppPlan = {
-      browser: new Set(), components: new Set(), clientRefs: new Set(), refsOf: new Map(), endpoints: new Set(), stubbed: new Set(), streaming: new Set(), errors: [],
+      browser: new Set(), components: new Set(), clientRefs: new Set(), refsOf: new Map(), endpoints: new Set(), stubbed: new Set(), streaming: new Set(), errors: [], warnings: [],
       state: { server: [], browser: [], both: [] },
     };
     // a server component's tree, followed on the server: browser components it renders become references, and
@@ -417,6 +445,7 @@ export class Placement {
       const [b, s] = [plan.browser.has(h), serverSide.has(h)];
       (b && s ? plan.state.both : b ? plan.state.browser : plan.state.server).push(h);
     }
+    this.checkPackageRanges(plan);
     // members of one component ship together, so a component can't be half browser, half stub
     for (const c of plan.stubbed) {
       const local = this.cb.store.componentMembers(c).filter((m) => plan.browser.has(m.hash));

@@ -826,6 +826,7 @@ function reportPlan(cb: Codebase, appName: string, plan: AppPlan) {
   }
   if (plan.state.server.length) console.log(`  state    ${names(plan.state.server)} ${dim("on the server, shared by every client")}`);
   if (plan.state.browser.length) console.log(`  state    ${names(plan.state.browser)} ${dim("in the browser, one copy per tab")}`);
+  for (const w of plan.warnings) console.log(yellow(`  warning  ${w}`));
   for (const h of plan.state.both) {
     console.log(yellow(`  warning  ${cb.displayRef(`#${h}`)} is used by both browser and server code, so the server and each tab have separate copies`));
   }

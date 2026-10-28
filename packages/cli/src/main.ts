@@ -14,6 +14,7 @@ import { build, dev, listBuilds, migrateTable, parseHttpFlag, pruneBuilds, start
 import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
 import { evaluateCached, isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
+import { listPackages, upgradeTo, upgradeWithin } from "./upgrade.ts";
 import { diffNamespaces, printDiff, rewind, stateOf } from "./diff.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
 import { addRemote, listRemotes, newToken, pull, push, runOn, serve, tlsMaterial } from "./sync.ts";
@@ -603,6 +604,11 @@ const HELP = `${bold("tcm")} — a content-addressed codebase manager for TypeSc
   tcm alias <name> <new>         add another name for a definition
   tcm rm <name> [--force]        remove a name
   tcm todo                       conflicts and dependents that need fixing
+  tcm packages                   the npm packages the codebase runs: range, locked version, what uses them
+  tcm upgrade <pkg> [--force]    newest versions within the ranges in use (and of what's built against it);
+                                 no hashes change, everything using them is re-checked
+  tcm upgrade <pkg>@<range|latest> [namespace]
+                                 re-pin code to another range (a new major): re-hashed, dependents follow
   tcm resolve <name> <#hash>     pick one definition for a conflicted name
   tcm docs <name>                show documentation
   tcm diff                       what the last command changed: edits, dependents re-hashed by them, renames
@@ -860,6 +866,18 @@ square(12);
     case "todo":
       todo(cb);
       return 0;
+    case "packages":
+      listPackages(cb);
+      return 0;
+    case "upgrade": {
+      need(1, "upgrade <package>[@range|@latest] [namespace] [--force]");
+      const spec = args[0]!;
+      const at = spec.lastIndexOf("@");
+      const [name, target] = at > 0 ? [spec.slice(0, at), spec.slice(at + 1)] : [spec, undefined];
+      const ok = target ? upgradeTo(cb, name, target, args[1]) : upgradeWithin(cb, name, !!flags.force);
+      if (ok) cb.refreshShim();
+      return ok ? 0 : 1;
+    }
     case "diff":
       diff(cb, args);
       return 0;

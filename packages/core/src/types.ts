@@ -99,6 +99,12 @@ export function extRefString(e: ExtRef): string {
   return `${e.module}${e.subpath ? "/" + e.subpath : ""}#${e.export}`;
 }
 
+/** The range a dependency on package `name` pins (`npm:react-dom@19/client#createRoot` → `19`), if it is one. */
+export function pinnedRange(ref: string, name: string): string | undefined {
+  const prefix = `npm:${name}@`;
+  return ref.startsWith(prefix) ? /^[^/#]+/.exec(ref.slice(prefix.length))?.[0] : undefined;
+}
+
 export function depRef(span: Span): string {
   return span.hash ? `#${span.hash}` : extRefString(span.ext!);
 }

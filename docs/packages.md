@@ -75,20 +75,54 @@ Only the package you import is pinned, not the packages it depends on.
 `node:fs`, `node:path` and the rest import as usual and aren't versioned. Using one marks code as server-only in
 a [web app](apps.md).
 
+## Seeing and upgrading packages
+
+`tcm packages` lists what the codebase runs: each package and range, its locked version, and how many
+definitions use it.
+
+```text
+$ tcm packages
+ms         2   2.1.3    1 definition
+react      18  18.3.1   2 definitions
+react      19  19.3.1   5 definitions
+react-dom  19  19.3.1   1 definition
+```
+
+**Within a range, `tcm upgrade <package>`** moves the lock to the newest version in each range the package is
+used at. Packages built against it (those listing it as a peer dependency: React DOM for React) move along to
+versions that accept it, and so do their types. No hash changes, since definitions pin the range; everything that
+uses them is typechecked again, and if anything breaks, the lock goes back where it was (`--force` keeps it).
+
+```text
+$ tcm upgrade react
+  react 19  19.3.1 → 19.4.0
+  react-dom 19  19.3.1 → 19.4.0
+  6 definition(s) re-checked; no hashes changed
+```
+
+**To another range, `tcm upgrade <package>@<range> [namespace]`** (or `@latest`) re-pins the definitions that
+use it, in that namespace or everywhere, as an update would: they're re-hashed, dependents follow, and whatever
+doesn't typecheck on the new version goes to `tcm todo` and keeps its old one. Packages built against it are
+re-pinned to a range that accepts it (React 18 brings React DOM 18). Code you don't upgrade stays where it was,
+so one namespace can move to a new major while another stays.
+
 ## Types
 
-If a package has no types of its own, install its `@types` package, as you would anyway: tcm typechecks
-everything you add. tcm installs the same `@types` version beside the pinned package (React's types for
-`react@19.3.1`, say), so generated modules and re-checks see the types you wrote against. `@types/node` comes
-with tcm, so Node's builtins are typed out of the box.
-
-A package another one installs as a peer (React DOM's `react`) is linked to the pinned copy at the same version,
-so there's one instance of it: React's hooks need that.
+A package without types of its own gets its DefinitelyTyped package (`@types/react` for `react`) installed beside
+it, at the newest version for the same range, so scratch files, generated modules and re-checks see its types.
+`@types/node` comes with tcm, so Node's builtins are typed out of the box. A package version with no types
+anywhere is untyped, as it would be without tcm: strict code using it doesn't typecheck.
 
 ## Packages in web apps
 
 Browser code can use packages too; Vite bundles them. A package that only works on Node (no browser build, and
 it imports Node builtins) makes the code using it run on the server.
+
+**An app can't mix ranges of a package others are built against.** One page runs one copy of each package range,
+and two copies of React (say) break it: packages built against React expect the one they were given. So when an
+app's browser code would use two ranges of a package some other package lists as a peer, the app's plan is an
+error naming the definitions on each range, and `tcm upgrade <package>@<range> <namespace>` moves one side over.
+Two ranges of any other package are just both shipped, with a warning.
 
 ## Running things
 

@@ -461,6 +461,8 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
       const prev = deps.get(key);
       deps.set(key, { ref, pos: span.pos, strict: (prev?.strict ?? false) || raw.strict });
     });
+    // JSX compiles to calls into its runtime: a dependency on that package, as an import of it would be
+    if (r.jsx) deps.set(`${r.jsx}/jsx-runtime#*`, { ref: `${r.jsx}/jsx-runtime#*`, pos: "value", strict: false });
     return {
       hash,
       kind: site.kind,

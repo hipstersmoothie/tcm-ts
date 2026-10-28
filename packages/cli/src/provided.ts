@@ -15,7 +15,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { compareVersions, compatRange, packageNameOf, scratchNamespace, type ExtRef, type PackageResolver } from "@tcm/core";
+import { compareVersions, compatRange, packageNameOf, pinnedRange, scratchNamespace, type ExtRef, type PackageResolver } from "@tcm/core";
 import { ensureExternals, newestVersion, npmAlias } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 
@@ -68,9 +68,8 @@ function rangeFor(cb: Codebase, name: string, file: string, text: string): { ran
     for (const kind of ["term", "type"] as const) {
       for (const h of cb.store.hashesAt(p, kind)) {
         for (const d of cb.store.getDef(h)?.deps ?? []) {
-          if (!d.ref.startsWith(`npm:${name}@`)) continue;
-          const range = d.ref.slice(`npm:${name}@`.length).split("#")[0]!;
-          used.set(range, (used.get(range) ?? 0) + 1);
+          const range = pinnedRange(d.ref, name);
+          if (range) used.set(range, (used.get(range) ?? 0) + 1);
         }
       }
     }
@@ -83,7 +82,9 @@ function rangeFor(cb: Codebase, name: string, file: string, text: string): { ran
   if (local) return project(local);
   // 3. what the project has installed
   if (own) return { range: compatRange(own), project: true };
-  // 4. what the rest of the codebase runs
+  // 4. what the rest of the codebase uses (else runs: the newest range it locks)
+  const anywhere = mostUsed(cb.store.packageRanges(name));
+  if (anywhere) return { range: anywhere, project: false };
   const locked = cb.store.lockedPackages().filter((l) => l.name === name).map((l) => l.range).sort(newestRangeFirst)[0];
   if (locked) return { range: locked, project: false };
   // 5. the newest release
