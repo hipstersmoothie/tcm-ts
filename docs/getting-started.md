@@ -45,6 +45,14 @@ sumSquares([1, 2, 3])                           // watch expression: the watcher
 
 1. **Watch.** `ucm` (or `ucm check` once) typechecks the scratch file and reports each definition as `new`,
    `identical`, `update`, `alias` or `conflict`, then evaluates watch expressions and tests defined in the file.
+   - **Fast re-checks.** The watcher keeps one TypeScript LanguageService alive, so a re-check parses only the
+     files that changed (by modification time), not the standard library and `@types/node` again: tens of
+     milliseconds for a small file instead of hundreds. Changes another `ucm` process makes to the codebase
+     are picked up too.
+   - **Watch results are cached by hash,** like test results: a watch expression's hash covers everything it
+     evaluates, so an unchanged one shows its stored value, marked `(cached)`, without running. A value that
+     depends on the outside world (files, the clock, `Math.random()`) can go stale; `--fresh` re-runs watches
+     and tests. Output a watch expression prints itself (`console.log`) only appears when it actually runs.
 2. **Add.** `ucm add` saves new definitions. It refuses to rebind a name to different code; that's `update`.
 3. **Update.** `ucm update` re-points changed names and re-hashes every dependent. A dependent's text doesn't
    change, only the hash it refers to, so if it still typechecks it gets a new hash automatically. Dependents

@@ -5,7 +5,7 @@ import { isBuiltin } from "node:module";
 import { hashFromExportId, hashIR, serializeIR, type IR } from "./hash.ts";
 import { extract, UcmError, type DefSite, type ExtractMode, type Piece } from "./extract.ts";
 import { canonicalizeSite, type CanonContext, type Resolved, type SiteResult } from "./canonicalize.ts";
-import { checkProfile, createProgram, fileDiagnostics, type Diagnostic } from "./program.ts";
+import { checkProfile, compilerOptions, createProgram, fileDiagnostics, type Compile, type Diagnostic } from "./program.ts";
 import { depRef, type DefRecord, type Dep, type ExtRef, type Span } from "./types.ts";
 import { paramsSchema, typeSchema, type ParamsSchema, type TableSchema } from "./schema.ts";
 import { createHash } from "node:crypto";
@@ -21,6 +21,8 @@ export interface AnalyzeHost {
   resolveName(name: string, meaning: "type" | "value"): string;
   ignoreDiagnostics?: number[];
   oldProgram?: ts.Program;
+  /** builds the program instead of a fresh `createProgram` (the watcher's incremental compiler) */
+  compile?: Compile;
   /** the project's compiler options (see projectCompilerOptions); ucm's defaults otherwise */
   compilerOptions?: ts.CompilerOptions;
   /**
@@ -85,7 +87,7 @@ export function saltOf(ir: string): string | undefined {
  * barrels and workspace packages) become hash references, and import cycles become hash cycles.
  */
 export function analyzeProject(files: string[], host: AnalyzeHost, mode: ExtractMode = "import"): ProjectAnalysis {
-  const program = createProgram(files, host.oldProgram, host.compilerOptions);
+  const program = host.compile ? host.compile(files, host.compilerOptions ?? compilerOptions()) : createProgram(files, host.oldProgram, host.compilerOptions);
   const sfs = files.map((f) => {
     const sf = program.getSourceFile(f);
     if (!sf) throw new Error(`cannot read ${f}`);

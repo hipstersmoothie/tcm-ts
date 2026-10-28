@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS test_results (
   output TEXT NOT NULL, duration_ms INTEGER NOT NULL, ts INTEGER NOT NULL,
   PRIMARY KEY (hash, node_version)
 );
+CREATE TABLE IF NOT EXISTS watch_results (
+  hash TEXT NOT NULL, node_version TEXT NOT NULL, ok INTEGER NOT NULL, value TEXT NOT NULL, ts INTEGER NOT NULL,
+  PRIMARY KEY (hash, node_version)
+);
 `;
 
 export interface NameRow {
@@ -434,6 +438,16 @@ export class Store {
     this.db
       .prepare("INSERT OR REPLACE INTO test_results (hash, node_version, ok, message, output, duration_ms, ts) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(r.hash, nodeVersion, r.ok ? 1 : 0, r.message, r.output, r.ms, Date.now());
+  }
+
+  /** A watch expression's cached value: like a test, its hash covers everything it evaluates. */
+  watchResult(hash: string, nodeVersion: string): { ok: boolean; value: string } | undefined {
+    const r = this.db.prepare("SELECT ok, value FROM watch_results WHERE hash = ? AND node_version = ?").get(hash, nodeVersion) as Row | undefined;
+    return r && { ok: r.ok === 1, value: r.value as string };
+  }
+
+  putWatchResult(hash: string, nodeVersion: string, r: { ok: boolean; value: string }) {
+    this.db.prepare("INSERT OR REPLACE INTO watch_results (hash, node_version, ok, value, ts) VALUES (?, ?, ?, ?, ?)").run(hash, nodeVersion, r.ok ? 1 : 0, r.value, Date.now());
   }
 
   // ---- patches & todo --------------------------------------------------------

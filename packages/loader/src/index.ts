@@ -491,6 +491,8 @@ export interface WatchResult {
   line: number;
   ok: boolean;
   value: string;
+  /** the evaluation itself failed (timeout, crash): says nothing about the expression, so isn't cached */
+  infrastructure?: boolean;
 }
 
 /** Evaluate watch expressions (already materialized as definitions) in a child process. */
@@ -507,20 +509,21 @@ export function evaluateWatches(watches: { hash: string; componentHash: string; 
 import { writeFileSync } from "node:fs";
 const watches: [number, string, string][] = ${JSON.stringify(list)};
 const results: { line: number; ok: boolean; value: string }[] = [];
+const colors = !process.env.NO_COLOR;
 for (const [line, file, id] of watches) {
   try {
     let value = (await import(file))[id];
     if (value && typeof value.then === "function") value = await value;
-    results.push({ line, ok: true, value: inspect(value, { colors: true, depth: 4 }) });
+    results.push({ line, ok: true, value: inspect(value, { colors, depth: 4 }) });
   } catch (e) {
-    results.push({ line, ok: false, value: inspect(e, { colors: true }) });
+    results.push({ line, ok: false, value: inspect(e, { colors }) });
   }
 }
 writeFileSync(${JSON.stringify(out)}, JSON.stringify(results));
 `,
   );
   spawnSync(process.execPath, [...nodeArgs(lay), runner], { stdio: "inherit", timeout: 10_000 });
-  if (!fs.existsSync(out)) return watches.map((w) => ({ line: w.line, ok: false, value: "evaluation did not finish (timeout or crash)" }));
+  if (!fs.existsSync(out)) return watches.map((w) => ({ line: w.line, ok: false, value: "evaluation did not finish (timeout or crash)", infrastructure: true }));
   return JSON.parse(fs.readFileSync(out, "utf8")) as WatchResult[];
 }
 

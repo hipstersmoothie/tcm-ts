@@ -5,8 +5,8 @@ What isn't done yet, or is deliberately out of scope:
 - **Signatures are shown as first written.** `ucm view` and `find` show a definition's signature text from when
   it was added, so after `ucm mv` of a type it can show the old name. (Type *search* matches by hash and isn't
   affected.)
-- **The watcher** uses `createProgram` with `oldProgram` reuse, not a LanguageService, and watch results
-  aren't cached by hash.
+- **Cached watch and test results can go stale** when they depend on the outside world (files, the clock,
+  randomness); `--fresh` re-runs them.
 - **`import.meta`** is location-dependent: it's evaluated inside `.ucm/cache`, so ucm warns about it.
 - **`ucm import` skips test files** ([importing](importing.md)) and refuses `declare module`/`declare global`,
   `import x = require()`, decorators and top-level statements.

@@ -4,6 +4,7 @@ import { registerHooks } from "node:module";
 import type ts from "typescript";
 import {
   analyzeFile,
+  incrementalCompiler,
   analyzeProject,
   IR_VERSION,
   TS_VERSION,
@@ -71,7 +72,8 @@ export const IDENT_PATH = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
 export class Codebase {
   readonly lay: Layout;
   readonly store: Store;
-  private programs = new Map<string, ts.Program>();
+  /** scratch files are checked over and over (the watcher): unchanged files aren't parsed again */
+  private compile = incrementalCompiler();
 
   private constructor(root: string) {
     this.lay = layout(root);
@@ -206,9 +208,7 @@ export class Codebase {
   }
 
   analyze(file: string, saltFor: SaltFor | undefined, ignoreDiagnostics: number[] = []): Analysis {
-    const a = analyzeFile(file, this.host(ignoreDiagnostics, saltFor, this.programs.get(file)));
-    this.programs.set(file, a.program);
-    return a;
+    return analyzeFile(file, { ...this.host(ignoreDiagnostics, saltFor), compile: this.compile });
   }
 
   analyzeProject(files: string[], saltFor: SaltFor | undefined, ignoreDiagnostics: number[] = [], compilerOptions?: ts.CompilerOptions): ProjectAnalysis {
@@ -500,7 +500,6 @@ export class Codebase {
       // untyped npm packages are fine here: the definition was already checked against their types when added
       const salts = this.storedSalts(new Map([[tmp, new Map([...rendered.memberNames].map(([h, n]) => [n, src.get(h)!]))]]));
       const a = this.analyzeProject([tmp], salts, [7016], this.recheckOptions(members[0]?.checked));
-      this.programs.delete(tmp);
       fs.rmSync(tmp);
       const problem = a.errors[0] ?? a.diagnostics[0]?.message;
       if (problem) {

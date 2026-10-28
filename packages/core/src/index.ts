@@ -4,4 +4,4 @@ export { cacheRefOf, matchShapes, queryShape, shapeBuilder, type QueryImport, ty
 export { analyzeFile, analyzeProject, saltOf, scratchNamespace, type Analysis, type AnalyzeHost, type ProjectAnalysis, type ProjectDef, type WatchRecord } from "./analyze.ts";
 export { UcmError } from "./extract.ts";
 export { checkArgs, checkValue, paramsSchema, schemaCheckerSource, typeSchema, type ParamsSchema, type Schema, type TableSchema } from "./schema.ts";
-export { checkProfile, projectCompilerOptions, transpileForNode, type CheckProfile, TS_VERSION, typescriptUrl, ucmTypeRoots, type Diagnostic } from "./program.ts";
+export { checkProfile, incrementalCompiler, projectCompilerOptions, type Compile, transpileForNode, type CheckProfile, TS_VERSION, typescriptUrl, ucmTypeRoots, type Diagnostic } from "./program.ts";

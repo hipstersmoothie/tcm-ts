@@ -1,4 +1,5 @@
 import ts from "typescript";
+import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -119,6 +120,53 @@ export function typescriptUrl(): string | undefined {
 
 export function createProgram(rootFiles: string[], oldProgram?: ts.Program, options: ts.CompilerOptions = compilerOptions()): ts.Program {
   return ts.createProgram({ rootNames: rootFiles, options, oldProgram });
+}
+
+export type Compile = (rootFiles: string[], options: ts.CompilerOptions) => ts.Program;
+
+/**
+ * A long-lived compiler for checking the same files again and again (the watcher). A plain program re-reads
+ * and re-parses every file each time, the standard library and @types/node included; this one is a
+ * LanguageService over a document registry, so only files whose version (mtime and size) changed are parsed
+ * again.
+ */
+export function incrementalCompiler(): Compile {
+  const registry = ts.createDocumentRegistry();
+  const services = new Map<string, { roots: string[]; service: ts.LanguageService }>();
+  // nanosecond mtimes: two quick writes of the same size within a millisecond still differ
+  const version = (file: string) => {
+    const st = fs.statSync(file, { bigint: true, throwIfNoEntry: false });
+    return st ? `${st.mtimeNs}:${st.size}` : "0";
+  };
+  return (rootFiles, options) => {
+    const key = JSON.stringify(options);
+    let s = services.get(key);
+    if (!s) {
+      const entry = { roots: rootFiles } as { roots: string[]; service: ts.LanguageService };
+      const host: ts.LanguageServiceHost = {
+        getScriptFileNames: () => entry.roots,
+        getScriptVersion: version,
+        getScriptSnapshot: (f) => {
+          const text = ts.sys.readFile(f);
+          return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text);
+        },
+        getCompilationSettings: () => options,
+        getCurrentDirectory: () => ts.sys.getCurrentDirectory(),
+        getDefaultLibFileName: (o) => ts.getDefaultLibFilePath(o),
+        useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
+        fileExists: ts.sys.fileExists,
+        readFile: ts.sys.readFile,
+        readDirectory: ts.sys.readDirectory,
+        directoryExists: ts.sys.directoryExists,
+        getDirectories: ts.sys.getDirectories,
+        realpath: ts.sys.realpath,
+      };
+      entry.service = ts.createLanguageService(host, registry);
+      services.set(key, (s = entry));
+    }
+    s.roots = rootFiles;
+    return s.service.getProgram()!;
+  };
 }
 
 export interface Diagnostic {

@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { checkValue, isConflicted, matchShapes, queryShape, sameSpace, shortHash, type DefKind, type DefRecord } from "@ucm/core";
+import { checkValue, isConflicted, matchShapes, queryShape, sameSpace, shortHash, type DefKind, type DefRecord, type WatchRecord } from "@ucm/core";
 import { decode } from "./codec.ts";
 import { inspect } from "node:util";
 import { DatabaseSync } from "node:sqlite";
-import { evaluateWatches, render, run } from "@ucm/loader";
+import { evaluateWatches, render, run, type DefSource, type WatchResult } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { migrate } from "./migrate.ts";
 import { build, dev, listBuilds, migrateTable, parseHttpFlag, pruneBuilds, start } from "./web.ts";
@@ -107,7 +107,34 @@ function analyzeScratch(cb: Codebase, file: string, into?: string) {
   return a;
 }
 
-function check(cb: Codebase, file: string, into?: string): boolean {
+/**
+ * Watch expression values, reused by hash. Like a test's, a watch expression's hash covers everything it
+ * evaluates, so a value is only stale if it depends on the outside world (files, the clock): `fresh` re-runs.
+ */
+function evaluateCached(cb: Codebase, watches: WatchRecord[], src: DefSource, fresh: boolean): Map<number, WatchResult & { cached: boolean }> {
+  const node = process.version;
+  const cached = new Map<string, { ok: boolean; value: string }>();
+  if (!fresh) for (const w of watches) {
+    const r = cb.store.watchResult(w.hash, node);
+    if (r) cached.set(w.hash, r);
+  }
+  const ran = evaluateWatches(watches.filter((w) => !cached.has(w.hash)), src, cb.lay);
+  const out = new Map<number, WatchResult & { cached: boolean }>();
+  for (const w of watches) {
+    const c = cached.get(w.hash);
+    if (c) {
+      out.set(w.line, { line: w.line, ...c, cached: true });
+      continue;
+    }
+    const r = ran.find((x) => x.line === w.line);
+    if (!r) continue;
+    out.set(w.line, { ...r, cached: false });
+    if (!r.infrastructure) cb.store.putWatchResult(w.hash, node, r);
+  }
+  return out;
+}
+
+function check(cb: Codebase, file: string, into?: string, fresh = false): boolean {
   const a = analyzeScratch(cb, file, into);
   if (!a) return false;
   const rows = classify(cb, a.defs, into ?? a.namespace ?? "");
@@ -115,16 +142,16 @@ function check(cb: Codebase, file: string, into?: string): boolean {
   if (rows.length) printRows(rows);
   else if (!a.watches.length) console.log(dim("  (no definitions)"));
   if (a.watches.length) {
-    const results = evaluateWatches(a.watches, cb.source([...a.defs, ...a.watches]), cb.lay);
+    const results = evaluateCached(cb, a.watches, cb.source([...a.defs, ...a.watches]), fresh);
     for (const w of a.watches) {
-      const r = results.find((x) => x.line === w.line);
-      console.log(`\n  ${dim(String(w.line).padStart(3) + " │")} ${w.expression}`);
+      const r = results.get(w.line);
+      console.log(`\n  ${dim(String(w.line).padStart(3) + " │")} ${w.expression}${r?.cached ? dim("  (cached)") : ""}`);
       console.log(`      ${r?.ok ? cyan("⧩") : red("✗")} ${(r?.value ?? "").split("\n").join("\n        ")}`);
     }
   }
   const tests = rows.filter((r) => r.def.kind !== "type" && isTestPath(r.path));
   if (tests.length) {
-    const outcomes = runCached(cb, tests.map((r) => ({ path: r.path, rec: r.def })), cb.source([...a.defs, ...a.watches]), false);
+    const outcomes = runCached(cb, tests.map((r) => ({ path: r.path, rec: r.def })), cb.source([...a.defs, ...a.watches]), fresh);
     console.log(`\n  ${dim("tests")}  ${summary(outcomes)}`);
     printOutcomes(outcomes, "    ");
   }
@@ -559,7 +586,7 @@ function reset(cb: Codebase, id: number) {
 
 // ---- watcher ------------------------------------------------------------------------------------------
 
-function watch(cb: Codebase, into?: string) {
+function watch(cb: Codebase, into?: string, fresh = false) {
   const root = cb.lay.root;
   let timer: NodeJS.Timeout | undefined;
   let pending = new Set<string>();
@@ -570,7 +597,7 @@ function watch(cb: Codebase, into?: string) {
       if (!fs.existsSync(f)) continue;
       console.log(dim(`\n── ${new Date().toLocaleTimeString()} ${"─".repeat(40)}`));
       try {
-        check(cb, f, into);
+        check(cb, f, into, fresh);
       } catch (e) {
         console.log(red((e as Error).stack ?? String(e)));
       }
@@ -593,8 +620,9 @@ function watch(cb: Codebase, into?: string) {
 const HELP = `${bold("ucm")} — a content-addressed codebase manager for TypeScript
 
   ucm init                       set up a codebase in this directory
-  ucm [watch]                    watch *.ts scratch files: typecheck, hash, evaluate watch expressions
-  ucm check [file]               one-shot version of watch
+  ucm [watch] [--fresh]          watch *.ts scratch files: typecheck, hash, evaluate watch expressions and tests
+                                 (their results are cached by hash; --fresh re-runs them)
+  ucm check [file] [--fresh]     one-shot version of watch
   ucm add [file] [--into ns]     add new definitions from a scratch file (default scratch.ts)
   ucm update [file] [--into ns]  add, and replace changed definitions; dependents are re-hashed
   ucm import <dir> [--into ns] [--update] [--exclude a,b] [--verbose]
@@ -684,10 +712,10 @@ square(12);
   const cb = Codebase.find(cwd);
   switch (cmd) {
     case "watch":
-      watch(cb, into);
+      watch(cb, into, !!flags.fresh);
       return -1; // keep running
     case "check":
-      return check(cb, scratch(args[0]), into) ? 0 : 1;
+      return check(cb, scratch(args[0]), into, !!flags.fresh) ? 0 : 1;
     case "add":
     case "update":
       return save(cb, scratch(args[0]), cmd, into) ? 0 : 1;

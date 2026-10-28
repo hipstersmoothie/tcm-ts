@@ -7,8 +7,8 @@
 | Command | |
 |---|---|
 | `ucm init` | set up a codebase here: `.ucm/codebase.sqlite`, `package.json` `#codebase` imports, `tsconfig.json`, `scratch.ts` |
-| `ucm` / `ucm watch` | watch `*.ts` scratch files: typecheck, hash, report, evaluate watch expressions and tests |
-| `ucm check [file]` | one-shot version of watch. Reports each definition as `new` / `identical` / `update` / `alias` / `conflict` |
+| `ucm` / `ucm watch [--fresh]` | watch `*.ts` scratch files: typecheck, hash, report, evaluate watch expressions and tests. Their results are cached by hash; `--fresh` re-runs them |
+| `ucm check [file] [--fresh]` | one-shot version of watch. Reports each definition as `new` / `identical` / `update` / `alias` / `conflict` |
 | `ucm add [file] [--into ns]` | save new definitions from a scratch file (default `scratch.ts`) |
 | `ucm update [file] [--into ns]` | save, re-point changed names, and re-hash every dependent. Dependents that stop typechecking keep their old hash and go to `todo`. Also checks stored table rows against changed row types ([data](data.md)) |
 | `ucm import <dir> [--into ns] [--update] [--exclude a,b] [--verbose]` | add an existing project, one namespace per file ([importing](importing.md)) |
