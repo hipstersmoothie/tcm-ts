@@ -2,7 +2,7 @@
   "name": "ucm-ts",
   "displayName": "ucm-ts",
   "description": "The ucm-ts codebase in VS Code: a namespace sidebar, definitions as documents, usages, type search, and Unison-style status, watch values and save commands for scratch files",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "ucm-ts",
   "license": "MIT",
   "private": true,
@@ -176,9 +176,16 @@
           "description": "The ucm executable: `ucm` on your PATH, or the path to ucm's packages/cli/bin/ucm.js (run with Node; spaces are fine), or a command line with \"quotes\" around words containing spaces."
         }
       }
-    }
+    },
+    "typescriptServerPlugins": [
+      {
+        "name": "ucm-ts-plugin",
+        "enableForWorkspaceTypeScriptVersions": true
+      }
+    ]
   },
   "dependencies": {
-    "vscode-languageclient": "^9.0.1"
+    "vscode-languageclient": "^9.0.1",
+    "ucm-ts-plugin": "file:./ts-plugin"
   }
 }

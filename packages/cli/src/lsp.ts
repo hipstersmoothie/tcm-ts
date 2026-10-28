@@ -460,15 +460,17 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     const s = fresh(doc);
     const offset = lines(doc.text).offset(p);
     const row = s.rows.find((r) => offset >= r.def.range.start && offset <= r.def.range.end && r.status === "identical");
+    return codebaseNameAt(doc, offset) ?? row?.def.hash;
+  };
+  /** The codebase definition a name in a scratch file stands for (an import from #codebase, or a use of one). */
+  const codebaseNameAt = (doc: DocState, offset: number): string | undefined => {
+    const a = fresh(doc).analysis;
     const id = identifierAt(doc, offset);
-    if (id && s.analysis) {
-      const checker = s.analysis.program.getTypeChecker();
-      let sym = checker.getSymbolAtLocation(id);
-      if (sym && sym.flags & ts.SymbolFlags.Alias) sym = checker.getAliasedSymbol(sym);
-      const hash = sym && cacheRefOf(checker)(sym);
-      if (hash) return hash;
-    }
-    return row?.def.hash;
+    if (!id || !a) return undefined;
+    const checker = a.program.getTypeChecker();
+    let sym = checker.getSymbolAtLocation(id);
+    if (sym && sym.flags & ts.SymbolFlags.Alias) sym = checker.getAliasedSymbol(sym);
+    return (sym && cacheRefOf(checker)(sym)) || undefined;
   };
   const SYMBOL_KIND = (rec: DefRecord) => (rec.kind === "class" ? 5 : rec.kind === "type" ? 11 : /^(<[^>]*>)?\(|^\{ ?[(<]/.test(rec.signature) ? 12 : 13);
   const viewSymbols = (uri: string) => {
@@ -653,12 +655,20 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         return;
       }
       case "textDocument/definition": {
-        // in a scratch file TypeScript already answers (with the generated module); in a view, references are links
+        // a codebase name goes to its source (a ucm: document): in a view, references are links; in a scratch file,
+        // names from #codebase (TypeScript would answer with the generated module; the VS Code extension's
+        // TypeScript plugin drops that answer). Everything else is TypeScript's.
         const uri = uriOf(p);
-        const v = cb && uri.startsWith("ucm:") ? view(uri) : undefined;
-        const offset = v ? lines(v.text).offset(p!.position as Position) : -1;
-        const ref = v?.refs.find((r) => offset >= r.start && offset <= r.end);
-        send({ id: m.id, result: ref ? (declaration(ref.hash) ?? null) : null });
+        let target: string | undefined;
+        if (cb && uri.startsWith("ucm:")) {
+          const v = view(uri);
+          const offset = v ? lines(v.text).offset(p!.position as Position) : -1;
+          target = v?.refs.find((r) => offset >= r.start && offset <= r.end)?.hash;
+        } else {
+          const doc = docAt(p);
+          if (doc) target = codebaseNameAt(doc, lines(doc.text).offset(p!.position as Position));
+        }
+        send({ id: m.id, result: target ? (declaration(target) ?? null) : null });
         return;
       }
       case "textDocument/references": {

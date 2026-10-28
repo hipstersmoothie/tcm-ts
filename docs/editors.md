@@ -40,8 +40,10 @@ The code lives in the codebase, not in files, so the server also shows the codeb
   view` prints), with a header line giving its names, hash and where it runs. They're read-only: to change one,
   **Edit** writes it into a scratch file (`scratch.ts` if that's empty, else `edit.ts`, `edit-2.ts`, …), where
   TypeScript checks it and the lens offers **Update codebase**.
-- **References are links.** ucm knows exactly where each reference sits in a rendered definition, so **Go to
-  Definition** in a definition's document opens the one it refers to.
+- **Go to Definition (Cmd/Ctrl+click) goes to the source.** On a codebase name in a scratch file it opens that
+  definition's document; in a definition's document every reference is a link, since ucm knows exactly where
+  each one sits in the rendered text. (In VS Code, the extension's TypeScript plugin hides TypeScript's own
+  answer, the generated module in `.ucm/cache`, so the source is the only result. Other editors show both.)
 - **Find All References** lists every definition in the codebase that uses one, at the exact spot, from its
   dependents. In scratch files these are listed alongside TypeScript's own results.
 - **Lenses on a definition's document:** how many named definitions use it (click to list them), **Edit**,
@@ -66,6 +68,9 @@ from a terminal.
   codebase changes, including from a terminal.
 - **ucm: Find by type** (the search icon in the sidebar, or the command palette): type a TypeScript type, pick a
   match, and it opens.
+- **A TypeScript server plugin** (`editors/vscode/ts-plugin`, loaded through VS Code's
+  `typescriptServerPlugins`): Go to Definition skips ucm's generated modules, so Cmd+click on a codebase name
+  lands on its source rather than offering `.ucm/cache/<hash>.ts` too. Reload the window after installing.
 - **ucm: Add / Update**, which save the file first; **Rename** and **Edit** ask for names when run from the
   palette.
 

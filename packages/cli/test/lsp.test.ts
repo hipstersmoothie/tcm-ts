@@ -196,6 +196,10 @@ export const perimeter = (ps: Point[]): number => ps.reduce((n, p, i) => n + dis
   assert.deepEqual(fromView.map((l: any) => l.uri).sort(), ["ucm:/app/far.ts", "ucm:/geo/perimeter.ts"]);
   const uri = pathToFileURL(path.join(dir2, "scratch.ts")).href;
   c.notify("textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text: scratchText } });
+  // Cmd+click on a codebase name in a scratch file goes to its source; local names are TypeScript's
+  const toSource = await c.request("textDocument/definition", { textDocument: { uri }, position: at(scratchText, "perimeter([", 2) });
+  assert.equal(toSource.uri, "ucm:/geo/perimeter.ts");
+  assert.equal(await c.request("textDocument/definition", { textDocument: { uri }, position: { line: 2, character: 12 } }), null, "not a name");
   const fromScratch = await c.request("textDocument/references", { textDocument: { uri }, position: at(scratchText, "perimeter([", 2), context: { includeDeclaration: true } });
   assert.deepEqual(fromScratch.map((l: any) => l.uri), ["ucm:/geo/perimeter.ts"], "the declaration; nothing uses it yet");
 
