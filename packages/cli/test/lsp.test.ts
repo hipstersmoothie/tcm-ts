@@ -85,7 +85,7 @@ square(12);
   const c = client();
   const init = await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir).href, capabilities: {}, clientInfo: { name: "test" } });
   assert.ok(init.capabilities.codeLensProvider && init.capabilities.inlayHintProvider && init.capabilities.hoverProvider);
-  assert.deepEqual(init.capabilities.executeCommandProvider.commands, ["ucm.add", "ucm.update", "ucm.mv"]);
+  assert.deepEqual(init.capabilities.executeCommandProvider.commands, ["ucm.add", "ucm.update", "ucm.mv", "ucm.edit"]);
   c.notify("initialized", {});
   c.notify("textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text } });
   const doc = { textDocument: { uri } };
@@ -149,4 +149,81 @@ square(12);
   await c.request("shutdown", null);
   c.notify("exit", null);
   await new Promise((r) => c.child.on("exit", r));
+});
+
+test("the codebase in the editor: tree, rendered views, definition, references, symbols, type search, edit", async () => {
+  const dir2 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ucm lsp2 ")));
+  const ucm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: dir2, env, encoding: "utf8" });
+  ucm("init");
+  fs.writeFileSync(
+    path.join(dir2, "scratch.ts"),
+    `// ucm: namespace geo
+export type Point = { x: number; y: number };
+/** Distance between two points. */
+export const dist = (a: Point, b: Point): number => Math.hypot(a.x - b.x, a.y - b.y);
+export const perimeter = (ps: Point[]): number => ps.reduce((n, p, i) => n + dist(p, ps[(i + 1) % ps.length]!), 0);
+`,
+  );
+  ucm("add");
+  fs.writeFileSync(path.join(dir2, "scratch.ts"), `// ucm: namespace app\nimport { dist } from "#codebase/geo";\n\nexport const far = (n: number) => dist({ x: 0, y: 0 }, { x: n, y: n }) > 10;\n`);
+  ucm("add");
+  const scratchText = `import { perimeter } from "#codebase/geo";\n\nperimeter([]);\n`;
+  fs.writeFileSync(path.join(dir2, "scratch.ts"), scratchText);
+
+  const c = client();
+  await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir2).href, capabilities: {}, clientInfo: { name: "Visual Studio Code" } });
+  c.notify("initialized", {});
+
+  // the namespace tree
+  const root = await c.request("ucm/tree", { namespace: "" });
+  assert.deepEqual(root.namespaces.map((n: any) => [n.name, n.count]), [["app", 1], ["geo", 3]]);
+  const geo = await c.request("ucm/tree", { namespace: "geo" });
+  assert.deepEqual(geo.definitions.map((d: any) => [d.name, d.kind]), [["Point", "type"], ["dist", "term"], ["perimeter", "term"]]);
+  assert.equal(geo.definitions[1].doc, "Distance between two points.");
+  assert.equal(geo.definitions[1].uri, "ucm:/geo/dist.ts");
+
+  // a definition's view: rendered with current names, references link to their definitions
+  const perim = await c.request("ucm/source", { uri: "ucm:/geo/perimeter.ts" });
+  assert.match(perim.text, /^\/\/ geo\.perimeter #[a-z2-7]{8}\n/);
+  assert.match(perim.text, /import \{ dist \} from "#codebase\/geo";/);
+  const def = await c.request("textDocument/definition", { textDocument: { uri: "ucm:/geo/perimeter.ts" }, position: at(perim.text, "dist(p", 1) });
+  assert.equal(def.uri, "ucm:/geo/dist.ts");
+  const distText = (await c.request("ucm/source", { uri: "ucm:/geo/dist.ts" })).text;
+  assert.equal(distText.split("\n")[def.range.start.line]!.slice(def.range.start.character, def.range.end.character), "dist");
+
+  // references: from a view, and from a codebase name in a scratch file, across the codebase
+  const fromView = await c.request("textDocument/references", { textDocument: { uri: "ucm:/geo/dist.ts" }, position: def.range.start, context: { includeDeclaration: false } });
+  assert.deepEqual(fromView.map((l: any) => l.uri).sort(), ["ucm:/app/far.ts", "ucm:/geo/perimeter.ts"]);
+  const uri = pathToFileURL(path.join(dir2, "scratch.ts")).href;
+  c.notify("textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text: scratchText } });
+  const fromScratch = await c.request("textDocument/references", { textDocument: { uri }, position: at(scratchText, "perimeter([", 2), context: { includeDeclaration: true } });
+  assert.deepEqual(fromScratch.map((l: any) => l.uri), ["ucm:/geo/perimeter.ts"], "the declaration; nothing uses it yet");
+
+  // lenses on a view: who uses it, edit, rename
+  const lenses = await c.request("textDocument/codeLens", { textDocument: { uri: "ucm:/geo/dist.ts" } });
+  assert.deepEqual(titles(lenses), ["2 dependents", "Edit", "Rename"]);
+
+  // outline, workspace symbols, hover in a view
+  const symbols = await c.request("textDocument/documentSymbol", { textDocument: { uri: "ucm:/geo/dist.ts" } });
+  assert.equal(symbols[0].name, "dist");
+  const found = await c.request("workspace/symbol", { query: "per" });
+  assert.deepEqual(found.map((s: any) => [s.name, s.containerName]), [["perimeter", "geo"]]);
+  const hover = await c.request("textDocument/hover", { textDocument: { uri: "ucm:/geo/perimeter.ts" }, position: at(perim.text, "dist(p", 1) });
+  assert.match(hover.contents.value, /Distance between two points\./);
+
+  // search by type, for a picker
+  const byType = await c.request("ucm/findByType", { query: "(a: Point, b: Point) => number" });
+  assert.deepEqual(byType.hits.map((h: any) => [h.path, h.uri]), [["geo.dist", "ucm:/geo/dist.ts"]]);
+
+  // edit: into a free scratch file, which the client then opens
+  const edited = await c.request("workspace/executeCommand", { command: "ucm.edit", arguments: ["geo.dist"] });
+  assert.equal(edited, pathToFileURL(path.join(dir2, "edit.ts")).href, "scratch.ts is taken");
+  assert.match(fs.readFileSync(path.join(dir2, "edit.ts"), "utf8"), /const dist = \(a: Point, b: Point\)/);
+
+  // a change made elsewhere (a terminal) reaches the client
+  c.notes.length = 0;
+  ucm("mv", "geo.dist", "geo.distance");
+  await c.waitFor(() => c.notes.find((n) => n.method === "ucm/changed"));
+  const moved = await c.request("ucm/tree", { namespace: "geo" });
+  assert.ok(moved.definitions.some((d: any) => d.name === "distance"));
 });

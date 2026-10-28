@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { checkValue, isConflicted, matchShapes, queryShape, sameSpace, shortHash, type DefKind, type DefRecord } from "@ucm/core";
+import { checkValue, isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from "@ucm/core";
 import { decode } from "./codec.ts";
 import { inspect } from "node:util";
 import { DatabaseSync } from "node:sqlite";
@@ -8,6 +8,7 @@ import { render, run, sendRunnerOutputToStderr } from "@ucm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
 import { migrate } from "./migrate.ts";
 import { serveLsp } from "./lsp.ts";
+import { searchByType } from "./search.ts";
 import { build, dev, listBuilds, migrateTable, parseHttpFlag, pruneBuilds, start } from "./web.ts";
 import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
@@ -347,43 +348,12 @@ function find(cb: Codebase, query: string) {
   for (const n of hits) console.log(`${bold(n.path)}  ${dim(shortHash(n.hash))}  ${dim(cb.store.getDef(n.hash)!.signature)}`);
 }
 
-/** The most distant match worth listing: a few reorderings, specializations or awaits away. */
-const MAX_MATCH_COST = 6;
-
-/**
- * `ucm find ':<type>'`: terms whose type has that shape, as Unison searches by type. Codebase types in the query
- * are found by name; names that aren't types become type variables. Exact matches (up to renaming) come first,
- * then ones with arguments reordered, a Promise result, or a more general or more specific type.
- */
+/** `ucm find ':<type>'`: terms whose type has that shape (see search.ts). */
 function findByType(cb: Codebase, text: string) {
-  if (!text.trim()) throw new UsageError("find :<type>, e.g. ucm find ':(xs: T[]) => T'");
-  const names = cb.store.names();
-  const types = names.filter((n) => n.kind !== "term");
-  const resolve = (name: string) => {
-    const hits = types.filter((n) => n.path === name || n.path.endsWith(`.${name}`));
-    const exact = hits.filter((n) => n.path === name);
-    const pick = exact.length ? exact : hits;
-    const paths = [...new Set(pick.map((n) => n.path))];
-    if (paths.length > 1) throw new UsageError(`'${name}' in the query could be ${paths.join(", ")}; write the one you mean`);
-    if (!paths.length) return undefined;
-    const segs = paths[0]!.split(".");
-    return { module: ["#codebase", ...segs.slice(0, -1)].join("/"), export: segs.at(-1)! };
-  };
-  cb.refreshShim();
-  const q = queryShape(text, path.join(cb.lay.ucmDir, "query.ts"), cb.compilerOptions(), resolve);
-  const terms = names.filter((n) => n.kind === "term");
-  cb.ensureShapes(terms.map((n) => n.hash));
-  const hits = terms
-    .map((n) => ({ ...n, def: cb.store.getDef(n.hash)! }))
-    .map((n) => ({ ...n, m: n.def.shape ? matchShapes(q.shape, n.def.shape) : undefined }))
-    .filter((n) => n.m && n.m.cost <= MAX_MATCH_COST)
-    .sort((a, b) => a.m!.cost - b.m!.cost || (a.path < b.path ? -1 : 1));
-  if (q.variables.length) console.log(dim(`type variables: ${q.variables.join(", ")}`));
-  if (!hits.length) return console.log(dim("no matches"));
-  for (const n of hits) {
-    const how = n.m!.cost === 0 ? "" : `  ${yellow(n.m!.notes.join(", "))}`;
-    console.log(`${bold(n.path)}  ${dim(shortHash(n.hash))}  ${dim(n.def.signature)}${how}`);
-  }
+  const r = searchByType(cb, text);
+  if (r.variables.length) console.log(dim(`type variables: ${r.variables.join(", ")}`));
+  if (!r.hits.length) return console.log(dim("no matches"));
+  for (const h of r.hits) console.log(`${bold(h.path)}  ${dim(shortHash(h.hash))}  ${dim(h.signature)}${h.cost ? `  ${yellow(h.notes.join(", "))}` : ""}`);
 }
 
 function deps(cb: Codebase, target: string) {
@@ -686,7 +656,7 @@ square(12);
   // the editor says where the workspace is (initialize), so the codebase is found then
   if (cmd === "lsp") {
     sendRunnerOutputToStderr();
-    serveLsp((dir) => Codebase.find(dir), { classify, save: (cb, file, mode) => save(cb, file, mode), mv });
+    serveLsp((dir) => Codebase.find(dir), { classify, save: (cb, file, mode) => save(cb, file, mode), mv, edit });
     return -1; // serve until the editor says exit
   }
 

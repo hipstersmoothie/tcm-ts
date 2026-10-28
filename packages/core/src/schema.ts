@@ -60,6 +60,7 @@ function schemaBuilder(checker: ts.TypeChecker) {
   const defs: Schema[] = [];
   const refs = new Map<ts.Type, number>();
   const active = new Set<ts.Type>();
+  const done = new Map<ts.Type, Schema>();
 
   const of = (t: ts.Type, depth: number): Schema => {
     if (depth > 30) return { t: "any" };
@@ -87,13 +88,16 @@ function schemaBuilder(checker: ts.TypeChecker) {
       if (!refs.has(t)) refs.set(t, defs.push({ t: "any" }) - 1);
       return { t: "ref", id: refs.get(t)! };
     }
+    // a type reached again by another route is described once
+    const seen = done.get(t);
+    if (seen) return seen;
     active.add(t);
     const s = objectSchema(t, depth);
     active.delete(t);
     const id = refs.get(t);
-    if (id === undefined) return s;
-    defs[id] = s;
-    return { t: "ref", id };
+    const result: Schema = id === undefined ? s : ((defs[id] = s), { t: "ref", id });
+    done.set(t, result);
+    return result;
   };
 
   const objectSchema = (t: ts.Type, depth: number): Schema => {
@@ -115,6 +119,9 @@ function schemaBuilder(checker: ts.TypeChecker) {
     }
     if (t.getCallSignatures().length || t.getConstructSignatures().length) return { t: "unsendable", what: "a function" };
     if (t.getSymbol()?.flags && t.getSymbol()!.flags & ts.SymbolFlags.Class) return { t: "unsendable", what: `a ${name} instance` };
+    // the platform's own object types (DOM nodes, Response, Buffer, ...) are host objects, not plain data; walking
+    // them would describe the whole DOM
+    if (name && isHostType(t)) return { t: "unsendable", what: `a ${name}` };
     const props: Record<string, { s: Schema; optional: boolean }> = {};
     for (const p of checker.getPropertiesOfType(t)) {
       const decl = p.valueDeclaration ?? p.declarations?.[0];
@@ -126,6 +133,12 @@ function schemaBuilder(checker: ts.TypeChecker) {
   };
 
   const isGlobal = (t: ts.Type) => (t.getSymbol()?.declarations ?? []).some((d) => d.getSourceFile().isDeclarationFile);
+  /** Declared by TypeScript's standard library (lib.dom.d.ts, ...) or @types/node, rather than by code or a package. */
+  const isHostType = (t: ts.Type) =>
+    (t.getSymbol()?.declarations ?? []).some((d) => {
+      const sf = d.getSourceFile();
+      return sf.hasNoDefaultLib || /[\\/]node_modules[\\/]@types[\\/]node[\\/]/.test(sf.fileName);
+    });
   return { of, defs };
 }
 

@@ -24,9 +24,9 @@ ucm add           # save new definitions from scratch.ts
 - **A content-addressed codebase.** Scratch files are ordinary TypeScript. `ucm add`/`update` store
   definitions by hash; updates re-hash dependents automatically, and what stops typechecking goes to `todo`.
   [Getting started](docs/getting-started.md) · [hashing](docs/hashing.md) · [CLI](docs/cli.md)
-- **Editor integration.** `ucm lsp` shows each definition's codebase status with Add/Update actions, watch
-  values inline and hovers with hashes and placement, in VS Code (`editors/vscode`), Neovim or Helix.
-  [Editors](docs/editors.md)
+- **Editor integration.** The codebase in a VS Code sidebar, definitions as navigable documents, usages
+  across the codebase, type search; in scratch files, each definition's status with Add/Update actions and watch
+  values inline. `ucm lsp` serves it (also for Neovim and Helix). [Editors](docs/editors.md)
 - **Search by type,** as in Unison: `ucm find ':(xs: T[]) => T'` finds matches up to renaming, reordered
   arguments, `async` results, and more general or specific types. [Search](docs/search.md)
 - **Real projects import as they are.** neverthrow, ts-pattern and valibot import, verify and run.
@@ -44,5 +44,7 @@ ucm add           # save new definitions from scratch.ts
 - **Deploy and roll back by moving a name;** old tabs keep working. [Production](docs/production.md)
 - **Self-hosting:** ucm-ts imports, verifies and runs its own source at a fixed point.
   [Developing](docs/developing.md)
+
+Try the [polls example](examples/README.md): `examples/polls/setup.sh /tmp/polls`.
 
 All documentation: [docs/](docs/README.md). Open items: [limitations](docs/limitations.md).

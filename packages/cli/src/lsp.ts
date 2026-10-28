@@ -8,18 +8,21 @@
 import fs from "node:fs";
 import path from "node:path";
 import { format } from "node:util";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import { cacheRefOf, shortHash, type Analysis, type DefRecord, type ProjectDef } from "@ucm/core";
+import { render, type Rendered } from "@ucm/loader";
 import type { Codebase } from "./codebase.ts";
 import { Placement } from "./placement.ts";
 import { evaluateCached, isTestPath, runCached } from "./tests.ts";
+import { searchByType } from "./search.ts";
 
 /** What the language server needs from the CLI (passed in, so this module doesn't import the CLI's entry). */
 export interface LspTools {
   classify(cb: Codebase, defs: DefRecord[], ns: string): { def: DefRecord; path: string; status: string; note?: string }[];
   save(cb: Codebase, file: string, mode: "add" | "update"): boolean;
   mv(cb: Codebase, from: string, to: string): void;
+  edit(cb: Codebase, targets: string[], file: string, force: boolean): void;
 }
 
 type Json = Record<string, unknown>;
@@ -260,6 +263,19 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     return lines.join("\n");
   };
 
+  const identifierAt = (doc: DocState, offset: number): ts.Identifier | undefined => {
+    const sf = doc.analyzed?.analysis?.program.getSourceFile(doc.file);
+    if (!sf) return undefined;
+    let id: ts.Identifier | undefined;
+    const find = (n: ts.Node) => {
+      if (offset < n.getStart(sf) || offset > n.end) return;
+      if (ts.isIdentifier(n)) id = n;
+      ts.forEachChild(n, find);
+    };
+    find(sf);
+    return id;
+  };
+
   const hover = (doc: DocState, p: Position) => {
     const s = fresh(doc);
     const a = s.analysis;
@@ -274,15 +290,8 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     }
     // a name from the codebase: resolve it to the hash it stands for
     const sf = a.program.getSourceFile(doc.file);
-    if (!sf) return null;
-    let id: ts.Identifier | undefined;
-    const find = (n: ts.Node) => {
-      if (offset < n.getStart(sf) || offset > n.end) return;
-      if (ts.isIdentifier(n)) id = n;
-      ts.forEachChild(n, find);
-    };
-    find(sf);
-    if (!id) return null;
+    const id = identifierAt(doc, offset);
+    if (!sf || !id) return null;
     const checker = a.program.getTypeChecker();
     let sym = checker.getSymbolAtLocation(id);
     if (sym && sym.flags & ts.SymbolFlags.Alias) sym = checker.getAliasedSymbol(sym);
@@ -302,6 +311,29 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       return { ok: false, output: [...out, (e as Error)?.message ?? String(e)].join("\n").trim() };
     } finally {
       console.log = log;
+    }
+  };
+
+  /**
+   * The codebase changes under us too: `ucm add` in a terminal, a pull. Re-check open files then (without running
+   * anything: they're only re-classified), and tell the client so its sidebar and views refresh.
+   */
+  let changeTimer: NodeJS.Timeout | undefined;
+  const watchCodebase = () => {
+    try {
+      fs.watch(cb!.lay.ucmDir, (_e, name) => {
+        if (!name?.startsWith("codebase.sqlite")) return;
+        clearTimeout(changeTimer);
+        changeTimer = setTimeout(() => {
+          for (const d of docs.values()) {
+            d.analyzed = undefined;
+            schedule(d, false);
+          }
+          notify("ucm/changed", {});
+        }, 300);
+      });
+    } catch (e) {
+      process.stderr.write(`ucm lsp: not watching the codebase: ${(e as Error).message}\n`);
     }
   };
 
@@ -326,6 +358,12 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       refreshAll();
       return r.ok;
     }
+    if (command === "ucm.edit") {
+      const file = editFile();
+      const r = capture(() => tools.edit(c, args.map(String), file, false));
+      if (!r.ok) message(1, r.output);
+      return r.ok ? pathToFileURL(file).href : null;
+    }
     if (command === "ucm.mv") {
       const r = capture(() => tools.mv(c, String(args[0]), String(args[1])));
       message(r.ok ? 3 : 1, r.output || (r.ok ? "renamed" : "failed"));
@@ -335,6 +373,199 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     throw new Error(`unknown command ${command}`);
   };
 
+  // ---- the codebase as documents ------------------------------------------------------------------------------
+  // `ucm:/lib/square.ts` is lib.square rendered with current names (`ucm:/@<hash>.ts` for an unnamed one). Its
+  // references are known exactly (render reports where each lands), so they navigate like links.
+
+  const viewUri = (hash: string) => {
+    const p = cb!.store.pathsOf(hash)[0];
+    return p ? `ucm:/${p.replaceAll(".", "/")}.ts` : `ucm:/@${hash}.ts`;
+  };
+  const hashesOf = (uri: string): string[] => {
+    const p = decodeURIComponent(uri.replace(/^ucm:\/*/, "").replace(/[?#].*$/, "")).replace(/\.ts$/, "");
+    try {
+      return p.startsWith("@") ? cb!.lookup(`#${p.slice(1)}`) : cb!.lookup(p.replaceAll("/", "."));
+    } catch {
+      return [];
+    }
+  };
+  interface View {
+    text: string;
+    refs: Rendered["refs"];
+    starts: Map<string, number>;
+    hashes: string[];
+  }
+  const view = (uri: string): View | undefined => {
+    const c = cb!;
+    const hashes = hashesOf(uri).filter((h) => c.store.getDef(h));
+    if (!hashes.length) return undefined;
+    const recs = hashes.map((h) => c.store.getDef(h)!);
+    const placement = new Placement(c);
+    const header = recs
+      .map((r) => {
+        const where = r.kind === "term" ? placement.placeOf(r.hash) : undefined;
+        const runs = where && where.place !== "anywhere" ? ` · runs ${where.place === "server" ? "on the server" : "in the browser"}` : "";
+        return `// ${c.store.pathsOf(r.hash).join(", ") || "(unnamed)"} ${shortHash(r.hash)}${runs}`;
+      })
+      .join("\n") + "\n";
+    const r = render(recs, c.source(), c.lay, { style: "scratch" });
+    const shift = header.length;
+    return {
+      text: header + r.text,
+      refs: r.refs.map((x) => ({ ...x, start: x.start + shift, end: x.end + shift })),
+      starts: new Map([...r.starts].map(([h, o]) => [h, o + shift])),
+      hashes,
+    };
+  };
+  const span = (text: string, start: number, end: number) => {
+    const { pos } = lines(text);
+    return { start: pos(start), end: pos(end) };
+  };
+  /** Where a definition is declared in its own view: its name, or the start of its declaration. */
+  const declaration = (hash: string) => {
+    const uri = viewUri(hash);
+    const v = view(uri);
+    if (!v) return undefined;
+    const self = v.refs.find((r) => r.hash === hash && r.from === hash);
+    const at = v.starts.get(hash) ?? 0;
+    return { uri, range: self ? span(v.text, self.start, self.end) : span(v.text, at, at) };
+  };
+  /** Every place a named definition refers to `hash`, in their views. */
+  const usages = (hash: string) => {
+    const c = cb!;
+    const out: { uri: string; range: ReturnType<typeof span> }[] = [];
+    const users = [...new Set(c.store.dependents(hash))].filter((d) => d !== hash && c.store.pathsOf(d).length);
+    const views = new Map<string, View | undefined>();
+    for (const d of users) {
+      const uri = viewUri(d);
+      if (!views.has(uri)) views.set(uri, view(uri));
+      const v = views.get(uri);
+      for (const r of v?.refs ?? []) if (r.hash === hash && r.from === d) out.push({ uri, range: span(v!.text, r.start, r.end) });
+    }
+    return out;
+  };
+  const namedDependents = (hash: string) => new Set(cb!.store.dependents(hash).filter((d) => d !== hash && cb!.store.pathsOf(d).length)).size;
+  /** The codebase definition at a position: a reference or declaration in a view, or a codebase name in a scratch file. */
+  const hashAt = (uri: string, p: Position): string | undefined => {
+    if (uri.startsWith("ucm:")) {
+      const v = view(uri);
+      if (!v) return undefined;
+      const offset = lines(v.text).offset(p);
+      const ref = v.refs.find((r) => offset >= r.start && offset <= r.end);
+      if (ref) return ref.hash;
+      return [...v.starts].filter(([, s]) => s <= offset).sort((a, b) => b[1] - a[1])[0]?.[0] ?? v.hashes[0];
+    }
+    const doc = docs.get(uri);
+    if (!doc) return undefined;
+    const s = fresh(doc);
+    const offset = lines(doc.text).offset(p);
+    const row = s.rows.find((r) => offset >= r.def.range.start && offset <= r.def.range.end && r.status === "identical");
+    const id = identifierAt(doc, offset);
+    if (id && s.analysis) {
+      const checker = s.analysis.program.getTypeChecker();
+      let sym = checker.getSymbolAtLocation(id);
+      if (sym && sym.flags & ts.SymbolFlags.Alias) sym = checker.getAliasedSymbol(sym);
+      const hash = sym && cacheRefOf(checker)(sym);
+      if (hash) return hash;
+    }
+    return row?.def.hash;
+  };
+  const SYMBOL_KIND = (rec: DefRecord) => (rec.kind === "class" ? 5 : rec.kind === "type" ? 11 : /^(<[^>]*>)?\(|^\{ ?[(<]/.test(rec.signature) ? 12 : 13);
+  const viewSymbols = (uri: string) => {
+    const v = view(uri);
+    if (!v) return [];
+    const order = [...v.starts].sort((a, b) => a[1] - b[1]);
+    return order.map(([hash, start], i) => {
+      const rec = cb!.store.getDef(hash)!;
+      const end = order[i + 1]?.[1] ?? v.text.length;
+      const self = v.refs.find((r) => r.hash === hash && r.from === hash);
+      return { name: rec.nameHint, detail: rec.signature, kind: SYMBOL_KIND(rec), range: span(v.text, start, end), selectionRange: self ? span(v.text, self.start, self.end) : span(v.text, start, start) };
+    });
+  };
+  const workspaceSymbols = (query: string) => {
+    const q = query.toLowerCase();
+    // the letters of the query in order, as editors' symbol search does
+    const fuzzy = (s: string) => {
+      let i = 0;
+      for (const ch of s.toLowerCase()) if (ch === q[i]) i++;
+      return i === q.length;
+    };
+    return cb!.store
+      .names()
+      .filter((n) => fuzzy(n.path))
+      .slice(0, 200)
+      .map((n) => {
+        const rec = cb!.store.getDef(n.hash)!;
+        const dot = n.path.lastIndexOf(".");
+        return { name: n.path.slice(dot + 1), containerName: dot > 0 ? n.path.slice(0, dot) : "", kind: SYMBOL_KIND(rec), location: { uri: viewUri(n.hash), range: span("", 0, 0) } };
+      });
+  };
+  /** One level of the namespace tree: sub-namespaces, and the definitions directly in it. */
+  const tree = (ns: string) => {
+    const c = cb!;
+    const prefix = ns ? `${ns}.` : "";
+    const namespaces = new Map<string, number>();
+    const defs: { path: string; hash: string; kind: string }[] = [];
+    for (const n of c.store.names()) {
+      if (!n.path.startsWith(prefix)) continue;
+      const rest = n.path.slice(prefix.length);
+      const dot = rest.indexOf(".");
+      if (dot >= 0) namespaces.set(rest.slice(0, dot), (namespaces.get(rest.slice(0, dot)) ?? 0) + 1);
+      else defs.push(n);
+    }
+    const placement = new Placement(c);
+    const node = process.version;
+    return {
+      namespaces: [...namespaces].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([name, count]) => ({ name, path: prefix + name, count })),
+      definitions: defs
+        .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.kind < b.kind ? -1 : 1))
+        .map((n) => {
+          const rec = c.store.getDef(n.hash)!;
+          const test = rec.kind !== "type" && isTestPath(n.path) ? c.store.testResult(n.hash, node) : undefined;
+          return {
+            name: n.path.slice(prefix.length),
+            path: n.path,
+            hash: n.hash,
+            kind: rec.kind,
+            symbolKind: SYMBOL_KIND(rec),
+            signature: rec.signature,
+            place: rec.kind === "term" ? placement.placeOf(n.hash).place : undefined,
+            test: isTestPath(n.path) && rec.kind !== "type" ? (test ? (test.ok ? "passed" : "failed") : "not run") : undefined,
+            doc: rec.doc?.split("\n")[0],
+            uri: viewUri(n.hash),
+          };
+        }),
+    };
+  };
+  /** A scratch file to edit in: scratch.ts if it's empty, else a fresh edit-N.ts. */
+  const editFile = () => {
+    const root = cb!.lay.root;
+    for (let i = 0; ; i++) {
+      const f = path.join(root, i === 0 ? "scratch.ts" : i === 1 ? "edit.ts" : `edit-${i}.ts`);
+      if (!fs.existsSync(f) || !fs.readFileSync(f, "utf8").trim()) return f;
+    }
+  };
+
+  /** Lenses on a definition's view: how many definitions use it (click for where), and edit / rename. */
+  const viewLenses = (uri: string) => {
+    const v = view(uri);
+    if (!v) return [];
+    const { pos } = lines(v.text);
+    return [...v.starts].flatMap(([hash, start]) => {
+      const p = pos(start);
+      const range = { start: p, end: p };
+      const users = namedDependents(hash);
+      const name = cb!.store.pathsOf(hash)[0];
+      const out: Json[] = [{ range, command: { title: `${users} dependent${users === 1 ? "" : "s"}`, command: isVsCode ? "ucm.findUsages" : "", arguments: [uri, p.line, p.character] } }];
+      if (isVsCode && name) {
+        out.push({ range, command: { title: "Edit", command: "ucm.editDefinition", arguments: [name] } });
+        out.push({ range, command: { title: "Rename", command: "ucm.rename", arguments: [name] } });
+      }
+      return out;
+    });
+  };
+
+  const uriOf = (params: Json | undefined) => String((params?.textDocument as Json | undefined)?.uri ?? "");
   const docAt = (params: Json | undefined) => {
     const uri = String((params?.textDocument as Json | undefined)?.uri ?? "");
     const doc = docs.get(uri);
@@ -364,7 +595,11 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
               hoverProvider: true,
               codeLensProvider: { resolveProvider: false },
               inlayHintProvider: true,
-              executeCommandProvider: { commands: ["ucm.add", "ucm.update", "ucm.mv"] },
+              executeCommandProvider: { commands: ["ucm.add", "ucm.update", "ucm.mv", "ucm.edit"] },
+              definitionProvider: true,
+              referencesProvider: true,
+              documentSymbolProvider: true,
+              workspaceSymbolProvider: true,
             },
             serverInfo: { name: "ucm", version: "1" },
           },
@@ -373,6 +608,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       }
       case "initialized":
         if (!cb) message(2, "ucm: no codebase in this workspace (run `ucm init`)");
+        else watchCodebase();
         return;
       case "shutdown":
         send({ id: m.id, result: null });
@@ -410,8 +646,48 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         return;
       }
       case "textDocument/codeLens": {
+        const uri = uriOf(p);
+        if (cb && uri.startsWith("ucm:")) return send({ id: m.id, result: viewLenses(uri) });
         const doc = docAt(p);
         send({ id: m.id, result: doc ? codeLenses(doc) : [] });
+        return;
+      }
+      case "textDocument/definition": {
+        // in a scratch file TypeScript already answers (with the generated module); in a view, references are links
+        const uri = uriOf(p);
+        const v = cb && uri.startsWith("ucm:") ? view(uri) : undefined;
+        const offset = v ? lines(v.text).offset(p!.position as Position) : -1;
+        const ref = v?.refs.find((r) => offset >= r.start && offset <= r.end);
+        send({ id: m.id, result: ref ? (declaration(ref.hash) ?? null) : null });
+        return;
+      }
+      case "textDocument/references": {
+        const uri = uriOf(p);
+        const hash = cb ? hashAt(uri, p!.position as Position) : undefined;
+        const decl = hash && (p!.context as Json | undefined)?.includeDeclaration ? declaration(hash) : undefined;
+        send({ id: m.id, result: hash ? [...(decl ? [decl] : []), ...usages(hash)] : [] });
+        return;
+      }
+      case "textDocument/documentSymbol": {
+        const uri = uriOf(p);
+        send({ id: m.id, result: cb && uri.startsWith("ucm:") ? viewSymbols(uri) : [] });
+        return;
+      }
+      case "workspace/symbol":
+        send({ id: m.id, result: cb ? workspaceSymbols(String(p?.query ?? "")) : [] });
+        return;
+      // for clients that show the codebase itself (the VS Code extension's sidebar and views)
+      case "ucm/tree":
+        send({ id: m.id, result: cb ? tree(String(p?.namespace ?? "")) : { namespaces: [], definitions: [] } });
+        return;
+      case "ucm/source": {
+        const v = cb ? view(String(p?.uri)) : undefined;
+        send(v ? { id: m.id, result: { text: v.text } } : { id: m.id, error: { code: -32602, message: `${p?.uri} is not in the codebase` } });
+        return;
+      }
+      case "ucm/findByType": {
+        const r = searchByType(cb!, String(p?.query ?? ""));
+        send({ id: m.id, result: { variables: r.variables, hits: r.hits.map((h) => ({ ...h, uri: viewUri(h.hash) })) } });
         return;
       }
       case "textDocument/inlayHint": {
@@ -420,6 +696,12 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         return;
       }
       case "textDocument/hover": {
+        const uri = uriOf(p);
+        if (cb && uri.startsWith("ucm:")) {
+          const hash = hashAt(uri, p!.position as Position);
+          const value = hash && describe(hash);
+          return send({ id: m.id, result: value ? { contents: { kind: "markdown", value } } : null });
+        }
         const doc = docAt(p);
         send({ id: m.id, result: doc ? hover(doc, p!.position as Position) : null });
         return;

@@ -32,11 +32,44 @@ Commands, which editors expose as code-lens actions or a command palette:
 
 Each reports its output as a message, and every open file's status is refreshed.
 
+## The codebase as documents
+
+The code lives in the codebase, not in files, so the server also shows the codebase itself.
+
+- **Definitions are documents.** `ucm:/lib/square.ts` is `lib.square` rendered with current names (what `ucm
+  view` prints), with a header line giving its names, hash and where it runs. They're read-only: to change one,
+  **Edit** writes it into a scratch file (`scratch.ts` if that's empty, else `edit.ts`, `edit-2.ts`, …), where
+  TypeScript checks it and the lens offers **Update codebase**.
+- **References are links.** ucm knows exactly where each reference sits in a rendered definition, so **Go to
+  Definition** in a definition's document opens the one it refers to.
+- **Find All References** lists every definition in the codebase that uses one, at the exact spot, from its
+  dependents. In scratch files these are listed alongside TypeScript's own results.
+- **Lenses on a definition's document:** how many named definitions use it (click to list them), **Edit**,
+  **Rename**.
+- **Symbols.** Workspace symbol search (Cmd/Ctrl+T) covers every name in the codebase; the outline shows a
+  document's definitions.
+- **Hovers** in these documents describe whatever is under the cursor, as in scratch files.
+
+For clients that want to show more, the server answers `ucm/tree` (one level of the namespace tree, with each
+definition's kind, signature, placement and test status), `ucm/source` (a `ucm:` document's text) and
+`ucm/findByType` (type search, as `ucm find ':…'`). It sends `ucm/changed` whenever the codebase changes, here or
+from a terminal.
+
 ## VS Code
 
-`editors/vscode` is a small extension that starts `ucm lsp` in workspaces with a codebase. It also saves a file
-before adding it, and adds **ucm: Rename a definition** (and a **Rename** lens on saved definitions), which asks
-for the new name and runs `ucm mv`.
+`editors/vscode` is the extension. Beyond starting `ucm lsp` in workspaces with a codebase, it adds:
+
+- **The Codebase sidebar** (the `#` icon in the activity bar): namespaces, and the definitions in each, with
+  icons by kind, signatures, where they run (`server ·`, `browser ·`) and test results. Hover for details; click to
+  open. Right-click (or the inline icons) for **Edit in a scratch file**, **Find usages**, **Run** (`ucm run` in a
+  terminal), **Rename** (`ucm mv`, also for a whole namespace) and **Copy hash**. It refreshes itself when the
+  codebase changes, including from a terminal.
+- **ucm: Find by type** (the search icon in the sidebar, or the command palette): type a TypeScript type, pick a
+  match, and it opens.
+- **ucm: Add / Update**, which save the file first; **Rename** and **Edit** ask for names when run from the
+  palette.
+
+Try it on the [polls example](../examples/README.md).
 
 Build a `.vsix` (the first `npx` downloads vsce, which takes a while) and install it with **Extensions → … →
 Install from VSIX…**, or with VS Code's CLI (on macOS it's inside the app if `code` isn't on your PATH):
@@ -89,7 +122,8 @@ language-servers = ["typescript-language-server", "ucm"]
 
 ## Notes
 
-- Only scratch files get lenses, hints and hovers. Files elsewhere (an imported project's sources) are ignored.
+- Scratch files and `ucm:` documents get ucm's features. Files elsewhere (an imported project's sources) are
+  ignored.
 - The server analyzes with the same incremental TypeScript LanguageService as the watcher, so updates take
   tens of milliseconds.
 - Its stdout is the protocol channel. Output from watch expressions and tests goes to its stderr, which editors

@@ -10,6 +10,7 @@ packages/
   cli/      the ucm command, placement inference, sync, merge, web (Vite plugin, dev/build/start), the
             #ucm/server runtime, the wire codec
 editors/    vscode/: the VS Code extension (a thin client for `ucm lsp`; not part of the npm package)
+examples/   polls/: an example app, built and run in a browser by packages/cli/test/examples.test.ts
 scripts/    build.ts (npm package), selfhost.sh, test-package.sh, compare-ts-versions.sh
 docs/       user documentation, one page per feature area
 ```

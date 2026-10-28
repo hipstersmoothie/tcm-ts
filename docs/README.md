@@ -23,6 +23,7 @@ tables.
 | [Data: typed tables](data.md) | tables, migrations, queries and indexes, `update`, transactions, `ucm data` |
 | [Background jobs](jobs.md) | `enqueue`, schedules, `ucm jobs` |
 | [Production](production.md) | `ucm build`/`start`, deploying and rolling back by moving a name, pruning |
+| [Examples](../examples/README.md) | a live polling app: model, server, browser, jobs, tables, tests |
 | [Developing ucm-ts](developing.md) | repo layout, test suites, self-hosting, packaging |
 | [Limitations](limitations.md) | what isn't done yet |
 

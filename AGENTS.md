@@ -17,6 +17,8 @@ the code does *now*.
 - **Fixed or newly found limits** are updated in `docs/limitations.md`.
 - **Check claims against the code**, not memory or older docs. Remove what's no longer true.
 - **The README stays short:** a pitch, quick start, and links into `docs/`.
+- **`examples/` must keep working.** `packages/cli/test/examples.test.ts` builds and runs them; when a feature
+  changes how code is written, update the examples too.
 
 ## Verifying a change
 

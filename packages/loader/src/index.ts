@@ -51,6 +51,10 @@ export interface Rendered {
   text: string;
   /** member hash → the identifier it is declared as */
   memberNames: Map<string, string>;
+  /** where each reference to a codebase definition is in `text` (offsets of the name), for editors */
+  refs: { start: number; end: number; hash: string; from: string }[];
+  /** where each member's declaration starts in `text` */
+  starts: Map<string, number>;
 }
 
 const lastSegment = (name: string) => name.slice(name.lastIndexOf(".") + 1);
@@ -169,8 +173,11 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
   };
 
   const bodies = new Map<string, string>();
+  /** per member: each codebase reference's name, at its offset in the member's spliced body */
+  const bodyRefs = new Map<string, { start: number; end: number; hash: string }[]>();
   for (const m of members) {
     let text = m.sourceText;
+    const placed: { start: number; end: number; nameAt: number; local: string; hash?: string; growth: number }[] = [];
     for (const span of [...m.spans].sort((a, b) => b.start - a.start)) {
       if (span.literal && span.ext) {
         // `import("pkg")`: point at the pinned version (the real package name in editable scratch files)
@@ -185,8 +192,18 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
       const local = localFor(m, span);
       const replacement = span.shorthand && span.shorthand !== local ? `${span.shorthand}: ${local}` : local;
       text = text.slice(0, span.start) + replacement + text.slice(span.end);
+      const hash = span.hash ? remap(span.hash) : undefined;
+      placed.push({ start: span.start, end: span.end, nameAt: replacement.length - local.length, local, hash, growth: replacement.length - (span.end - span.start) });
     }
     bodies.set(m.hash, text);
+    // spliced from the end, so a span moved by the growth of every span before it
+    let shift = 0;
+    const refs: { start: number; end: number; hash: string }[] = [];
+    for (const p of placed.reverse()) {
+      if (p.hash) refs.push({ start: p.start + shift + p.nameAt, end: p.start + shift + p.nameAt + p.local.length, hash: p.hash });
+      shift += p.growth;
+    }
+    bodyRefs.set(m.hash, refs);
   }
 
   const lines: string[] = [];
@@ -219,6 +236,7 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
   if (lines.length) lines.push("");
 
   const ordered = opts.style === "scratch" ? members : initOrder(members);
+  const bodyAt = new Map<string, { line: number; insertedAt: number; inserted: number }>();
   // the bindings of one destructuring statement share its source: emit the statement once
   const emitted = new Set<string>();
   for (const m of ordered) {
@@ -228,7 +246,11 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
     const note = opts.style === "scratch" ? opts.annotate?.(m.hash, memberNames.get(m.hash)!) : undefined;
     if (note) lines.push(note);
     // `export` goes after any `// @ts-expect-error` lines, which must stay directly above the declaration
-    lines.push(opts.exportDeclarations ? bodies.get(m.hash)!.replace(/^((?:\/\/[^\n]*\n)*)/, "$1export ") : bodies.get(m.hash)!, "");
+    const body = bodies.get(m.hash)!;
+    const directives = /^(?:\/\/[^\n]*\n)*/.exec(body)![0].length;
+    const exported = opts.exportDeclarations ? body.slice(0, directives) + "export " + body.slice(directives) : body;
+    bodyAt.set(m.hash, { line: lines.length, insertedAt: opts.exportDeclarations ? directives : Infinity, inserted: opts.exportDeclarations ? 7 : 0 });
+    lines.push(exported, "");
   }
   // a definition with no imports must still be a module, or its names would be globals shared with other files
   if (opts.style === "internal") lines.push("export {};");
@@ -246,7 +268,18 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
       if (m.table) lines.push(`Object.defineProperty(${local}, Symbol.for("ucm.schema"), { value: ${JSON.stringify(m.table)} });`);
     }
   }
-  return { text: lines.join("\n").trimEnd() + "\n", memberNames };
+  // offsets in the joined text, for editors: each member's declaration and the references in it
+  const lineStart: number[] = [];
+  lines.reduce((at, l, i) => ((lineStart[i] = at), at + l.length + 1), 0);
+  const refs: Rendered["refs"] = [];
+  const starts = new Map<string, number>();
+  for (const [hash, b] of bodyAt) {
+    const base = lineStart[b.line]!;
+    const at = (o: number) => base + o + (o >= b.insertedAt ? b.inserted : 0);
+    starts.set(hash, base);
+    for (const r of bodyRefs.get(hash) ?? []) refs.push({ start: at(r.start), end: at(r.end), hash: r.hash, from: hash });
+  }
+  return { text: lines.join("\n").trimEnd() + "\n", memberNames, refs, starts };
 }
 
 function writeIfChanged(file: string, text: string): boolean {
