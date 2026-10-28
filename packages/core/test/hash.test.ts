@@ -239,8 +239,9 @@ test("JSX: layout between tags doesn't count, text React keeps does; the runtime
   assert.notEqual(one.Hi, h(`export function Hi({ name }: { name: string }) { return <div className="hi">Hello, {name}!</div>; }`).Hi, "tags are structural");
   assert.notEqual(one.Hi, h(`export function Hi({ name }: { name: string }) { return <p id="hi">Hello, {name}!</p>; }`).Hi, "attribute names are structural");
   const d = analyzeTsx(`export function Hi() { return <br />; }`).defs[0]!;
-  assert.equal(d.jsx, "npm:react@19.0.0");
-  assert.match(d.ir, /\["Jsx","npm:react@19\.0\.0"\]/);
+  // pinned by compatible range: any React 19
+  assert.equal(d.jsx, "npm:react@19");
+  assert.match(d.ir, /\["Jsx","npm:react@19"\]/);
 });
 
 test("JSX: a component tag is a reference by hash, marked as rendered rather than called", () => {
@@ -253,4 +254,11 @@ test("JSX: a component tag is a reference by hash, marked as rendered rather tha
   assert.ok(spans.every((s) => s.element));
   const changed = analyzeTsx(`export function Item({ t }: { t: string }) { return <li>{t}!</li>; }\nexport function List() { return <ul><Item t="a" /><Item t="b"></Item></ul>; }`);
   assert.notEqual(changed.defs.find((d) => d.nameHint === "List")!.hash, list.hash, "a change to the component reaches what renders it");
+});
+
+test("packages are pinned by compatible range, and the exact version checked against is reported", () => {
+  fakeReact(dir);
+  const a = analyzeTsx(`import { useState } from "react";\nexport const s = useState;`);
+  assert.equal(a.defs[0]!.deps.find((d) => d.ref.startsWith("npm:"))?.ref, "npm:react@19#useState");
+  assert.deepEqual(a.packages, { "npm:react@19": "19.0.0" }, "for the codebase's lock");
 });

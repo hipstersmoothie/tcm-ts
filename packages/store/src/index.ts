@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS name_log (
 CREATE TABLE IF NOT EXISTS patches (branch_id INTEGER NOT NULL, old_hash TEXT NOT NULL, new_hash TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (branch_id, old_hash));
 CREATE TABLE IF NOT EXISTS todo (branch_id INTEGER NOT NULL, hash TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY (branch_id, hash));
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- the package lock: definitions pin a package by compatible range (npm:ms@2); the codebase runs one version of each
+CREATE TABLE IF NOT EXISTS packages (name TEXT NOT NULL, range TEXT NOT NULL, version TEXT NOT NULL, PRIMARY KEY (name, range));
 CREATE TABLE IF NOT EXISTS test_results (
   hash TEXT NOT NULL, node_version TEXT NOT NULL, ok INTEGER NOT NULL, message TEXT NOT NULL,
   output TEXT NOT NULL, duration_ms INTEGER NOT NULL, ts INTEGER NOT NULL,
@@ -434,6 +436,22 @@ export class Store {
 
   setSetting(key: string, value: string) {
     this.db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, value);
+  }
+
+  // ---- the package lock ----------------------------------------------------------------------------------------
+
+  /** The version the codebase runs for package `name` within compatible range `range`. */
+  lockedVersion(name: string, range: string): string | undefined {
+    return (this.db.prepare("SELECT version FROM packages WHERE name = ? AND range = ?").get(name, range) as { version: string } | undefined)?.version;
+  }
+
+  lockVersion(name: string, range: string, version: string) {
+    this.db.prepare("INSERT OR REPLACE INTO packages (name, range, version) VALUES (?, ?, ?)").run(name, range, version);
+  }
+
+  /** Every locked package, by name then range. */
+  lockedPackages(): { name: string; range: string; version: string }[] {
+    return this.db.prepare("SELECT name, range, version FROM packages ORDER BY name, range").all() as { name: string; range: string; version: string }[];
   }
 
   // ---- test results ----------------------------------------------------------

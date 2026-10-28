@@ -147,6 +147,7 @@ function check(cb: Codebase, file: string, into?: string, fresh = false): boolea
 function save(cb: Codebase, file: string, mode: "add" | "update", into?: string): boolean {
   const a = analyzeScratch(cb, file, into);
   if (!a) return false;
+  cb.lockPackages(a.packages);
   return apply(cb, classify(cb, a.defs, into ?? a.namespace ?? ""), mode, `${mode} ${path.basename(file)}`, false);
 }
 
@@ -300,6 +301,7 @@ function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: 
   }
   const planned = a.defs.map((def) => ({ def, path: joinName(into, namespaceForFile(root, def.file), def.nameHint) }));
   checkDistinct(planned, (p) => `${p.path} is defined in more than one file (one of them is ${p.def.file})`);
+  cb.lockPackages(a.packages);
   return apply(cb, classifyPaths(cb, planned), mode, `import ${dir}`, !verbose);
 }
 

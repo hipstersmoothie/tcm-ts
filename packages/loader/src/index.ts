@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { ensureExternals, npmAlias } from "./packages.ts";
 import { exportId, extRefString, isConflicted, SERVER_API_MODULE, statementStarts, type DefRecord, type ExtRef } from "@tcm/core";
 
 export interface Layout {
@@ -61,12 +62,6 @@ const lastSegment = (name: string) => name.slice(name.lastIndexOf(".") + 1);
 const sanitize = (s: string) => (s.replace(/[^\w$]/g, "_").replace(/^(\d)/, "_$1") || "x");
 /** Valid binding names that would parse as something else where an imported name is spliced into a type. */
 const TYPE_KEYWORDS = new Set(["infer", "keyof", "typeof", "unique", "readonly", "asserts", "is", "satisfies", "extends"]);
-
-export function npmAlias(module: string): string {
-  // npm:@scope/name@1.2.3 → npm__scope__name__1.2.3
-  const m = /^npm:(.+)@([^@]+)$/.exec(module)!;
-  return `npm__${m[1]!.replace(/^@/, "").replace("/", "__").toLowerCase()}__${m[2]}`;
-}
 
 /**
  * A component's module: `.tsx` when it uses JSX (TypeScript only parses JSX there), `.ts` otherwise. Its first
@@ -307,6 +302,11 @@ function writeIfChanged(file: string, text: string): boolean {
   return true;
 }
 
+/** The packages definitions import, the JSX runtime their elements compile to included. */
+export function externalsOf(members: DefRecord[]): ExtRef[] {
+  return members.flatMap((m) => [...m.spans.flatMap((s) => (s.ext ? [s.ext] : [])), ...(m.jsx ? [{ module: m.jsx, subpath: "jsx-runtime", export: "*" }] : [])]);
+}
+
 /** Write cache modules for the transitive closure of `hashes`, and install the npm packages they use. */
 export function materialize(hashes: Iterable<string>, src: DefSource, lay: Layout): void {
   const seen = new Set<string>();
@@ -329,71 +329,6 @@ export function materialize(hashes: Iterable<string>, src: DefSource, lay: Layou
     writeIfChanged(path.join(lay.cacheDir, moduleFile(rec.componentHash, src)), render(members, src, lay, { style: "cache" }).text);
   }
   ensureExternals(lay, exts.values());
-}
-
-/**
- * `.tcm/cache/package.json` installs every pinned npm version under an alias
- * (`npm__lodash-es__4.17.21`), so definitions pinned to different versions coexist.
- */
-export function ensureExternals(lay: Layout, exts: Iterable<ExtRef>): void {
-  const file = path.join(lay.cacheDir, "package.json");
-  const pkg = fs.existsSync(file)
-    ? (JSON.parse(fs.readFileSync(file, "utf8")) as { dependencies?: Record<string, string> })
-    : {};
-  const deps = { ...(pkg.dependencies ?? {}) };
-  const missing = new Set<string>();
-  for (const e of exts) {
-    if (!e.module.startsWith("npm:")) continue;
-    const alias = npmAlias(e.module);
-    deps[alias] = `npm:${e.module.slice(4)}`;
-    if (!fs.existsSync(path.join(lay.cacheDir, "node_modules", alias, "package.json"))) missing.add(alias);
-    // a package typed by DefinitelyTyped (react: @types/react) gets the project's @types version under the
-    // alias's name, which is where TypeScript looks for the alias's types
-    const types = typesPackage(realPackage(e.module), lay.root);
-    if (types && !deps[`@types/${alias}`]) {
-      deps[`@types/${alias}`] = `npm:${types.name}@${types.version}`;
-      if (!fs.existsSync(path.join(lay.cacheDir, "node_modules", "@types", alias, "package.json"))) missing.add(`@types/${alias}`);
-    }
-  }
-  writeIfChanged(file, JSON.stringify({ name: "tcm-cache", private: true, type: "module", dependencies: deps }, null, 2) + "\n");
-  if (missing.size) {
-    process.stderr.write(`installing ${[...missing].join(", ")}\n`);
-    const r = spawnSync("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"], { cwd: lay.cacheDir, stdio: ["ignore", "ignore", "inherit"] });
-    if (r.status !== 0) throw new Error("npm install failed in .tcm/cache");
-  }
-  linkPeers(lay, deps);
-}
-
-/**
- * npm installs a package's peers (react-dom's `react`) under their plain names, beside the pinned aliases. Two
- * copies of one package break packages that must be a single instance (React's hooks), so a peer at the version
- * the codebase pins becomes a link to the pinned copy.
- */
-function linkPeers(lay: Layout, deps: Record<string, string>) {
-  const modules = path.join(lay.cacheDir, "node_modules");
-  for (const [alias, spec] of Object.entries(deps)) {
-    const m = /^npm:((?:@[^/]+\/)?[^@]+)@(.+)$/.exec(spec);
-    if (!m || alias.startsWith("@types/")) continue;
-    const plain = path.join(modules, m[1]!);
-    try {
-      if (fs.lstatSync(plain).isSymbolicLink()) continue;
-      if ((JSON.parse(fs.readFileSync(path.join(plain, "package.json"), "utf8")) as { version: string }).version !== m[2]) continue;
-    } catch {
-      continue;
-    }
-    fs.rmSync(plain, { recursive: true, force: true });
-    fs.symlinkSync(path.relative(path.dirname(plain), path.join(modules, alias)), plain, "dir");
-  }
-}
-
-/** The `@types/<name>` package the project at `root` has installed, if any. */
-function typesPackage(name: string, root: string): { name: string; version: string } | undefined {
-  const typesName = `@types/${name.replace(/^@/, "").replace("/", "__")}`;
-  for (let dir = root; ; dir = path.dirname(dir)) {
-    const file = path.join(dir, "node_modules", typesName, "package.json");
-    if (fs.existsSync(file)) return { name: typesName, version: (JSON.parse(fs.readFileSync(file, "utf8")) as { version: string }).version };
-    if (path.dirname(dir) === dir) return undefined;
-  }
 }
 
 export interface ShimName {
@@ -626,3 +561,4 @@ writeFileSync(${JSON.stringify(out)}, JSON.stringify(results));
 }
 
 export { writeIfChanged };
+export { ensureExternals, lockAtLeast, npmAlias, packageManager, parseModule, usePackageLock, type PackageLock } from "./packages.ts";

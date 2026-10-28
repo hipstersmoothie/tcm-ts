@@ -5,6 +5,7 @@ import { isBuiltin } from "node:module";
 import { hashFromExportId, hashIR, serializeIR, type IR } from "./hash.ts";
 import { extract, TcmError, type DefSite, type ExtractMode, type Piece } from "./extract.ts";
 import { canonicalizeSite, type CanonContext, type Resolved, type SiteResult } from "./canonicalize.ts";
+import { compareVersions, compatRange } from "./semver.ts";
 import { checkProfile, compilerOptions, createProgram, fileDiagnostics, type Compile, type Diagnostic } from "./program.ts";
 import { depRef, SERVER_API_MODULE, type DefRecord, type Dep, type DocRef, type ExtRef, type Span } from "./types.ts";
 import { paramsSchema, typeSchema, type ParamsSchema, type TableSchema } from "./schema.ts";
@@ -48,6 +49,8 @@ export interface Analysis {
   watches: WatchRecord[];
   /** from a `// tcm: namespace a.b` pragma */
   namespace?: string;
+  /** see ProjectAnalysis.packages */
+  packages: Record<string, string>;
 }
 
 export interface ProjectDef extends DefRecord {
@@ -64,6 +67,11 @@ export interface ProjectAnalysis {
   warnings: string[];
   defs: ProjectDef[];
   watches: (WatchRecord & { file: string })[];
+  /**
+   * The exact version each pinned package range was checked against (`npm:ms@2` → `2.1.3`): definitions record
+   * the range, the codebase's lock records versions.
+   */
+  packages: Record<string, string>;
 }
 
 // `// ucm:` is the spelling from before the rename to tcm
@@ -91,6 +99,18 @@ export function saltOf(ir: string): string | undefined {
  * barrels and workspace packages) become hash references, and import cycles become hash cycles.
  */
 export function analyzeProject(files: string[], host: AnalyzeHost, mode: ExtractMode = "import"): ProjectAnalysis {
+  observed = new Map();
+  try {
+    return { ...analyzeWith(files, host, mode), packages: Object.fromEntries(observed) };
+  } finally {
+    observed = undefined;
+  }
+}
+
+/** The exact versions packages resolve to during the analysis running now, by pinned module. */
+let observed: Map<string, string> | undefined;
+
+function analyzeWith(files: string[], host: AnalyzeHost, mode: ExtractMode): Omit<ProjectAnalysis, "packages"> {
   const program = host.compile ? host.compile(files, host.compilerOptions ?? compilerOptions()) : createProgram(files, host.oldProgram, host.compilerOptions);
   const sfs = files.map((f) => {
     const sf = program.getSourceFile(f);
@@ -188,7 +208,11 @@ function externalModule(spec: string, file: string, at: ts.Node, exportName: str
   const subpath = parts.slice(pkgName.split("/").length).join("/");
   const pkg = findPackage(pkgName, path.dirname(file));
   if (!pkg) throw new TcmError(`cannot find package '${pkgName}' in node_modules`, at);
-  return { module: `npm:${pkg.name}@${pkg.version}`, subpath, export: exportName };
+  // the hash records the range semver calls compatible; the codebase's lock picks the version within it
+  const module = `npm:${pkg.name}@${compatRange(pkg.version)}`;
+  const seen = observed?.get(module);
+  if (!seen || compareVersions(pkg.version, seen) > 0) observed?.set(module, pkg.version);
+  return { module, subpath, export: exportName };
 }
 
 /** `import("pkg")` loads a package lazily; it's as content-addressable as a static import of the same package. */

@@ -29,7 +29,8 @@ never skipped, so two different programs can't collide.
   form.
 - Locals become de Bruijn levels, so renaming a local doesn't change the hash.
 - Every identifier is resolved through the type checker. A reference to another definition becomes
-  `Ref <hash>`, an npm import becomes `Ext npm:<pkg>@<exact version>`, and a global becomes `G name`.
+  `Ref <hash>`, an npm import becomes `Ext npm:<pkg>@<compatible range>` (`npm:lodash@4`;
+  [packages](packages.md#versions)), and a global becomes `G name`.
 - Property names stay structural, and so do JSX tags and attributes (`<div className>`); a component tag
   (`<Counter />`) is a reference like any other.
 - JSX text is normalized as React reads it: indentation and line breaks between tags don't count, spaces within a
@@ -54,8 +55,9 @@ never skipped, so two different programs can't collide.
 
 ## A frozen format
 
-- **The IR format is frozen at v5.** `packages/core/test/golden.test.ts` pins the hashes of a corpus that
-  covers most syntax.
+- **The IR format is frozen at v6.** `packages/core/test/golden.test.ts` pins the hashes of a corpus that
+  covers most syntax. (v6 pins npm packages by compatible range rather than exact version; see
+  [packages](packages.md).)
 - **Hashes don't depend on the TypeScript version.** `pnpm compare-ts 5.8` re-hashes the repo and the corpus
   on another TypeScript version: 5.8.3, 5.9.3 and 6.0.3 produce identical hashes.
 - **`tcm migrate`** rebuilds a codebase written with an older format: every stored definition is re-rendered

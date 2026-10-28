@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { IR_VERSION, saltOf, shortHash, type DefRecord } from "@tcm/core";
 import { Store, stateHashOf } from "@tcm/store";
-import { ensureExternals, layout, materialize, render } from "@tcm/loader";
+import { ensureExternals, externalsOf, layout, materialize, render } from "@tcm/loader";
 import { Codebase } from "./codebase.ts";
 import { dim, green, red, yellow } from "./style.ts";
 
@@ -82,7 +82,7 @@ export function migrate(root: string): boolean {
     }
     const src = cb.source();
     materialize(external.map((h) => map.get(h)!), src, cb.lay);
-    ensureExternals(cb.lay, members.flatMap((m) => m.spans.flatMap((s) => (s.ext ? [s.ext] : []))));
+    ensureExternals(cb.lay, externalsOf(members));
     // keep every identifier as written, so the stored source text survives migration unchanged
     const rendered = render(members, src, cb.lay, { style: "internal", remap: (h) => map.get(h) ?? h, preserveText: true });
     const tmp = path.join(cb.lay.cacheDir, `_migrate_${c}${members.some((m) => m.jsx) ? ".tsx" : ".ts"}`);

@@ -63,7 +63,7 @@ registerHooks({
 `;
 }
 import { Store } from "@tcm/store";
-import { ensureExternals, layout, materialize, moduleFile, render, writeIfChanged, writeShim, type DefSource, type Layout } from "@tcm/loader";
+import { ensureExternals, externalsOf, layout, lockAtLeast, materialize, moduleFile, parseModule, render, usePackageLock, writeIfChanged, writeShim, type DefSource, type Layout } from "@tcm/loader";
 import { serverApiFiles } from "./server-api.ts";
 
 /** A dotted codebase name: `lib.util.sort`. */
@@ -102,6 +102,12 @@ export class Codebase {
   private constructor(root: string) {
     this.lay = layout(root);
     this.store = new Store(this.lay.dbFile);
+    // the versions generated modules run with
+    usePackageLock(this.lay, {
+      get: (name, range) => this.store.lockedVersion(name, range),
+      set: (name, range, version) => this.store.lockVersion(name, range, version),
+      all: () => this.store.lockedPackages(),
+    });
     // the #tcm/server runtime every generated module and runner in this codebase shares
     const api = serverApiFiles();
     fs.mkdirSync(this.lay.cacheDir, { recursive: true });
@@ -425,6 +431,18 @@ export class Codebase {
     return { stored: fresh.length };
   }
 
+  /**
+   * Record the package versions saved code was checked against: the lock moves up to them (within a compatible
+   * range, newer only adds), never down.
+   */
+  lockPackages(packages: Record<string, string>) {
+    for (const [module, version] of Object.entries(packages)) {
+      const { name, version: range } = parseModule(module);
+      const was = lockAtLeast(this.lay, name, range, version);
+      if (was) process.stderr.write(`${name} ${was} → ${version} (code was checked against ${version})\n`);
+    }
+  }
+
   putDefs(defs: DefRecord[]) {
     this.store.putDefs(defs, TS_VERSION, IR_VERSION);
   }
@@ -528,7 +546,7 @@ export class Codebase {
       const src = this.source();
       const deps = members.flatMap((m) => m.spans.filter((s) => s.hash && !memberSet.has(s.hash)).map((s) => resolve(s.hash!)));
       materialize(deps, src, lay);
-      ensureExternals(lay, members.flatMap((m) => m.spans.flatMap((s) => (s.ext ? [s.ext] : []))));
+      ensureExternals(lay, externalsOf(members));
       const rendered = render(members, src, lay, { style: "internal", remap: resolve });
       const tmp = path.join(lay.cacheDir, `_update_${moduleFile(c, src)}`);
       fs.writeFileSync(tmp, rendered.text);

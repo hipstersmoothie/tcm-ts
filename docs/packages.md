@@ -20,26 +20,39 @@ short(90_000);
 $ tcm check
 scratch.ts → time
   + new       time.short : (millis: number) => string
-installing npm__ms__2.1.3
+installing ms@2.1.3
 
     7 │ short(90_000)
       ⧩ '2m'
 ```
 
-## Versions are pinned
+## Versions
 
-When you add a definition that imports a package, tcm records the **exact version** it was checked against, and
-that's part of the definition's hash:
+When you add a definition that imports a package, tcm records the package's **compatible range**, as semver
+defines it: the major version (`lodash` 4.17.21 → `npm:lodash@4`), the minor below 1.0 (`0.3.7` → `0.3`), or the
+exact version for a prerelease. The range is part of the definition's hash:
 
 ```text
 $ tcm deps time.short
-npm:ms@2.1.3#default
+npm:ms@2#default
 ```
 
-So a definition always runs with the version it was written for. Upgrading a package doesn't silently change
-saved code: after `npm install ms@3`, the definitions you `update` (or write anew) use 3; the rest keep 2.1.3, and
-the two versions live side by side. tcm installs each pinned version into its own cache (`installing
-npm__ms__2.1.3`), separately from your `node_modules`.
+So a definition says what API it was written against, not which patch release happened to be installed. Code
+written against `ms` 2 is shareable with any other code on `ms` 2, in this codebase or after a pull into another.
+
+**The codebase runs one version per range.** Its lock (in `codebase.sqlite`) records the exact version for each
+package and range, so everything on React 19 runs on the same React 19.x:
+
+- Adding code checked against a newer version in the range moves the lock up to it (newer only adds, by semver).
+- A range nothing has locked yet gets the newest version in it whose peer dependencies accept what's already
+  locked: React DOM at a version that matches the React it's used with.
+- A new major is a different range: code on `lodash` 3 and code on `lodash` 4 run side by side, each on its own
+  version.
+
+Each locked version is installed into `.tcm/cache` under an alias for its range (`npm__ms__2`), separately from
+your `node_modules`. tcm uses pnpm when it's installed, which keeps one copy of each exact version, peers included,
+and npm otherwise. A package without types of its own gets its DefinitelyTyped types (`@types/react`) installed
+beside it, at the newest version for the same range.
 
 Only the package you import is pinned, not the packages it depends on.
 

@@ -9,24 +9,24 @@ import type * as Core from "../src/index.ts";
 const { analyzeProject, IR_VERSION } = (await import(process.env.TCM_CORE ? path.resolve(process.env.TCM_CORE) : "../src/index.ts")) as typeof Core;
 
 /**
- * IR v5 is frozen: these hashes are what existing codebases contain. A failure here means the hash format
+ * IR v6 is frozen: these hashes are what existing codebases contain. A failure here means the hash format
  * changed. That needs a new IR_VERSION and a migration, not an update to these values.
  */
 const PINNED: Record<string, string> = {
-  Pair: "7meffkd2qxnp4ss2kzegble32jfqfmp55czwdlds3cq6dppeklyq",
-  Keys: "2s5lsm367dttxzoefxzadp6ataifqfpyr4pxwbngebkmasmg24ca",
-  Unwrap: "h2tuf3pel2q7u27ew3dou56h2vmmhdsnzx3w2ltraf4lc4qsqmdq",
-  Shape: "3trkkyumsx7ququqj3w264kupaumyv3lpinmgozxdzqwlkxus7ia",
-  first: "rfap7xpv6iqaqgq3y6wjo6z2f76xubm4cquf5h5ucfgcwukzvb3a",
-  tag: "gnm2w3exliddq5lckklkti5w2p6kwgf6zzeacr7ezy5xbw2etf2a",
-  misc: "m7dm5p5ry6wmm2agydsf5s7fddaeszscyvxw4ac5xt4ntu7kbh4q",
-  Counter: "f4cahoxrkrijqwke6rjtchthzeyenbxxfqwlw6pvy3qt7pqpdnta",
-  isEven: "pj2ouftvwv4jqo2rffcz2ywbp3vgslucjnwvj5ebbqqdzkqypccq",
-  isOdd: "5wfdt2xho6ucgsyzbhceyt5kclzakj2kqyngxnhghzfpy6amq2ia",
+  Pair: "jpe45mxznzv3zyttfx7ygdfu66pvz3dxeg6fplynz6yamu6nms2a",
+  Keys: "zftk22jy7dfirj6rht5ozld2jjbyxv4ytyqozocmdgkkobyfzila",
+  Unwrap: "6r5zih7kja7tiw7hbcoepefwoapxz35pw7pgqy2knsz54qefpjea",
+  Shape: "zkcb2bymdw73djrdaqobft7qlhbtbs2vrl4vx7pocimvozwfwjxa",
+  first: "dhvdymuoxehwh4tpgufbc5swoaoimhkg6oa3ltjuljdjwbydma2q",
+  tag: "ity4a3wxh7wrxsvks56xssfktj6hvsn6xzbp2meebuwtftturhfa",
+  misc: "7uy3bmhj3gyy3mq42mehlyjo2ylnc6fbnr3bouqnz6kponoelcbq",
+  Counter: "kzby6ahcvpvy77uwil4eykhypg55e4oubfuyxwngyb2erooiqlna",
+  isEven: "5d5pohvux2kpswbvw4nasgxxx2qzwnxlqv4rl3g2ajg2iuuh73zq",
+  isOdd: "ruefcw67un4u7ibher4p623ah6tuoyr6qyalu2nf3o7qutao2yua",
 };
 
-test("IR v5 hashes are frozen", () => {
-  assert.equal(IR_VERSION, 5);
+test("IR v6 hashes are frozen", () => {
+  assert.equal(IR_VERSION, 6);
   const corpus = fileURLToPath(new URL("./golden/corpus.ts", import.meta.url));
   // salted the way the CLI salts a fresh definition: by the path it is first added at
   const a = analyzeProject([corpus], {
