@@ -246,6 +246,7 @@ async function activate(context) {
       edit: (p) => vscode.commands.executeCommand("tcm.editDefinition", p.names[0]),
       usages: (p) => vscode.commands.executeCommand("tcm.findUsages", p.uri),
       run: (p) => vscode.commands.executeCommand("tcm.runDefinition", p.names[0]),
+      debug: (p) => vscode.commands.executeCommand("tcm.debugDefinition", p.names[0]),
       rename: (p) => vscode.commands.executeCommand("tcm.rename", p.names[0]),
       copy: async (p) => {
         await vscode.env.clipboard.writeText(`#${p.hash}`);
@@ -339,6 +340,15 @@ async function activate(context) {
   );
 
   const pathOf = (x) => (typeof x === "string" ? x : x?.path);
+  const isTestPath = (p) => p.split(".").includes("tests") || /^test([A-Z0-9_$]|$)/.test(p.slice(p.lastIndexOf(".") + 1));
+  const debug = async (kind, name, uri) => {
+    try {
+      const config = await client.sendRequest("tcm/debug", { kind, name, uri });
+      await vscode.debug.startDebugging(vscode.workspace.workspaceFolders?.[0], config);
+    } catch (e) {
+      vscode.window.showErrorMessage(`tcm: can't debug ${name ?? "that"}: ${e.message}`);
+    }
+  };
   const run = (cmd, cmdArgs) => client.sendRequest("workspace/executeCommand", { command: cmd, arguments: cmdArgs });
   const pickDefinition = async (prompt) => {
     const from = await vscode.window.showInputBox({ prompt, placeHolder: "lib.square" });
@@ -477,6 +487,21 @@ async function activate(context) {
       if (!item?.hash) return;
       await vscode.env.clipboard.writeText(`#${item.hash}`);
       vscode.window.setStatusBarMessage(`copied #${item.hash.slice(0, 8)}`, 2000);
+    }),
+    // debugging: tcm gives VS Code's JavaScript debugger a configuration in which breakpoints in definition files
+    // (.tcm/src) and scratch files hit
+    vscode.commands.registerCommand("tcm.debugDefinition", async (x, uri) => {
+      const name = pathOf(x) ?? (await pickDefinition("Debug which definition?"));
+      if (name) await debug(isTestPath(name) ? "test" : "run", name, uri);
+    }),
+    vscode.commands.registerCommand("tcm.debugTest", (name, uri) => debug("test", typeof name === "string" ? name : pathOf(name), uri)),
+    vscode.commands.registerCommand("tcm.debugTests", () => {
+      const doc = vscode.window.activeTextEditor?.document;
+      if (doc) return debug("test", undefined, doc.uri.toString());
+    }),
+    vscode.commands.registerCommand("tcm.debugApp", (x) => {
+      const app = appOf(x) ?? pathOf(x);
+      if (app) return debug("app", app);
     }),
     vscode.commands.registerCommand("tcm.runDefinition", async (x) => {
       const name = pathOf(x) ?? (await pickDefinition("Run which definition?"));

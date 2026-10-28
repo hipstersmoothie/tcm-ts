@@ -20,6 +20,8 @@ the `.ts` and `.tsx` files at the top of the codebase directory, the ones the wa
 - **Test results** on test definitions: `✓ passed (cached)` or `✗ failed: …`, run on open and save like watches.
 - **Hovers on codebase names,** in scratch files: every path a definition has, its hash, signature, where it
   runs and why, how many named definitions use it, and its documentation.
+- **Debugging** with breakpoints in scratch files and definitions: **Debug** lenses on tests and runnable
+  definitions, and on apps (server and browser at once) ([debugging](debugging.md)).
 - **Formatting on save** with oxfmt, and Format Document ([formatting](formatting.md)).
 - **oxlint's findings as diagnostics** (source `oxlint`, linked to the rule's page; see [linting](linting.md)).
 - **tcm's own errors as diagnostics** (source `tcm`), such as a top-level `let` or `declare` in a scratch file.
@@ -38,11 +40,13 @@ Each reports its output as a message, and every open file's status is refreshed.
 
 The code lives in the codebase, not in files, so the server also shows the codebase itself.
 
-- **Definitions are documents.** `tcm:/lib/square.ts` is `lib.square` rendered with current names (what `tcm
-  view` prints), with a header line giving its names, hash and where it runs (`.tsx` for definitions with JSX).
-  They're read-only: to change one, **Edit** writes it into a scratch file (`scratch.ts` if that's empty, else
-  `edit.ts`, `edit-2.ts`, …; `scratch.tsx` and so on for JSX), where TypeScript checks it and the lens offers
-  **Update codebase**.
+- **Definitions are documents.** `.tcm/src/lib/square.ts` is `lib.square` rendered with current names (what
+  `tcm view` prints), with a header line giving its names, hash and where it runs (`.tsx` for definitions with
+  JSX). They're real files, so [debuggers](debugging.md) stop in them, and TypeScript reads them as the project
+  does. They're read-only (the extension marks `.tcm/src` so): to change one, **Edit** writes it into a scratch
+  file (`scratch.ts` if that's empty, else `edit.ts`, `edit-2.ts`, …; `scratch.tsx` and so on for JSX), where
+  TypeScript checks it and the lens offers **Update codebase**. Clients can also ask for a definition as a
+  `tcm:/lib/square.ts` document, with the same text.
 - **Go to Definition (Cmd/Ctrl+click) goes to the source.** On a codebase name in a scratch file it opens that
   definition's document; in a definition's document every reference is a link, since tcm knows exactly where
   each one sits in the rendered text. (In VS Code, the extension's TypeScript plugin hides TypeScript's own

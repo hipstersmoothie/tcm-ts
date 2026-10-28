@@ -181,31 +181,35 @@ export const perimeter = (ps: Point[]): number => ps.reduce((n, p, i) => n + dis
   const geo = await c.request("tcm/tree", { namespace: "geo" });
   assert.deepEqual(geo.definitions.map((d: any) => [d.name, d.kind]), [["Point", "type"], ["dist", "term"], ["perimeter", "term"]]);
   assert.equal(geo.definitions[1].doc, "Distance between two points.");
-  assert.equal(geo.definitions[1].uri, "tcm:/geo/dist.ts");
+  // a definition's document is its file in .tcm/src (debuggers can stop in it)
+  const viewAt = (p: string) => pathToFileURL(path.join(dir2, ".tcm", "src", p)).href;
+  assert.equal(geo.definitions[1].uri, viewAt("geo/dist.ts"));
+  assert.ok(fs.existsSync(fileURLToPath(viewAt("geo/dist.ts"))));
 
   // a definition's view: rendered with current names, references link to their definitions
   const perim = await c.request("tcm/source", { uri: "tcm:/geo/perimeter.ts" });
   assert.match(perim.text, /^\/\/ geo\.perimeter #[a-z2-7]{8}\n/);
   assert.match(perim.text, /import \{ dist \} from "#codebase\/geo";/);
   const def = await c.request("textDocument/definition", { textDocument: { uri: "tcm:/geo/perimeter.ts" }, position: at(perim.text, "dist(p", 1) });
-  assert.equal(def.uri, "tcm:/geo/dist.ts");
+  assert.equal(def.uri, viewAt("geo/dist.ts"));
   const distText = (await c.request("tcm/source", { uri: "tcm:/geo/dist.ts" })).text;
   assert.equal(distText.split("\n")[def.range.start.line]!.slice(def.range.start.character, def.range.end.character), "dist");
 
   // references: from a view, and from a codebase name in a scratch file, across the codebase
   const fromView = await c.request("textDocument/references", { textDocument: { uri: "tcm:/geo/dist.ts" }, position: def.range.start, context: { includeDeclaration: false } });
-  assert.deepEqual(fromView.map((l: any) => l.uri).sort(), ["tcm:/app/far.ts", "tcm:/geo/perimeter.ts"]);
+  assert.deepEqual(fromView.map((l: any) => l.uri).sort(), [viewAt("app/far.ts"), viewAt("geo/perimeter.ts")]);
   const uri = pathToFileURL(path.join(dir2, "scratch.ts")).href;
   c.notify("textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text: scratchText } });
   // Cmd+click on a codebase name in a scratch file goes to its source; local names are TypeScript's
   const toSource = await c.request("textDocument/definition", { textDocument: { uri }, position: at(scratchText, "perimeter([", 2) });
-  assert.equal(toSource.uri, "tcm:/geo/perimeter.ts");
+  assert.equal(toSource.uri, viewAt("geo/perimeter.ts"));
   assert.equal(await c.request("textDocument/definition", { textDocument: { uri }, position: { line: 2, character: 12 } }), null, "not a name");
   const fromScratch = await c.request("textDocument/references", { textDocument: { uri }, position: at(scratchText, "perimeter([", 2), context: { includeDeclaration: true } });
-  assert.deepEqual(fromScratch.map((l: any) => l.uri), ["tcm:/geo/perimeter.ts"], "the declaration; nothing uses it yet");
+  assert.deepEqual(fromScratch.map((l: any) => l.uri), [viewAt("geo/perimeter.ts")], "the declaration; nothing uses it yet");
 
   // lenses on a view: who uses it, edit, rename
-  const lenses = await c.request("textDocument/codeLens", { textDocument: { uri: "tcm:/geo/dist.ts" } });
+  // the file works as the document, as tcm: does
+  const lenses = await c.request("textDocument/codeLens", { textDocument: { uri: viewAt("geo/dist.ts") } });
   assert.deepEqual(titles(lenses), ["2 dependents", "Edit", "Rename"]);
 
   // outline, workspace symbols, hover in a view
@@ -218,7 +222,7 @@ export const perimeter = (ps: Point[]): number => ps.reduce((n, p, i) => n + dis
 
   // search by type, for a picker
   const byType = await c.request("tcm/findByType", { query: "(a: Point, b: Point) => number" });
-  assert.deepEqual(byType.hits.map((h: any) => [h.path, h.uri]), [["geo.dist", "tcm:/geo/dist.ts"]]);
+  assert.deepEqual(byType.hits.map((h: any) => [h.path, h.uri]), [["geo.dist", viewAt("geo/dist.ts")]]);
 
   // edit: into a free scratch file, which the client then opens
   const edited = await c.request("workspace/executeCommand", { command: "tcm.edit", arguments: ["geo.dist"] });
@@ -397,7 +401,7 @@ test("packages in the editor: the lock, what uses each package, a page with its 
   assert.equal(page.version, "2.1.1");
   assert.match(page.readme, /^# ms/m, "the package's README");
   assert.ok(page.api.some((a: { name: string; kind: string }) => a.name === "default" && a.kind === "function"), "its API, from its types");
-  assert.match(page.users[0].uri, /^tcm:\/time\/short\.ts$/);
+  assert.equal(page.users[0].uri, pathToFileURL(path.join(dir5, ".tcm", "src", "time", "short.ts")).href);
 
   // oxlint's findings are diagnostics in scratch files, beside tcm's own
   const lintFile = path.join(dir5, "lint.ts");
@@ -422,5 +426,40 @@ test("packages in the editor: the lock, what uses each package, a page with its 
   const upgraded = await c.request("workspace/executeCommand", { command: "tcm.upgrade", arguments: ["ms"] });
   assert.equal(upgraded, true);
   assert.notEqual((await c.request("tcm/packages", {})).find((p: { name: string }) => p.name === "ms").ranges[0].version, "2.1.1");
+  c.child.kill();
+});
+
+test("debugging from the editor: launch configurations for a definition, a test and an app", async () => {
+  const dir6 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "tcm lsp debug ")));
+  const tcm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: dir6, env, encoding: "utf8" });
+  tcm("init");
+  fs.writeFileSync(
+    path.join(dir6, "scratch.ts"),
+    `// tcm: namespace lib\nimport { expect } from "vitest";\n\nexport const answer = (): number => 42;\n\nexport const testAnswer = () => {\n  expect(answer()).toBe(42);\n};\n\nexport function main() {\n  document.title = String(answer());\n}\n`,
+  );
+  assert.equal(tcm("add").status, 0);
+  const c = client();
+  await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir6).href, capabilities: {}, clientInfo: { name: "Visual Studio Code" } });
+  c.notify("initialized", {});
+  const launch = (config: { runtimeExecutable: string; runtimeArgs?: string[]; program: string; args?: string[]; cwd: string }) =>
+    spawnSync(config.runtimeExecutable, [...(config.runtimeArgs ?? []), config.program, ...(config.args ?? [])], { cwd: config.cwd, env, encoding: "utf8" });
+
+  // a definition: its runner under Node, with source maps on
+  const run = await c.request("tcm/debug", { kind: "run", name: "lib.answer" });
+  assert.equal(run.type, "node");
+  assert.ok(run.sourceMaps && run.skipFiles.includes("<node_internals>/**"));
+  assert.match(launch(run).stdout, /^42$/m);
+  // a test: through Vitest, whose processes the debugger follows
+  const t = await c.request("tcm/debug", { kind: "test", name: "lib.testAnswer" });
+  assert.equal(t.autoAttachChildProcesses, true);
+  assert.equal(launch(t).status, 0);
+  // an app: tcm dev under Node; its page in a Chrome debug session once it prints its URL
+  const app = await c.request("tcm/debug", { kind: "app", name: "lib.main" });
+  assert.deepEqual(app.args, ["dev", "lib.main", "--port", "0"]);
+  assert.equal(app.serverReadyAction.action, "debugWithChrome");
+  assert.ok(new RegExp(app.serverReadyAction.pattern).test("  url      http://127.0.0.1:5173/"));
+  // view files offer Debug for what can run
+  const lenses = await c.request("textDocument/codeLens", { textDocument: { uri: pathToFileURL(path.join(dir6, ".tcm", "src", "lib", "testAnswer.ts")).href } });
+  assert.ok(lenses.some((l: { command: { title: string; command: string } }) => l.command.title === "Debug" && l.command.command === "tcm.debugTest"));
   c.child.kill();
 });

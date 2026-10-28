@@ -2,7 +2,7 @@
   "name": "tcm-ts",
   "displayName": "tcm-ts",
   "description": "The tcm-ts codebase in VS Code: a namespace sidebar, definitions as documents, usages, type search, and Unison-style status, watch values and save commands for scratch files",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "publisher": "tcm-ts",
   "license": "MIT",
   "private": true,
@@ -203,6 +203,30 @@
         "title": "Move code to another range\u2026",
         "category": "tcm",
         "icon": "$(versions)"
+      },
+      {
+        "command": "tcm.debugDefinition",
+        "title": "Debug",
+        "category": "tcm",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "tcm.debugTest",
+        "title": "Debug test",
+        "category": "tcm",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "tcm.debugTests",
+        "title": "Debug this file's tests",
+        "category": "tcm",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "tcm.debugApp",
+        "title": "Debug app (server and browser)",
+        "category": "tcm",
+        "icon": "$(debug-alt)"
       }
     ],
     "menus": {
@@ -358,6 +382,21 @@
           "command": "tcm.upgradePackageTo",
           "when": "view == tcm.packages && viewItem =~ /^package/",
           "group": "2_change@2"
+        },
+        {
+          "command": "tcm.debugDefinition",
+          "when": "(view == tcm.codebase || view == tcm.apps) && viewItem =~ /^definition/",
+          "group": "2_navigate@3"
+        },
+        {
+          "command": "tcm.debugApp",
+          "when": "view == tcm.apps && viewItem == app.stopped",
+          "group": "inline@2"
+        },
+        {
+          "command": "tcm.debugApp",
+          "when": "view == tcm.apps && viewItem =~ /^app/",
+          "group": "1_open@2"
         }
       ],
       "commandPalette": [
@@ -417,7 +456,12 @@
         "key": "ctrl+alt+u",
         "mac": "cmd+alt+u"
       }
-    ]
+    ],
+    "configurationDefaults": {
+      "files.readonlyInclude": {
+        "**/.tcm/src/**": true
+      }
+    }
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",

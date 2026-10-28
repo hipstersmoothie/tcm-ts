@@ -49,9 +49,11 @@ export function testRunKey(cb: Codebase): string {
   return `${process.version}${vitest ? ` vitest@${vitest}` : ""}`;
 }
 
-/** Run test definitions with Vitest: in Node, or in a browser for tests that need one. */
-export function runTestsWithVitest(cb: Codebase, tests: { hash: string; componentHash: string }[], src: DefSource): TestRun[] {
-  if (!tests.length) return [];
+/**
+ * Prepare a Vitest run of these tests: the request a child tcm process runs (`tcm internal-vitest <file>`), and
+ * where its results will be. The debugger runs it too, under its own control.
+ */
+export function prepareTestRun(cb: Codebase, tests: { hash: string; componentHash: string }[], src: DefSource): { requestFile: string; results: string } {
   materialize(tests.map((t) => t.hash), src, cb.lay);
   const vitest = provideTool(cb, "vitest");
   // what's not in the store yet (an unsaved scratch file's definitions), so the child sees it too
@@ -85,6 +87,13 @@ export function runTestsWithVitest(cb: Codebase, tests: { hash: string; componen
   const requestFile = path.join(dir, `request-${process.pid}.json`);
   fs.writeFileSync(requestFile, JSON.stringify(request));
   fs.rmSync(request.results, { force: true });
+  return { requestFile, results: request.results };
+}
+
+/** Run test definitions with Vitest: in Node, or in a browser for tests that need one. */
+export function runTestsWithVitest(cb: Codebase, tests: { hash: string; componentHash: string }[], src: DefSource): TestRun[] {
+  if (!tests.length) return [];
+  const { requestFile, results } = prepareTestRun(cb, tests, src);
   const r = spawnSync(process.execPath, [process.argv[1]!, "internal-vitest", requestFile], {
     cwd: cb.lay.root,
     encoding: "utf8",
@@ -95,11 +104,11 @@ export function runTestsWithVitest(cb: Codebase, tests: { hash: string; componen
   if (!process.env.TCM_KEEP_TEST_RUN) fs.rmSync(requestFile, { force: true });
   let done: TestRun[] = [];
   try {
-    done = JSON.parse(fs.readFileSync(request.results, "utf8")) as TestRun[];
+    done = JSON.parse(fs.readFileSync(results, "utf8")) as TestRun[];
   } catch {
     // no results: the runner itself failed
   }
-  fs.rmSync(request.results, { force: true });
+  fs.rmSync(results, { force: true });
   const why = (r.stderr || r.stdout || "").trim().split("\n").slice(-8).join("\n");
   return tests.map(
     (t) =>

@@ -12,6 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import { cacheRefOf, schemaText, SERVER_API_MODULE, shortHash, type Analysis, type DefRecord, type ProjectDef } from "@tcm/core";
+import { nodeArgs, writeRunner } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 import { Placement } from "./placement.ts";
 import { evaluateCached, isTestPath, runCached } from "./tests.ts";
@@ -21,9 +22,10 @@ import { renderDoc } from "./docs.ts";
 import { definitionPage, docSummary, find } from "./pages.ts";
 import { packageList, packagePage, packageUsers } from "./package-pages.ts";
 import { upgradeTo, upgradeWithin } from "./upgrade.ts";
+import { prepareTestRun } from "./vitest.ts";
 import { lintScratch, type LintIssue } from "./lint.ts";
 import { formatText } from "./fmt.ts";
-import { viewText, type View } from "./views.ts";
+import { ensureView, hashesOfViewFile, srcDir, viewText, type View } from "./views.ts";
 import { testRunKey } from "./vitest.ts";
 
 /** What the language server needs from the CLI (passed in, so this module doesn't import the CLI's entry). */
@@ -259,6 +261,10 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       }
       const t = s.tests.get(r.path);
       if (t) out.push(lens(at, t.ok ? `✓ passed${t.cached ? " (cached)" : ""}` : `✗ failed: ${plain(t.message).split("\n")[0]}`));
+      // run it under the debugger, as it is in this buffer
+      if (isVsCode && r.def.kind === "term" && (isTestPath(r.path) || /^(<[^>]*>)?\(\)\s*=>/.test(r.def.signature))) {
+        out.push(lens(at, "Debug", isTestPath(r.path) ? "tcm.debugTest" : "tcm.debugDefinition", [r.path, doc.uri]));
+      }
       return out;
     });
   };
@@ -440,16 +446,16 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
   };
 
   // ---- the codebase as documents ------------------------------------------------------------------------------
-  // `tcm:/lib/square.ts` is lib.square rendered with current names (`tcm:/@<hash>.ts` for an unnamed one). Its
-  // references are known exactly (render reports where each lands), so they navigate like links.
+  // A definition's document is its file in .tcm/src (`lib/square.ts` is lib.square rendered with current names,
+  // `@<hash>.ts` an unnamed one): a real file, so debuggers can stop in it. `tcm:/lib/square.ts` names the same
+  // view for clients that ask for it. Its references are known exactly (render reports where each lands), so they
+  // navigate like links.
 
-  const viewUri = (hash: string) => {
-    const p = cb!.store.pathsOf(hash)[0];
-    // JSX is only parsed (and highlighted) in a .tsx document
-    const ext = cb!.lookup(p ?? `#${hash}`).some((h) => cb!.store.getDef(h)?.jsx) ? ".tsx" : ".ts";
-    return p ? `tcm:/${p.replaceAll(".", "/")}${ext}` : `tcm:/@${hash}${ext}`;
-  };
+  const viewUri = (hash: string) => pathToFileURL(ensureView(cb!, hash)).href;
+  /** A definition's view: its file in .tcm/src, or a tcm: document */
+  const isView = (uri: string) => uri.startsWith("tcm:") || (uri.startsWith("file:") && !!cb && fileURLToPath(uri).startsWith(srcDir(cb) + path.sep));
   const hashesOf = (uri: string): string[] => {
+    if (uri.startsWith("file:")) return hashesOfViewFile(cb!, fileURLToPath(uri));
     const p = decodeURIComponent(uri.replace(/^tcm:\/*/, "").replace(/[?#].*$/, "")).replace(/\.tsx?$/, "");
     try {
       return p.startsWith("@") ? cb!.lookup(`#${p.slice(1)}`) : cb!.lookup(p.replaceAll("/", "."));
@@ -489,7 +495,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
   const namedDependents = (hash: string) => new Set(cb!.store.dependents(hash).filter((d) => d !== hash && cb!.store.pathsOf(d).length)).size;
   /** The codebase definition at a position: a reference or declaration in a view, or a codebase name in a scratch file. */
   const hashAt = (uri: string, p: Position): string | undefined => {
-    if (uri.startsWith("tcm:")) {
+    if (isView(uri)) {
       const v = view(uri);
       if (!v) return undefined;
       const offset = lines(v.text).offset(p);
@@ -666,6 +672,53 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       });
   };
 
+  /**
+   * How to debug something: a Node launch configuration. Generated modules map to definition files and scratch
+   * files, so breakpoints there hit; Node's own code and packages are skipped when stepping.
+   */
+  const debugConfig = (kind: string, name: string | undefined, uri: string | undefined): Json => {
+    const c = cb!;
+    const base = {
+      type: "node",
+      request: "launch",
+      cwd: c.lay.root,
+      runtimeExecutable: process.execPath,
+      skipFiles: ["<node_internals>/**", "**/node_modules/**"],
+      resolveSourceMapLocations: ["**", "!**/node_modules/**"],
+      sourceMaps: true,
+    };
+    // a scratch file's own definitions (not saved yet) run as they are in its buffer
+    const doc = uri ? docs.get(uri) : undefined;
+    const scratch = doc && isScratch(doc.file) ? fresh(doc) : undefined;
+    const src = scratch?.analysis ? c.source([...scratch.analysis.defs, ...scratch.analysis.watches]) : c.source();
+    const resolve = (n: string) => scratch?.rows.find((r) => r.path === n)?.def ?? c.store.getDef(c.lookupOne(n, "value"));
+    if (kind === "run") {
+      const rec = resolve(name!);
+      if (!rec) throw new Error(`'${name}' not found`);
+      return { ...base, name: `tcm run ${name}`, program: writeRunner(rec.hash, src, c.lay), runtimeArgs: nodeArgs(c.lay), console: "integratedTerminal" };
+    }
+    if (kind === "test") {
+      const tests = name
+        ? [resolve(name)].filter((r): r is DefRecord => !!r)
+        : (scratch?.rows ?? []).filter((r) => r.def.kind !== "type" && isTestPath(r.path)).map((r) => r.def);
+      if (!tests.length) throw new Error(name ? `'${name}' not found` : "no tests here");
+      const { requestFile } = prepareTestRun(c, tests, src);
+      return { ...base, name: `tcm test ${name ?? path.basename(doc!.file)}`, program: process.argv[1], args: ["internal-vitest", requestFile], autoAttachChildProcesses: true };
+    }
+    if (kind === "app") {
+      // the server in Node; when tcm dev prints its URL, the page opens in a Chrome debug session
+      return {
+        ...base,
+        name: `tcm dev ${name}`,
+        program: process.argv[1],
+        args: ["dev", name!, "--port", "0"],
+        console: "integratedTerminal",
+        serverReadyAction: { pattern: "url\\s+(https?://\\S+)", uriFormat: "%s", action: "debugWithChrome", webRoot: c.lay.root, killOnServerStop: true },
+      };
+    }
+    throw new Error(`can't debug a ${kind}`);
+  };
+
   /** Open the app data store read-only, or undefined while there's no data yet. */
   const withStore = <T>(fn: (db: InstanceType<typeof DatabaseSync>) => T): T | undefined => {
     const file = path.join(cb!.lay.tcmDir, "data", "store.sqlite");
@@ -800,6 +853,10 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       if (isVsCode && name) {
         out.push({ range, command: { title: "Edit", command: "tcm.editDefinition", arguments: [name] } });
         out.push({ range, command: { title: "Rename", command: "tcm.rename", arguments: [name] } });
+        const rec = cb!.store.getDef(hash);
+        if (rec?.kind === "term" && (isTestPath(name) || /^(<[^>]*>)?\(\)\s*=>/.test(rec.signature))) {
+          out.push({ range, command: { title: "Debug", command: isTestPath(name) ? "tcm.debugTest" : "tcm.debugDefinition", arguments: [name] } });
+        }
       }
       return out;
     });
@@ -889,7 +946,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       }
       case "textDocument/codeLens": {
         const uri = uriOf(p);
-        if (cb && uri.startsWith("tcm:")) return send({ id: m.id, result: viewLenses(uri) });
+        if (cb && isView(uri)) return send({ id: m.id, result: viewLenses(uri) });
         const doc = docAt(p);
         send({ id: m.id, result: doc ? codeLenses(doc) : [] });
         return;
@@ -900,7 +957,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         // TypeScript plugin drops that answer). Everything else is TypeScript's.
         const uri = uriOf(p);
         let target: string | undefined;
-        if (cb && uri.startsWith("tcm:")) {
+        if (cb && isView(uri)) {
           const v = view(uri);
           const offset = v ? lines(v.text).offset(p!.position as Position) : -1;
           target = v?.refs.find((r) => offset >= r.start && offset <= r.end)?.hash;
@@ -920,7 +977,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       }
       case "textDocument/documentSymbol": {
         const uri = uriOf(p);
-        send({ id: m.id, result: cb && uri.startsWith("tcm:") ? viewSymbols(uri) : [] });
+        send({ id: m.id, result: cb && isView(uri) ? viewSymbols(uri) : [] });
         return;
       }
       case "workspace/symbol":
@@ -977,6 +1034,16 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       case "tcm/apps":
         send({ id: m.id, result: cb ? apps() : [] });
         return;
+      // a launch configuration for VS Code's JavaScript debugger: run a definition, a test, or an app (server in
+      // Node, page in Chrome), with breakpoints in definition files and scratch files
+      case "tcm/debug": {
+        try {
+          send({ id: m.id, result: debugConfig(String(p?.kind), p?.name === undefined ? undefined : String(p.name), p?.uri === undefined ? undefined : String(p.uri)) });
+        } catch (e) {
+          send({ id: m.id, error: { code: -32602, message: (e as Error).message } });
+        }
+        return;
+      }
       // the packages the codebase runs: the lock, what uses each, and a page per package and range
       case "tcm/packages":
         send({ id: m.id, result: cb ? packageList(cb) : [] });
@@ -1032,7 +1099,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       }
       case "textDocument/hover": {
         const uri = uriOf(p);
-        if (cb && uri.startsWith("tcm:")) {
+        if (cb && isView(uri)) {
           const hash = hashAt(uri, p!.position as Position);
           const value = hash && describe(hash);
           return send({ id: m.id, result: value ? { contents: { kind: "markdown", value } } : null });

@@ -1,5 +1,20 @@
 # Debugging
 
+## In VS Code
+
+Set breakpoints where you read code, in a scratch file or a definition's file, and press **Debug**:
+
+- **A definition:** the **Debug** lens on a function that takes no arguments, the Debug button on its page, or
+  **Debug** in the Codebase view's menu. It runs as `tcm run` does, under VS Code's JavaScript debugger.
+- **A test:** the **Debug** lens on a test, in a scratch file or its definition file, or **tcm: Debug this
+  file's tests**. It runs through Vitest, and the debugger follows Vitest's processes.
+- **An app:** **Debug** in the Apps view. `tcm dev` runs under the Node debugger, so breakpoints in server
+  functions hit, and when it prints its URL the page opens in Chrome in a second debug session, so breakpoints in
+  browser code hit too.
+
+Code from a scratch file runs as it is in the editor, saved to the codebase or not. Stepping skips Node's
+internals and packages.
+
 ## Stack traces point at definitions
 
 Code runs from generated modules (`.tcm/cache/<hash>.ts`), but you never see them in an error. Every generated

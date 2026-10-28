@@ -72,6 +72,11 @@ function writeView(cb: Codebase, hash: string, placement?: Placement): { file: s
   return { file, line: lineOf(v.text, v.starts.get(hash) ?? 0), inserts: v.inserts.get(hash) ?? [] };
 }
 
+/** A definition's view file, written if it isn't there yet. */
+export function ensureView(cb: Codebase, hash: string): string {
+  return writeView(cb, hash)?.file ?? viewFile(cb, hash);
+}
+
 /** Regenerate .tcm/src for the branch's names, removing files no name has any more. */
 export function writeViews(cb: Codebase) {
   const placement = new Placement(cb);
@@ -82,7 +87,9 @@ export function writeViews(cb: Codebase) {
   }
   const walk = (dir: string): string[] =>
     fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)])) : [];
-  for (const f of walk(srcDir(cb))) if (!keep.has(f) && !path.basename(f).startsWith("@")) fs.rmSync(f);
+  for (const f of walk(srcDir(cb))) if (!keep.has(f) && !path.basename(f).startsWith("@") && path.basename(f) !== "tsconfig.json") fs.rmSync(f);
+  // so TypeScript (in the editor) reads them as the project does: its options, #codebase, its packages
+  writeIfChanged(path.join(srcDir(cb), "tsconfig.json"), JSON.stringify({ extends: path.relative(srcDir(cb), path.join(cb.lay.root, "tsconfig.json")), include: ["**/*.ts", "**/*.tsx"] }, null, 2) + "\n");
 }
 
 /**

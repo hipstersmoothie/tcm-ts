@@ -447,7 +447,8 @@ function pathToFileURLString(p: string): string {
   return "file://" + p.split(path.sep).map(encodeURIComponent).join("/");
 }
 
-function writeRunner(hash: string, src: DefSource, lay: Layout): string {
+/** The module that runs a definition (calls it with the process's arguments, prints the result): `tcm run`'s. */
+export function writeRunner(hash: string, src: DefSource, lay: Layout): string {
   materialize([hash], src, lay);
   const rec = src.get(hash)!;
   const runner = path.join(lay.cacheDir, `run_${hash}.ts`);
