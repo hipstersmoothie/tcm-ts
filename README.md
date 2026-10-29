@@ -67,7 +67,8 @@ tcm add           # save new definitions from scratch.ts
 
 New here? Read the [introduction](docs/introduction.md), then follow the tutorials:
 [your first codebase](docs/tutorial-codebase.md) and [your first web app](docs/tutorial-app.md). Or try the
-[examples](examples/README.md): `examples/polls/setup.sh /tmp/polls`, or the React one,
-`examples/notes/setup.sh /tmp/notes`.
+[examples](examples/README.md): `examples/polls/setup.sh /tmp/polls`, the React one
+(`examples/notes/setup.sh /tmp/notes`), or packages with their releases and changelogs
+(`examples/geometry/setup.sh /tmp/geometry`).
 
 All documentation: [docs/](docs/README.md), also at [hipstersmoothie.github.io/tcm-ts](https://hipstersmoothie.github.io/tcm-ts/). Open items: [limitations](docs/limitations.md).

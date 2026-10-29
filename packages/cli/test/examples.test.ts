@@ -114,3 +114,30 @@ test("the notes example: React server components with no directives, in a browse
   const shipped = fs.readdirSync(assets).map((f) => fs.readFileSync(path.join(assets, f), "utf8")).join("\n");
   for (const secret of ["orderBy", "store.sqlite", "that note was deleted"]) assert.ok(!shipped.includes(secret), `${secret} must not reach the browser`);
 });
+
+test("the geometry example: two packages, their releases, a contribution, and what's next", () => {
+  const setup = fileURLToPath(new URL("../../../examples/geometry/setup.sh", import.meta.url));
+  const root = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tcm examples ")), "geometry");
+  const built = spawnSync(setup, [root], { env, encoding: "utf8" });
+  const out = (built.stdout + built.stderr).replace(/\x1b\[[0-9;]*m/g, "");
+  assert.equal(built.status, 0, out);
+  const tcm = (...args: string[]) => {
+    const r = spawnSync(process.execPath, [BIN, ...args], { cwd: root, env, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    return r.stdout.replace(/\x1b\[[0-9;]*m/g, "");
+  };
+  // versions the changes called for: additions (1.1), a new case of a union (2.0)
+  assert.match(tcm("releases"), /^atlas {2}atlas\n {2}1\.1\.0 .* Round trips\.\n {2}1\.0\.0 [\s\S]*^geo {2}geo\n {2}2\.0\.0 [\s\S]* {2}1\.1\.0 [\s\S]* {2}1\.0\.0 /m);
+  const log = tcm("changelog", "geo");
+  assert.match(log, /## 2\.0\.0 .*\n\nHexagons![\s\S]*### Breaking changes\n\n- `geo\.Shape` has a new case: `"hexagon"`\n\n### Contributions\n\n- #1 Hexagons \(ada\)/);
+  assert.match(log, /## 1\.1\.0[\s\S]*### Added\n\n- `geo\.perimeter`[\s\S]*### Extended\n\n- `geo\.distance` takes a new optional parameter: `digits`/);
+  // what's next, and its draft
+  assert.match(tcm("release", "check", "geo"), /geo's next release: 2\.1\.0 \(after 2\.0\.0\): additions/);
+  assert.match(fs.readFileSync(path.join(root, "release-geo.md"), "utf8"), /^## 2\.1\.0 [\s\S]*- `geo\.midpoint`/);
+  // atlas 1.1 uses geo 1.1's definitions: it depends on the oldest geo with them
+  tcm("pack", "atlas@1.1.0");
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, ".tcm", "pack", "atlas", "package.json"), "utf8")).dependencies, { geo: "^1.1.0" });
+  assert.match(tcm("contribution", "--all"), /#1 +merged +Hexagons/);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(root, ".vscode", "settings.json"), "utf8"))["tcm.path"], "the editor runs the same tcm");
+  assert.match(tcm("check"), /⧩ 10/);
+});

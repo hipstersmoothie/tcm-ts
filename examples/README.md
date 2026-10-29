@@ -1,6 +1,6 @@
 # Examples
 
-Two complete apps, each built into a fresh codebase by its `setup.sh`.
+Two complete apps and a family of packages, each built into a fresh codebase by its `setup.sh`.
 
 ## polls: a live polling app
 
@@ -52,3 +52,36 @@ included, and the browser hydrates it. Saving a note refreshes the sidebar by it
 call, server components fetch their trees again.
 
 The test suite builds this example too, then adds, opens, edits and searches notes in Chrome.
+
+## geometry: packages, releases and changelogs
+
+```sh
+examples/geometry/setup.sh /tmp/geometry   # builds the codebase, and its history, there
+code /tmp/geometry                         # the Releases view, release-geo.md, the playground
+```
+
+One codebase holding two npm packages: `geo`, a geometry library, and `atlas`, a command built on it. Each is
+a namespace with a `manifest` ([publishing](../docs/publishing.md)). `setup.sh` gives them a history, step by
+step, printing each:
+
+| step | what it shows |
+|---|---|
+| [`geo.ts`](geometry/geo.ts), [`atlas.ts`](geometry/atlas.ts) | two packages in one codebase, one using the other; documented, with tests, and a command (`atlas 0,0 3,4`) |
+| `tcm release geo@1.0.0 --notes …` | first releases, declared stable, with a summary each ([`notes/`](geometry/notes)); tcm writes the rest of the notes |
+| [`steps/1.1-geo.ts`](geometry/steps/1.1-geo.ts) | a new definition and an optional parameter: additions, so `tcm release geo` makes it 1.1.0 by itself |
+| [`steps/hexagons.ts`](geometry/steps/hexagons.ts) | a [contribution](../docs/contributions.md), proposed on a branch, commented on and merged through a hub (another codebase, `.hub`); a new case of `Shape` is breaking, so it's geo 2.0.0, and its notes name the contribution |
+| [`steps/next.ts`](geometry/steps/next.ts) | an unreleased change, and a draft of its notes (`release-geo.md`) for you to write and release |
+| [`playground.ts`](geometry/playground.ts) | the scratch file: watch expressions over both packages |
+
+Then:
+
+- `tcm releases`, `tcm changelog geo`: the releases, and a changelog nobody wrote by hand
+  ([releases](../docs/releases.md)).
+- `tcm release check geo`: what geo's next release would be (2.1.0, additions), and the semver findings why.
+- `tcm pack atlas@1.1.0`: an npm package of atlas 1.1, which depends on `geo ^1.1.0` (the first geo with what it
+  uses) rather than carrying a copy.
+- In VS Code, the **Releases** view shows both packages, the next release of each with its findings, and their
+  releases; click a package for its page and changelog. `release-geo.md` has a **Release** lens at the top.
+  `setup.sh` points the extension at the tcm that built the codebase (`.vscode/settings.json`).
+
+The test suite builds this example too, and checks its releases, changelog and packages.
