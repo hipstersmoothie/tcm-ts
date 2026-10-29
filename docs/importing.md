@@ -29,12 +29,14 @@ and the rest of each file stays as written (comments, import style, barrels):
 
 - **An edited definition** (`tcm edit`, then `tcm update`; a merge; a pull) is replaced where it is in its file. What
   it refers to is spelled the way the file already spells it (`ts.Node` through a namespace import, `parse` through
-  a named one), and imports it needs are added.
+  a named one); imports it needs are added, and ones it stopped using are removed.
 - **A new definition** goes at the end of its namespace's file; **a removed one** is deleted.
 - **A rename** (`tcm mv`) is made at every reference, as an editor's rename would: named imports, namespace
   imports (`math.twice`), shorthand properties (`{ double: twice }`), re-exports. A function's or class's name is
   part of its hash (code sees it as `.name`), so the codebase then takes the renamed code.
 - **Dependents re-hashed** by an update, and packages upgraded, don't change any text: their files stay as they are.
+- **The files' style is kept:** a mirrored codebase stores code as written (not reformatted), and `tcm edit`
+  gives it back that way.
 
 After writing, the files are analyzed again and must hash to what the codebase holds; if they don't, they're put
 back as they were and tcm says why. A file changed by hand since tcm last saw it isn't overwritten: write-back

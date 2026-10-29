@@ -74,6 +74,15 @@ test("a mirror: edits, additions, removals and renames made in tcm are written b
   tcm("add");
   assert.match(read("src/math.ts"), /export const halve/, "and write-back resumes");
   assert.match(tcm("mirror", "--check"), /the files hash to what the codebase holds/);
+
+  // an import a change stops using goes with it
+  assert.match(read("src/math.ts"), /^import fs from "node:fs";$/m);
+  tcm("edit", "--force", "calc.math.exists");
+  fs.writeFileSync(scratch, fs.readFileSync(scratch, "utf8").replace("fs.existsSync(p)", "p.length > 0"));
+  tcm("update");
+  assert.doesNotMatch(read("src/math.ts"), /node:fs/);
+  assert.match(read("src/math.ts"), /^\/\/ Arithmetic, as the rest of the project needs it\.\n\n/, "and only it");
+  assert.match(tcm("mirror", "--check"), /the files hash to what the codebase holds/);
 });
 
 test("a mirror's releases are kept in git with its files, and made again in a fresh codebase", () => {
@@ -136,4 +145,32 @@ test("a mirror's releases are kept in git with its files, and made again in a fr
   // each release is at its own history entry: the earlier one packs as it was, without cube
   assert.match(run(second, "pack", "shapes@0.1.0", "--out", path.join(root, "packed-0.1.0")), /packed shapes@0\.1\.0/);
   assert.equal(fs.readdirSync(path.join(root, "packed-0.1.0", "modules")).length < fs.readdirSync(path.join(root, "packed", "modules")).length, true);
+});
+
+test("a cycle edited through a mirror changes only what was edited: names re-hashed together read as they did", () => {
+  const proj = path.join(root, "cycle");
+  const cbDir = path.join(root, "cycle-cb");
+  fs.mkdirSync(path.join(proj, "src"), { recursive: true });
+  fs.writeFileSync(path.join(proj, "package.json"), JSON.stringify({ type: "module" }));
+  // a class and a function in another file that take each other: one cycle, hashed together
+  const counter = `import { log } from "./log.ts";\n\nexport class Counter {\n  n = 0;\n  bump(): number {\n    this.n++;\n    log(this);\n    return this.n;\n  }\n}\n`;
+  fs.writeFileSync(path.join(proj, "src", "counter.ts"), counter);
+  fs.writeFileSync(path.join(proj, "src", "log.ts"), `import type { Counter } from "./counter.ts";\n\nexport function log(c: Counter): void {\n  console.log("at", c.n);\n}\n`);
+  fs.mkdirSync(cbDir);
+  const run = (...args: string[]) => {
+    const r = spawnSync(process.execPath, [BIN, ...args], { cwd: cbDir, encoding: "utf8", env });
+    const out = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "");
+    if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} exited ${r.status}:\n${out}`);
+    return out;
+  };
+  run("init");
+  fs.rmSync(path.join(cbDir, "scratch.ts"));
+  run("import", proj, "--into", "app", "--mirror");
+  assert.match(run("edit", "app.log.log"), /with app\.counter\.Counter/);
+  const scratch = path.join(cbDir, "scratch.ts");
+  fs.writeFileSync(scratch, fs.readFileSync(scratch, "utf8").replace(`console.log("at", c.n);`, `console.log("count", c.n);`));
+  assert.match(run("update"), /mirror: wrote src\/log\.ts/);
+  assert.equal(fs.readFileSync(path.join(proj, "src", "counter.ts"), "utf8"), counter, "Counter's file reads as it did");
+  assert.equal(fs.readFileSync(path.join(proj, "src", "log.ts"), "utf8"), `import type { Counter } from "./counter.ts";\n\nexport function log(c: Counter): void {\n  console.log("count", c.n);\n}\n`);
+  assert.match(run("mirror", "--check"), /the files hash to what the codebase holds/);
 });

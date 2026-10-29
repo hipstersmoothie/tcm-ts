@@ -6,7 +6,8 @@ it. So tcm formats freely, without touching identity, history or what depends on
 
 - **What's saved is formatted.** `tcm add` and `tcm update` store each definition as oxfmt formats it, so
   `tcm view`, `tcm edit`, pages and generated modules show one style, whoever wrote the code and however.
-  The scratch file itself is left as you wrote it.
+  The scratch file itself is left as you wrote it. A [mirrored](importing.md#mirrors) codebase is the
+  exception: its code reads as its files do, so it's stored as written.
 - **In VS Code**, a scratch file is formatted as it's saved, and by Format Document. (Other editors: the
   language server answers `textDocument/formatting` and `willSaveWaitUntil`.)
 - **`tcm fmt [namespace]`** reformats what's already stored, after a style change or an oxfmt upgrade. No hash

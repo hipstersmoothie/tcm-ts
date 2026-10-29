@@ -188,6 +188,8 @@ function save(cb: Codebase, file: string, mode: "add" | "update", into?: string)
  * definition hashes the same.
  */
 function formattedRows(cb: Codebase, file: string, into: string | undefined, a: Analysis, rows: Row[]): Row[] {
+  // a mirrored codebase's code reads as its files do: their style is the project's, not the formatter's
+  if (loadMirror(cb)) return rows;
   const text = fs.readFileSync(file, "utf8");
   const formatted = formatText(cb, text, file);
   if (formatted === undefined || formatted === text) return rows;

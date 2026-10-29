@@ -160,6 +160,8 @@ const extKey = (e: ExtRef) => `${e.module}|${e.subpath}|${e.export}`;
  */
 class Spelling {
   private exact = new Map<string, string>();
+  /** by name too: a definition re-hashed under the same name (updated with others it's in a cycle with) reads the same */
+  private byName = new Map<string, string>();
   /** a module (codebase file or package entry) → the namespace prefix it's reached through, `ts.` */
   private prefix = new Map<string, string>();
   readonly imports: string[] = [];
@@ -176,6 +178,7 @@ class Spelling {
     existing: DefRecord[],
     fileOf: (hash: string) => { file: string; ns: string; leaf: string } | undefined,
     taken: Iterable<string>,
+    nameWas: (hash: string) => string | undefined,
   ) {
     this.cb = cb;
     this.file = file;
@@ -189,6 +192,8 @@ class Spelling {
         const text = rec.sourceText.slice(s.start, s.end);
         if (s.shorthand) continue;
         if (!this.exact.has(key)) this.exact.set(key, text);
+        const was = s.hash && nameWas(s.hash);
+        if (was && !this.byName.has(was)) this.byName.set(was, text);
         const dot = text.lastIndexOf(".");
         const mod = this.moduleOf(s);
         if (dot > 0 && mod && !this.prefix.has(mod)) this.prefix.set(mod, text.slice(0, dot + 1));
@@ -222,6 +227,8 @@ class Spelling {
     if (s.hash) {
       const t = this.fileOf(s.hash);
       if (!t) throw new Error(`refers to #${s.hash.slice(0, 8)}, which isn't in the mirror`);
+      const named = this.byName.get(joinName(t.ns, t.leaf));
+      if (named) return this.remember(key, named);
       if (t.ns === this.ns) return this.remember(key, t.leaf);
       const pre = this.prefix.get(t.file);
       if (pre) return this.remember(key, pre + t.leaf);
@@ -335,6 +342,9 @@ export function syncMirror(cb: Codebase): boolean {
   const home = new Map<string, { file: string; ns: string; leaf: string }>();
   for (const [ns, names] of now) for (const [leaf, h] of Object.entries(names)) home.set(h, { file: abs(byNs.get(ns)!), ns, leaf });
   const before = new Map(Object.entries(m.files).map(([rel, f]) => [rel, fs.readFileSync(abs(rel), "utf8")]));
+  // what each definition the files hold was called when tcm last wrote them
+  const named = new Map<string, string>();
+  for (const f of Object.values(m.files)) for (const [leaf, h] of Object.entries(f.names)) named.set(h, joinName(f.ns, leaf));
   const renames: { rel: string; from: string; to: string }[] = [];
   const problems: string[] = [];
 
@@ -345,7 +355,7 @@ export function syncMirror(cb: Codebase): boolean {
     const curByHash = new Map(Object.entries(cur).map(([l, h]) => [h, l]));
     const edits: Edit[] = [];
     const existing = Object.values(f.names).map((h) => cb.store.getDef(h)).filter((d): d is DefRecord => !!d);
-    const spelling = new Spelling(cb, abs(rel), f.ns, existing, (h) => home.get(h), [...decls.keys(), ...Object.keys(cur), ...importedNames(abs(rel), text)]);
+    const spelling = new Spelling(cb, abs(rel), f.ns, existing, (h) => home.get(h), [...decls.keys(), ...Object.keys(cur), ...importedNames(abs(rel), text)], (h) => named.get(h));
     const renamedTo = new Set<string>();
     for (const [leaf, h] of Object.entries(f.names)) {
       const d = decls.get(leaf);
@@ -401,7 +411,7 @@ export function syncMirror(cb: Codebase): boolean {
       const at = importsAt(abs(rel), text);
       edits.push({ start: at, end: at, text: (at ? "\n" : "") + spelling.imports.join("\n") + (at ? "" : "\n") });
     }
-    if (edits.length) fs.writeFileSync(abs(rel), applyEdits(text, edits));
+    if (edits.length) fs.writeFileSync(abs(rel), pruneImports(abs(rel), text, applyEdits(text, edits)));
   }
   // definitions in a namespace no file is for yet
   for (const n of cb.store.names()) {
@@ -614,4 +624,47 @@ export function replayReleases(cb: Codebase, dir: string, importAt: (root: strin
     }
   }
   return made;
+}
+
+/**
+ * Drop the imports an edit stopped using: names `after` binds and doesn't mention that `before` did. Imports that
+ * were already unused are left as they are (the file's author's business); an import with nothing left goes.
+ */
+export function pruneImports(file: string, before: string, after: string): string {
+  const was = unusedImports(file, before);
+  const gone = [...unusedImports(file, after)].filter((n) => !was.has(n));
+  if (!gone.length) return after;
+  const sf = ts.parse(file, after);
+  const edits: Edit[] = [];
+  for (const st of sf.statements) {
+    const clause = ts.isImportDeclaration(st) ? st.importClause : undefined;
+    if (!clause) continue;
+    const bindings = clause.namedBindings;
+    const names = [...(clause.name ? [clause.name.text] : []), ...(bindings && ts.isNamespaceImport(bindings) ? [bindings.name.text] : bindings ? bindings.elements.map((e) => e.name.text) : [])];
+    if (!names.some((n) => gone.includes(n))) continue;
+    if (names.every((n) => gone.includes(n))) {
+      edits.push({ start: st.getStart(sf), end: after[st.end] === "\n" ? st.end + 1 : st.end, text: "" });
+      continue;
+    }
+    // some of its names stay: take out the others
+    if (bindings && !ts.isNamespaceImport(bindings)) {
+      const keep = bindings.elements.filter((e) => !gone.includes(e.name.text));
+      if (keep.length < bindings.elements.length) edits.push({ start: bindings.getStart(sf), end: bindings.end, text: `{ ${keep.map((e) => e.getText(sf)).join(", ")} }` });
+    }
+  }
+  return applyEdits(after, edits);
+}
+
+/**
+ * The names a file's imports bind that nothing else in it mentions.
+ */
+export function unusedImports(file: string, text: string): Set<string> {
+  const sf = ts.parse(file, text);
+  const mentioned = new Set<string>();
+  const visit = (n: ts.Node) => {
+    if (ts.isIdentifier(n)) mentioned.add(n.text);
+    n.forEachChild(visit);
+  };
+  for (const st of sf.statements) if (!ts.isImportDeclaration(st)) visit(st);
+  return new Set(importedNames(file, text).filter((n) => !mentioned.has(n)));
 }
