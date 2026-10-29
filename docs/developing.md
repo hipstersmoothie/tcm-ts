@@ -35,6 +35,7 @@ written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything i
 
 | Command | |
 |---|---|
+| `pnpm verify` | everything a commit needs: typecheck and the suites, then selfhost and the packed package side by side; prints each stage's result and time and names failing tests |
 | `pnpm test` | all suites: hashing invariants, frozen golden hashes, and end-to-end CLI scenarios (sync, merge, web apps in real Chrome, production, jobs, data, import) |
 | `pnpm typecheck` | typecheck the repo (TypeScript 7's `tsc`) |
 | `pnpm selfhost` | the self-hosting check below |
@@ -43,12 +44,14 @@ written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything i
 | `pnpm docs:site` | build the docs site (`docs/*.md` and the examples page) into `dist/site`; it fails on any broken link or anchor. A GitHub Actions workflow (`.github/workflows/docs.yml`) builds and deploys it to GitHub Pages on pushes to `main` |
 | `pnpm compare-compilers` | hash the repo with TypeScript 7 and with [tsrs](compiler-options.md#the-compiler), and run the golden test with tsrs; hashes must match |
 
-All three of `pnpm test`, `pnpm selfhost` and `pnpm test:package` should pass before a commit.
+`pnpm verify` should pass before a commit.
 
-Core and store tests are [test definitions](testing.md), in `packages/core/test/*.ts` and
-`packages/store/test/*.ts` (exports named `test…`, beside the helpers they use), so they live in tcm's own
-codebase like the code they test. A `<name>.test.ts` runner next to each registers them with `node:test` for
-`pnpm test`. The CLI's tests are end-to-end `node:test` files: they run the `tcm` binary by path.
+Tests that call code directly are [test definitions](testing.md): the core and store tests, and the CLI's
+server-component and highlighting tests, in `packages/*/test/<name>.ts` (exports named `test…`, beside the helpers
+they use). They live in tcm's own codebase like the code they test, cached by hash: a change re-runs only the
+tests that reach it. A `<name>.test.ts` runner next to each registers them with `node:test` for `pnpm test`. The
+rest of the CLI's tests are end-to-end `node:test` files that run the `tcm` binary by path: they reach all of tcm,
+so they'd re-run on any change anyway.
 
 ## Working on tcm in tcm
 
