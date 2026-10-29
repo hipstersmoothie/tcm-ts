@@ -78,6 +78,13 @@ export const commands = {
     option(name("exclude"), description("paths to skip, comma-separated"), schema(list)),
     toggle(name("verbose"), description("report every definition")),
     toggle(name("tests"), description("also import test/ and tests/ directories of test definitions (*.test.ts files stay skipped)")),
+    toggle(name("mirror"), description("keep the directory in step with the codebase: changes made in tcm are written back to its files")),
+  ),
+  mirror: command(
+    name("mirror"),
+    description("the directory this codebase writes its changes back to (see `tcm import --mirror`)"),
+    toggle(name("check"), description("re-analyze the files: they must hash to what the codebase holds")),
+    toggle(name("unlink"), description("stop writing back; the files stay as they are")),
   ),
   edit: command(name("edit"), description("write definitions to a scratch file for editing"), argument(name("names"), description("names or #hashes"), multiple(), schema(words)), option(name("file"), description("the scratch file (default scratch.ts, or scratch.tsx for JSX)"), schema(text(null))), force("overwrite a scratch file that has unsaved definitions")),
   view: command(name("view"), description("show definitions with current names"), argument(name("names"), description("names or #hashes"), multiple(), schema(words))),
@@ -236,7 +243,7 @@ export const commands = {
 
 /** Sections of `tcm help`, in order; every command is in one. */
 export const SECTIONS: [string, string[]][] = [
-  ["Codebase", ["init", "watch", "check", "add", "update", "import", "edit", "view", "ls", "find", "deps", "dependents", "docs", "run", "mv", "alias", "rm", "todo", "resolve"]],
+  ["Codebase", ["init", "watch", "check", "add", "update", "import", "edit", "view", "ls", "find", "deps", "dependents", "docs", "run", "mv", "alias", "rm", "todo", "resolve", "mirror"]],
   ["Tools", ["test", "lint", "fmt", "verify", "lsp", "complete"]],
   ["Packages and releases", ["packages", "upgrade", "release", "releases", "changelog", "pack"]],
   ["History and branches", ["diff", "history", "reset", "branch", "switch", "merge"]],

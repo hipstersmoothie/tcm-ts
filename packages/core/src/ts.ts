@@ -15,6 +15,7 @@ export {
   API,
   Checker,
   ModuleResolver,
+  LanguageService,
   CheckFlags,
   DiagnosticCategory,
   ElementFlags,

@@ -1,7 +1,7 @@
 # Importing existing projects
 
 ```sh
-tcm import <dir> --into ns [--exclude a,b] [--update] [--tests] [--verbose]
+tcm import <dir> --into ns [--exclude a,b] [--update] [--tests] [--mirror] [--verbose]
 ```
 
 Each file becomes a namespace: `core/src/analyze.ts` → `ns.core.analyze` (`src` path segments and `index` file
@@ -20,6 +20,27 @@ names are dropped). Imports between files, barrels and workspace packages resolv
 - **`--update`** re-imports a project whose files changed, as `tcm update` would.
 
 Compiler options for imports are described in [compiler options](compiler-options.md).
+
+## Mirrors
+
+`--mirror` keeps the imported directory in step with the codebase: the codebase is the truth, and the files are
+how it reads in git and in editors that don't know tcm. Changes made in tcm are written back to them as edits,
+and the rest of each file stays as written (comments, import style, barrels):
+
+- **An edited definition** (`tcm edit`, then `tcm update`; a merge; a pull) is replaced where it is in its file. What
+  it refers to is spelled the way the file already spells it (`ts.Node` through a namespace import, `parse` through
+  a named one), and imports it needs are added.
+- **A new definition** goes at the end of its namespace's file; **a removed one** is deleted.
+- **A rename** (`tcm mv`) is made at every reference, as an editor's rename would: named imports, namespace
+  imports (`math.twice`), shorthand properties (`{ double: twice }`), re-exports. A function's or class's name is
+  part of its hash (code sees it as `.name`), so the codebase then takes the renamed code.
+- **Dependents re-hashed** by an update, and packages upgraded, don't change any text: their files stay as they are.
+
+After writing, the files are analyzed again and must hash to what the codebase holds; if they don't, they're put
+back as they were and tcm says why. A file changed by hand since tcm last saw it isn't overwritten: write-back
+waits until the directory is imported again (`tcm import <dir> --into ns --update`), which takes the hand edits
+and links the mirror again. `tcm mirror --check` compares the files and the codebase; `tcm mirror --unlink` stops
+writing back.
 
 ## Verified projects
 

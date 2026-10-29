@@ -67,6 +67,7 @@ import { Store } from "@tcm/store";
 import { ensureExternals, externalsOf, layout, lockAtLeast, materialize, moduleFile, parseModule, render, usePackageLock, writeIfChanged, writeShim, type DefSource, type Layout } from "@tcm/loader";
 import { providePackages } from "./provided.ts";
 import { viewOf, writeViews } from "./views.ts";
+import { syncMirror, type Mirror } from "./mirror.ts";
 
 /** One package lock entry, as codebases exchange them. */
 export interface LockEntry {
@@ -186,13 +187,23 @@ export class Codebase {
     };
   }
 
-  /** Keep `.tcm/codebase` (the `#codebase` import shim) in sync with the branch's names. */
+  /** whether name changes are written back to the mirror (not while the mirror itself is being imported) */
+  syncsMirror = true;
+  /**
+   * Import the mirror's files (`tcm import <dir> --update`): how a rename of a function or class is finished. Its
+   * name is part of its hash (code can see it as `.name`), so in a file the rename is a change to the code, and the
+   * codebase takes the renamed code. Set by the CLI, which owns importing.
+   */
+  adoptMirror?: (m: Mirror) => boolean;
+
+  /** Keep `.tcm/codebase` (the `#codebase` import shim) and the mirror, if there is one, in sync with the branch's names. */
   refreshShim(force = false) {
     const stamp = `${this.store.branch().name}:${this.store.logHead()}`;
     if (!force && this.store.getSetting("shim_stamp") === stamp && fs.existsSync(path.join(this.lay.shimDir, "index.ts"))) return;
     writeShim(this.store.names(), this.source(), this.lay);
     writeViews(this);
     this.store.setSetting("shim_stamp", stamp);
+    if (this.syncsMirror) syncMirror(this);
   }
 
   private optionsCache = new Map<string, CompilerOptions>();

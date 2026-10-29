@@ -262,6 +262,8 @@ export type PackageResolver = ((name: string, containingFile: string) => { speci
 export interface Checked {
   program: ts.Program;
   checker: ts.TypeChecker;
+  /** the editor's questions (references, imports), about the same program */
+  service: ts.LanguageService;
   options: CompilerOptions;
 }
 
@@ -354,7 +356,7 @@ export function incrementalCompiler(keep = 8): Compile {
       release(s);
       live.delete(k);
     }
-    return { program: project.program, checker: project.checker, options: compilerOptions };
+    return { program: project.program, checker: project.checker, service: project.languageService, options: compilerOptions };
   };
 }
 

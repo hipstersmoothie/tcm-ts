@@ -8,6 +8,7 @@
   "scripts": {
     "test": "node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json",
+    "tcm": "scripts/codebase.sh",
     "selfhost": "scripts/selfhost.sh",
     "compare-compilers": "scripts/compare-compilers.sh",
     "build": "node scripts/build.ts",

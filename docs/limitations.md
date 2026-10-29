@@ -13,6 +13,10 @@ What isn't done yet, or is deliberately out of scope:
 - **`import.meta`** is location-dependent: it's evaluated inside `.tcm/cache`, so tcm warns about it.
 - **`tcm import` skips test files**, except test definitions with `--tests` ([importing](importing.md)), and refuses `declare module`/`declare global`,
   `import x = require()`, decorators and top-level statements.
+- **Mirrors write back to the mirrored files only.** A rename doesn't reach files outside the mirror that use the
+  name (scripts, an editor extension); a definition in a namespace no file is for yet needs its file created first;
+  one declared alongside others in one statement (`const a = 1, b = 2`) is edited by hand; and imports a change no
+  longer needs are left in place.
 - **Adding the same code at two paths creates two definitions** (lineage salts, see
   [hashing](hashing.md#identity)). To share one definition under two names, use `tcm alias`.
 - **TypeScript 7.1 is a beta.** tcm checks code with `typescript@7.1.0-beta` ([the compiler](compiler-options.md#the-compiler)).

@@ -50,6 +50,22 @@ Core and store tests are [test definitions](testing.md), in `packages/core/test/
 codebase like the code they test. A `<name>.test.ts` runner next to each registers them with `node:test` for
 `pnpm test`. The CLI's tests are end-to-end `node:test` files: they run the `tcm` binary by path.
 
+## Working on tcm in tcm
+
+`pnpm tcm <command>` runs tcm on tcm's own codebase, in `codebase/` (not in git). The first run imports
+`packages/` into it as a [mirror](importing.md#mirrors), with the tests, so changes made through tcm are written
+back to `packages/`, and those edits are what's committed:
+
+```sh
+pnpm tcm edit tcmts.core.semver.compatRange    # into codebase/scratch.ts
+pnpm tcm update                                # the codebase, its 200-odd dependents, and packages/core/src/semver.ts
+pnpm tcm mv tcmts.core.semver.meetsComparator tcmts.core.semver.matchesComparator
+pnpm tcm test tcmts                            # the tests the change reaches, the rest cached
+```
+
+Editing `packages/` directly still works: `pnpm tcm import ../packages --into tcmts --tests --update` takes the
+edits (and links the mirror again). Delete `codebase/` to start over from `packages/`.
+
 ## Self-hosting
 
 `pnpm selfhost` imports `packages/` into `selfhost/.tcm` and then:

@@ -62,7 +62,8 @@ tcm add           # save new definitions from scratch.ts
   atomic updates and transactions. [Data](docs/data.md)
 - **Background jobs pinned to the code that enqueued them,** plus cron schedules. [Jobs](docs/jobs.md)
 - **Deploy and roll back by moving a name;** old tabs keep working. [Production](docs/production.md)
-- **Self-hosting:** tcm-ts imports, verifies and runs its own source at a fixed point.
+- **Self-hosting:** tcm-ts imports, verifies and runs its own source at a fixed point, and is worked on through
+  itself: its codebase [mirrors](docs/importing.md#mirrors) `packages/` (`pnpm tcm`).
   [Developing](docs/developing.md)
 
 New here? Read the [introduction](docs/introduction.md), then follow the tutorials:

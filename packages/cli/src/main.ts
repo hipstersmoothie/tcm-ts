@@ -14,6 +14,7 @@ import { checkDocExamples, renderDoc } from "./docs.ts";
 import { build, dev, listBuilds, migrateTable, parseHttpFlag, pruneBuilds, start } from "./web.ts";
 import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
+import { checkMirror, joinName, linkMirror, loadMirror, namespaceForFile, sourceFiles, unlinkMirror } from "./mirror.ts";
 import { evaluateCached, isTestPath, printOutcomes, runCached, summary } from "./testing.ts";
 import { listPackages, upgradeTo, upgradeWithin } from "./upgrade.ts";
 import { pack } from "./pack.ts";
@@ -44,7 +45,6 @@ interface Row {
   note?: string;
 }
 
-const joinName = (...parts: string[]) => parts.filter(Boolean).join(".");
 
 function classify(cb: Codebase, defs: DefRecord[], ns: string): Row[] {
   const planned = defs.map((def) => ({ def, path: def.targetPath ?? joinName(ns, def.nameHint) }));
@@ -302,28 +302,25 @@ function data(cb: Codebase, table?: string, limit = 20) {
 
 // ---- importing existing projects ---------------------------------------------------------------------
 
-const SKIP_DIRS = new Set(["node_modules", "test", "tests", "__tests__", "dist", "build"]);
-/** With `--tests`: directories of tests written as definitions (`test…`), imported like the code they test. */
-const TEST_DIRS = new Set(["test", "tests"]);
-
-function sourceFiles(dir: string, exclude: Set<string>, tests: boolean): string[] {
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    const p = path.join(dir, e.name);
-    if (exclude.has(path.resolve(p))) return [];
-    if (e.isDirectory()) return e.name.startsWith(".") || (SKIP_DIRS.has(e.name) && !(tests && TEST_DIRS.has(e.name))) ? [] : sourceFiles(p, exclude, tests);
-    return /\.(m|c)?ts$/.test(e.name) && !/\.d\.(m|c)?ts$|\.(test|spec)(-d)?\.(m|c)?ts$/.test(e.name) ? [p] : [];
-  });
-}
-
-/** `core/src/analyze.ts` → `core.analyze`, `store/src/index.ts` → `store` */
-function namespaceForFile(root: string, file: string): string {
-  const segs = path.relative(root, file).replace(/\.(m|c)?ts$/, "").split(path.sep).filter((s) => s !== "src");
-  if (segs.at(-1) === "index") segs.pop();
-  return segs.map((s) => s.replace(/[^\w$]/g, "_").replace(/^(\d)/, "_$1")).join(".");
-}
-
-function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: string, verbose: boolean, exclude: string[], tests: boolean): boolean {
+function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: string, verbose: boolean, exclude: string[], tests: boolean, mirror: boolean): boolean {
   const root = path.resolve(dir);
+  // importing the mirrored directory again (after editing its files) re-links it rather than writing back to it
+  const linked = loadMirror(cb);
+  const relink = mirror || linked?.dir === root;
+  if (relink) cb.syncsMirror = false;
+  try {
+    const ok = importFiles(cb, root, dir, mode, into, verbose, exclude, tests);
+    if (ok && relink) {
+      linkMirror(cb, root, into, tests, exclude);
+      if (mirror) console.log(dim(`mirror: changes made in tcm under ${into || "the root namespace"} are written back to ${dir}`));
+    }
+    return ok;
+  } finally {
+    cb.syncsMirror = true;
+  }
+}
+
+function importFiles(cb: Codebase, root: string, dir: string, mode: "add" | "update", into: string, verbose: boolean, exclude: string[], tests: boolean): boolean {
   const files = sourceFiles(root, new Set(exclude.map((e) => path.resolve(root, e))), tests);
   if (!files.length) throw new UsageError(`no .ts files under ${dir}`);
   console.log(dim(`analyzing ${files.length} files under ${dir}…`));
@@ -488,7 +485,10 @@ function mv(cb: Codebase, from: string, to: string) {
   });
   cb.refreshShim();
   console.log(`moved ${moves.length} name${moves.length > 1 ? "s" : ""}`);
+  const mirror = loadMirror(cb);
   for (const m of moves) {
+    // a mirror renames the code itself, so the runtime name follows
+    if (mirror && m.dest.startsWith(mirror.into ? `${mirror.into}.` : "")) continue;
     const rec = cb.store.getDef(m.hash)!;
     const runtime = rec.nameHint;
     if (rec.nominal && runtime !== m.dest.slice(m.dest.lastIndexOf(".") + 1)) {
@@ -753,6 +753,7 @@ square(12);
   // by the command below)
   execute(cmd, (parse as (definition: unknown, input: { argv: string[] }) => { ok: boolean })(commands[cmd], { argv: rest }));
   const cb = Codebase.find(cwd);
+  cb.adoptMirror = (m) => importProject(cb, m.dir, "update", m.into, false, m.exclude, m.tests, false);
   switch (cmd) {
     case "watch": {
       const { model } = execute(cmd, parse(commands.watch, { argv: rest }));
@@ -770,7 +771,23 @@ square(12);
     }
     case "import": {
       const { model } = execute(cmd, parse(commands.import, { argv: rest }));
-      return importProject(cb, model.dir, model.update ? "update" : "add", checkInto(model.into) ?? "", model.verbose, model.exclude, model.tests) ? 0 : 1;
+      return importProject(cb, model.dir, model.update ? "update" : "add", checkInto(model.into) ?? "", model.verbose, model.exclude, model.tests, model.mirror) ? 0 : 1;
+    }
+    case "mirror": {
+      const { model } = execute(cmd, parse(commands.mirror, { argv: rest }));
+      const m = loadMirror(cb);
+      if (!m) throw new UsageError("this codebase has no mirror; link one with `tcm import <dir> --into <ns> --mirror`");
+      if (model.unlink) {
+        unlinkMirror(cb);
+        console.log(`no longer writing back to ${path.relative(cwd, m.dir) || "."}`);
+        return 0;
+      }
+      console.log(`${bold(m.into || "(root)")} is mirrored to ${path.relative(cwd, m.dir) || "."} ${dim(`(${Object.keys(m.files).length} files)`)}`);
+      if (!model.check) return 0;
+      const problems = checkMirror(cb, m);
+      for (const p of problems) console.log(red(`  ${p}`));
+      console.log(problems.length ? red(`${problems.length} difference(s) between the files and the codebase`) : green("the files hash to what the codebase holds"));
+      return problems.length ? 1 : 0;
     }
     case "verify":
       execute(cmd, parse(commands.verify, { argv: rest }));

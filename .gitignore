@@ -3,3 +3,4 @@ node_modules/
 dist/
 selfhost/tsconfig.json
 selfhost/scratch.ts
+codebase/
