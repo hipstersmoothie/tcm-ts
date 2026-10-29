@@ -6,7 +6,7 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "test": "node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts'",
+    "test": "node --test --disable-warning=ExperimentalWarning 'packages/*/test/**/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json",
     "tcm": "scripts/codebase.sh",
     "verify": "scripts/verify.sh",

@@ -26,7 +26,7 @@ the code does *now*.
 - **Fixed or newly found limits** are updated in `docs/limitations.md`.
 - **Check claims against the code**, not memory or older docs. Remove what's no longer true.
 - **The README stays short:** a pitch, quick start, and links into `docs/`.
-- **`examples/` must keep working.** `packages/cli/test/examples.test.ts` builds and runs them; when a feature
+- **`examples/` must keep working.** `packages/cli/test/e2e/examples.ts` builds and runs them; when a feature
   changes how code is written, update the examples too.
 
 ## Verifying a change
@@ -41,9 +41,11 @@ pnpm selfhost       # tcm-ts imports and verifies its own source, runs its tests
 
 `pnpm test` runs the suites from source: the quick check while working.
 
-New behaviour gets a test in `packages/cli/test/` (end-to-end, through the CLI) or `packages/core/test/`. Tests
-that call code directly rather than the `tcm` binary are written as test definitions (`export const testX`, in a
-`<name>.ts` with a `<name>.test.ts` runner beside it): in tcm's codebase they're cached by hash.
+New behaviour gets a test, written as test definitions (`export const testX = () => …`, in a `<name>.ts` with a
+`<name>.test.ts` runner beside it, so `pnpm test` runs them too). End-to-end tests, running tcm as a program, go
+in `packages/cli/test/e2e/` (helpers in `harness.ts`; each test independent, since in tcm's codebase each runs as
+a program of its own, cached by the code it ran). Tests that call code directly go in `packages/*/test/`, cached
+by hash.
 
 ## Rules
 

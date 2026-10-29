@@ -28,40 +28,41 @@ export const testRetriesOnce = async () => {
 
 ## Suites: testing a command as a program
 
-A package's command (its `bin`) can be tested the way people use it: by running it. A suite is a test file that
-does, declared in the package's [manifest](publishing.md#packages) under `suites` (command → test files,
-relative to the codebase root):
+A package's command (its `bin`) can be tested the way people use it: by running it. Its suites are test
+definitions that do, in namespaces the package's [manifest](publishing.md#packages) names under `suites`
+(command → namespaces, relative to the package's):
 
 ```ts
-export const manifest = { name: "greeter", bin: { greet: "main" }, suites: { greet: ["suites/*.test.ts"] } };
+// tcm: namespace greeter
+export const manifest = { name: "greeter", bin: { greet: "main" }, suites: { greet: ["e2e"] } };
 ```
 
 ```ts
-// suites/greet.test.ts
-import { test } from "node:test";
+// tcm: namespace greeter.e2e
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 
-test("greets", () => {
+export const testGreets = () => {
   const r = spawnSync(process.execPath, [process.env.GREET_BIN!, "tcm"], { encoding: "utf8" });
   assert.equal(r.stdout, "hello, tcm\n");
-});
+};
 ```
 
-- **`tcm test`** runs the suites after the test definitions, with `node --test`, against the codebase's own build
-  of the command: the suite finds it in `<COMMAND>_BIN` (`GREET_BIN` here; `MY_TOOL_BIN` for `my-tool`). They
-  run when the namespace given is the package's or contains it, side by side, each reported as it finishes;
-  `--definitions` leaves them out.
-- **Results are cached by the code a suite ran.** V8's coverage of each run (every process it starts) says which
-  definitions executed, and the result holds until the suite's files (it and what it imports from beside it)
-  change, or the code of one of those definitions does. A definition it didn't run can change without running it
-  again, though everything using it is re-hashed: that changes no code the suite ran. Values computed when a
-  module loads count as run.
-- **A `<name>.test.ts` beside a `<name>.ts`** registers that file's test definitions with another runner (below),
-  so it isn't a suite: `tcm test` runs those as definitions.
+- **`tcm test`** runs them after the other test definitions: each as a program of its own (passing if it returns),
+  against the codebase's own build of the command, which it finds in `<COMMAND>_BIN` (`GREET_BIN` here;
+  `MY_TOOL_BIN` for `my-tool`). They run side by side, each reported as it finishes; `--definitions` leaves them
+  out. They aren't run with Vitest.
+- **Results are cached by the code a test ran.** V8's coverage of each run (every process it starts) says which
+  definitions executed, and the result holds until the test changes, or the code of one of those definitions
+  does. A definition it didn't run can change without running it again, though everything using it is
+  re-hashed: that changes no code the test ran. Values computed when a module loads count as run.
+- **While tests are kept in files,** an entry with a `/` or `*` is a glob of test files instead (relative to the
+  codebase root), each run with `node --test` and cached the same way, by its content and the code it ran. A
+  `<name>.test.ts` beside a `<name>.ts` registers that file's test definitions with another runner (below), so it
+  isn't one.
 
-tcm's own end-to-end tests are its suites: changing the mirror's code re-runs the suites that used a mirror, and
-leaves the other 28 cached.
+tcm's own end-to-end tests are its suites (`tcmts.cli.test.e2e`): a change to the mirror's code runs the tests
+that used a mirror again, and leaves the rest cached.
 
 ## Tests in a project you import
 

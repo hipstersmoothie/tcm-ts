@@ -8,6 +8,6 @@ export const manifest = {
   bin: { tcm: "cli.main.runCli", "tcm-ts": "cli.main.runCli" },
   with: ["@types/node@^24"],
   files: ["../README.md", "../docs"],
-  // the end-to-end tests, run against the codebase's own tcm by `tcm test`
-  suites: { tcm: ["../packages/*/test/*.test.ts"] },
+  // the end-to-end tests, run against the codebase's own tcm by `tcm test` (the files, while some are still files)
+  suites: { tcm: ["cli.test.e2e", "../packages/*/test/*.test.ts"] },
 }

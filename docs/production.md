@@ -11,7 +11,7 @@
   `--http`.
 - **There is no version skew.** Earlier builds stay served, and their server functions stay callable. A tab
   opened before a deploy keeps loading its own assets and calling the exact code it was built against, until it
-  reloads. `prod.test.ts` deploys v2 and checks the v1 tab still works, then rolls back.
+  reloads. `packages/cli/test/e2e/prod.ts` deploys v2 and checks the v1 tab still works, then rolls back.
 - **`tcm apps` lists builds; `tcm apps prune --keep N` removes old ones.** It keeps the current build plus the
   N newest others; `tcm start --keep N` does this after every deploy. A tab still on a pruned build gets
   `410 Gone` from its next server call, and the browser runtime reloads the page onto the current version.

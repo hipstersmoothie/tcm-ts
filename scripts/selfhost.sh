@@ -52,4 +52,4 @@ suites() {
   grep '^✖ ' "$out" | grep -v '^✖ failing tests' | sort -u
   return "$status"
 }
-TCM_BIN="$PACK/node_modules/tcm-ts/bin/tcm.js" suites node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts'
+TCM_BIN="$PACK/node_modules/tcm-ts/bin/tcm.js" suites node --test --disable-warning=ExperimentalWarning 'packages/*/test/**/*.test.ts'

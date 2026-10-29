@@ -51,5 +51,5 @@ Received definitions are checked before anything is stored:
   and hashing locally must reproduce the claimed hashes.
 
 Dependencies and signatures are recomputed locally. Nothing received is executed during checking, and npm
-installs use `--ignore-scripts`. Tampered source sent under an existing hash is rejected; `sync.test.ts` checks
+installs use `--ignore-scripts`. Tampered source sent under an existing hash is rejected; `packages/cli/test/e2e/sync.ts` checks
 this.

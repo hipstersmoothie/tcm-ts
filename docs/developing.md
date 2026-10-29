@@ -10,7 +10,7 @@ packages/
   cli/      the tcm command, placement inference, sync, merge, web (Vite plugin, dev/build/start), the
             #tcm/server runtime, the wire codec
 editors/    vscode/: the VS Code extension (a thin client for `tcm lsp`; not part of the npm package)
-examples/   polls/: an example app, built and run in a browser by packages/cli/test/examples.test.ts
+examples/   polls/: an example app, built and run in a browser by packages/cli/test/e2e/examples.ts
 scripts/    build.sh (npm package), selfhost.sh, verify.sh, codebase.sh (`pnpm tcm`), docs-site.ts, docs-dev.ts, compare-compilers.sh
 docs/       user documentation, one page per feature area
 ```
@@ -47,12 +47,13 @@ written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything i
 codebase: that run covers the source (the codebase is imported from it), the codebase (the package is rendered
 from it) and the packaging at once.
 
-Tests that call code directly are [test definitions](testing.md): the core and store tests, and the CLI's
-server-component and highlighting tests, in `packages/*/test/<name>.ts` (exports named `test…`, beside the helpers
-they use). They live in tcm's own codebase like the code they test, cached by hash: a change re-runs only the
-tests that reach it. A `<name>.test.ts` runner next to each registers them with `node:test` for `pnpm test`. The
-rest of the CLI's tests are end-to-end `node:test` files that run the `tcm` binary by path: they reach all of tcm,
-so they'd re-run on any change anyway.
+tcm's tests are [test definitions](testing.md), in its own codebase like the code they test. Those that call code
+directly (the core and store tests, the CLI's server-component and highlighting tests) are in
+`packages/*/test/<name>.ts`, cached by hash: a change re-runs only the tests that reach it. The end-to-end tests,
+which run tcm as a program, are in `packages/cli/test/e2e/<name>.ts` (helpers in `harness.ts`): they're the
+`tcm-ts` package's [suites](testing.md#suites-testing-a-command-as-a-program), each run as a program of its own
+against the codebase's own tcm and cached by the code it ran. A `<name>.test.ts` runner beside each file
+registers its tests with `node:test` for `pnpm test`.
 
 ## Working on tcm in tcm
 
@@ -83,7 +84,7 @@ the tcm that's running. `pnpm verify` replaces it when everything passes.
 
 The code being changed is what runs everywhere else: `tcm test tcmts` runs the codebase's own test definitions,
 and its end-to-end tests as [suites](testing.md#suites-testing-a-command-as-a-program) against the codebase's own
-tcm (the `tcm-ts` manifest declares `packages/*/test/*.test.ts`), each only if code it ran changed. And `TCM_LIVE=1 pnpm tcm <command>` runs `packages/` as it is, to try a change before verifying it. Before
+tcm (`tcmts.cli.test.e2e`, in `packages/cli/test/e2e/`), each only if code it ran changed. And `TCM_LIVE=1 pnpm tcm <command>` runs `packages/` as it is, to try a change before verifying it. Before
 the first `pnpm verify`, there's no known-good build, and `pnpm tcm` says so and runs `packages/`.
 
 ## Self-hosting

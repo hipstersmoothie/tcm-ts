@@ -952,8 +952,11 @@ square(12);
     case "test": {
       const { model } = execute(cmd, parse(commands.test, { argv: rest }));
       const ns = model.namespace ?? "";
-      const names = cb.store.names().filter((n) => n.kind !== "type" && isTestPath(n.path) && (!ns || n.path === ns || n.path.startsWith(ns + ".")));
-      const suites = model.definitions ? [] : suitesIn(cb, ns);
+      // test definitions a package runs its command with are run as programs of their own, with the suites
+      const declared = suitesIn(cb, ns);
+      const commandTests = new Set(suitesIn(cb, "").flatMap((s) => (s.test ? [s.test.path] : [])));
+      const names = cb.store.names().filter((n) => n.kind !== "type" && isTestPath(n.path) && !commandTests.has(n.path) && (!ns || n.path === ns || n.path.startsWith(ns + ".")));
+      const suites = model.definitions ? [] : declared;
       if (!names.length && !suites.length) {
         console.log(dim(`no tests${ns ? ` under ${ns}` : ""} (tests are definitions named test… or under a \`tests\` namespace)`));
         return 0;
