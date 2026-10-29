@@ -5,6 +5,6 @@ export { cacheRefOf, matchShapes, queryShape, shapeBuilder, type QueryImport, ty
 export { analyzeFile, analyzeProject, saltOf, scratchNamespace, type Analysis, type AnalyzeHost, type ProjectAnalysis, type ProjectDef, type WatchRecord } from "./analyze.ts";
 export { TcmError } from "./extract.ts";
 export { checkArgs, checkValue, paramsSchema, schemaCheckerSource, schemaText, typeSchema, type ParamsSchema, type Schema, type TableSchema } from "./schema.ts";
-export { checkProfile, compilerOptions, createProgram, fileDiagnostics, incrementalCompiler, packageNameOf, type Checked, type CompilerOptions, projectCompilerOptions, type Compile, type PackageResolver, transpileForNode, transpileModule, type CheckProfile, TS_VERSION, typescriptUrl, tcmTypeRoots, type Diagnostic } from "./program.ts";
+export { checkProfile, compilerOptions, createProgram, fileDiagnostics, incrementalCompiler, packageNameOf, type Checked, type CompilerOptions, projectCompilerOptions, type Compile, type PackageResolver, transpileForNode, transpileModule, type CheckProfile, TS_VERSION, tcmNodeTypes, useNodeTypes, NODE_TYPES_RANGE, type NodeTypes, type Diagnostic } from "./program.ts";
 export { bumpVersion, compareVersions, compatRange, isExactVersion, satisfies } from "./semver.ts";
 export * as ts from "./ts.ts";

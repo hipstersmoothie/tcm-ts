@@ -15,7 +15,7 @@ stage() {
   t0=$(date +%s)
   if "$@" > "$LOGS/$name.log" 2>&1; then result="ok"; else result="FAILED"; fi
   echo "$name: $result ($(($(date +%s) - t0))s)"
-  grep -E '^ℹ (pass|fail) |^✖ |^fixed point|^verified|^tcm test' "$LOGS/$name.log" | grep -v '^✖ failing tests' | sort -u | sed 's/^/  /'
+  grep -E '^ℹ (pass|fail) |^✖ |^fixed point|^verified|^tcm test|^far away' "$LOGS/$name.log" | grep -v '^✖ failing tests' | sort -u | sed 's/^/  /'
   [ "$result" = ok ]
 }
 

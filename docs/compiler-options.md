@@ -27,7 +27,10 @@ choice. A few are forced, with a warning when the project sets them otherwise:
 - `jsx` = `react-jsx`: JSX compiles to the automatic runtime (`react/jsx-runtime`, or your `jsxImportSource`),
   which generated modules import at its pinned version ([React](react.md#packages-and-versions)).
 
-Without its own `types`, a project gets tcm's `@types/node`, so scratch files typecheck without installing it.
+Without its own `types`, a project gets tcm's `@types/node`, so scratch files typecheck without installing it: the
+copy installed with tcm, or, when tcm runs from a codebase with none nearby, one the codebase installs into its
+cache like any package (and records in `.tcm/cache/node-types.json`, for tests and watch expressions running from
+there).
 
 ## Imported projects
 

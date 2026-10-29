@@ -42,6 +42,11 @@ sqlite3 "$FIX/.tcm/codebase.sqlite" "SELECT path || ' ' || hash FROM names ORDER
 diff "$FIX/source-built.txt" "$FIX/self-hosted.txt"
 echo "fixed point: the self-hosted tcm assigns its own source the same $(wc -l < "$FIX/source-built.txt" | tr -d ' ') hashes"
 
+# the self-hosted tcm works far from this repository: nothing it needs is found by walking up to its node_modules
+FAR="$(mktemp -d)"
+(cd "$FAR" && node "$REPO/selfhost/tcm.ts" init > /dev/null && printf 'export const platform = () => process.platform;\n' > scratch.ts && node "$REPO/selfhost/tcm.ts" add > "$FAR/add.log" 2>&1) || { cat "$FAR/add.log"; exit 1; }
+echo "far away: the self-hosted tcm makes a codebase in $FAR and checks code against @types/node there"
+
 PACK="$(mktemp -d)"
 (cd "$REPO/selfhost" && node tcm.ts pack core=tcmts.core.analyze.analyzeFile core=tcmts.core.analyze.analyzeProject core=tcmts.core.hash.IR_VERSION \
   --name "tcm-ts@$(node -p 'require("../package.json").version')" --bin tcm=tcmts.cli.main.runCli,tcm-ts=tcmts.cli.main.runCli \

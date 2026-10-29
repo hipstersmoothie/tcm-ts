@@ -8,6 +8,7 @@
 import { createRequire } from "node:module";
 import path from "node:path";
 import { API, type Checker, type Symbol } from "typescript/sync";
+import { version as typescriptVersion } from "typescript";
 import { NodeFlags, SyntaxKind, isModifier, type Node, type NodeArray, type ModifierLike, type Modifier, type SourceFile } from "typescript/ast";
 
 export * from "typescript/ast";
@@ -51,7 +52,7 @@ export type { Signature, Type, NodeHandle, Diagnostic, TypeReference, UnionOrInt
 export type TypeChecker = Checker;
 
 const require = createRequire(import.meta.url);
-export const version: string = (require("typescript") as { version: string }).version;
+export const version: string = typescriptVersion;
 
 /**
  * The compiler binary: TypeScript 7's own, or tsrs's (`TCM_TYPESCRIPT=tsrs`: the project's tsrs package, else one

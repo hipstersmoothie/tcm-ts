@@ -10,7 +10,9 @@ import {
   analyzeProject,
   IR_VERSION,
   TS_VERSION,
-  tcmTypeRoots,
+  tcmNodeTypes,
+  useNodeTypes,
+  NODE_TYPES_RANGE,
   type Analysis,
   type AnalyzeHost,
   type DefRecord,
@@ -22,7 +24,6 @@ import {
   shortHash,
   transpileForNode,
   transpileModule,
-  typescriptUrl,
 } from "@tcm/core";
 
 type SaltFor = NonNullable<AnalyzeHost["saltFor"]>;
@@ -64,7 +65,7 @@ registerHooks({
 `;
 }
 import { Store } from "@tcm/store";
-import { ensureExternals, externalsOf, layout, lockAtLeast, materialize, moduleFile, parseModule, render, usePackageLock, writeIfChanged, writeShim, type DefSource, type Layout } from "@tcm/loader";
+import { ensureExternals, externalsOf, npmAlias, layout, lockAtLeast, materialize, moduleFile, parseModule, render, usePackageLock, writeIfChanged, writeShim, type DefSource, type Layout } from "@tcm/loader";
 import { providePackages } from "./provided.ts";
 import { viewOf, writeViews } from "./views.ts";
 import { syncMirror, type Mirror } from "./mirror.ts";
@@ -97,6 +98,15 @@ export class Codebase {
       integrity: (name, range) => this.store.lockedIntegrity(name, range),
       all: () => this.store.lockedPackages(),
     });
+    // tcm checks code against its own @types/node; running from a codebase with none installed near it, the
+    // codebase provides it like any package
+    if (!tcmNodeTypes()) {
+      const module = `npm:@types/node@${NODE_TYPES_RANGE}`;
+      ensureExternals(this.lay, [{ module, subpath: "", export: "*" }]);
+      useNodeTypes(path.join(this.lay.cacheDir, "node_modules", npmAlias(module)));
+    }
+    // for what runs from the codebase (tests, watch expressions), which may be far from tcm's own copy
+    writeIfChanged(path.join(this.lay.cacheDir, "node-types.json"), JSON.stringify(tcmNodeTypes()) + "\n");
     // the #tcm/server runtime every generated module and runner in this codebase shares
     const api = serverApiFiles();
     fs.mkdirSync(this.lay.cacheDir, { recursive: true });
@@ -104,7 +114,7 @@ export class Codebase {
     writeIfChanged(path.join(this.lay.cacheDir, "tcm-server.d.ts"), api.dts);
     // imported code may use syntax Node can't strip: such modules are compiled on load, here and in runners
     // the compilation (with its source maps) is tcm's own, loaded from where tcm runs
-    if (typescriptUrl()) writeIfChanged(path.join(this.lay.cacheDir, "tcm-transform.js"), transformHookSource(transpileModule()));
+    writeIfChanged(path.join(this.lay.cacheDir, "tcm-transform.js"), transformHookSource(transpileModule()));
     registerTransformHook();
     // hashes in another format aren't comparable with this tcm's: refuse rather than mix them
     const versions = this.store.irVersions().filter((v) => v !== IR_VERSION);
@@ -147,6 +157,8 @@ export class Codebase {
       "#tcm/server": "./.tcm/cache/tcm-server.js",
     };
     fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + "\n");
+    // opened first: where @types/node is comes from it (see the constructor)
+    const cb = new Codebase(root);
     const tsconfig = path.join(root, "tsconfig.json");
     if (!fs.existsSync(tsconfig)) {
       const options = {
@@ -162,12 +174,10 @@ export class Codebase {
         allowImportingTsExtensions: true,
         jsx: "react-jsx",
         skipLibCheck: true,
-        typeRoots: tcmTypeRoots,
-        types: ["node"],
+        ...tcmNodeTypes(),
       };
       fs.writeFileSync(tsconfig, JSON.stringify({ compilerOptions: options, include: ["*.ts", "*.tsx"] }, null, 2) + "\n");
     }
-    const cb = new Codebase(root);
     cb.refreshShim(true);
     return cb;
   }

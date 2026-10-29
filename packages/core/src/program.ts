@@ -3,14 +3,48 @@
 import fs from "node:fs";
 import { builtinModules, createRequire } from "node:module";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import * as ts from "./ts.ts";
 import { exportId } from "./hash.ts";
 
-const require = createRequire(import.meta.url);
 
-/** `@types` directory shipped with tcm, so projects typecheck without installing @types/node. */
-export const tcmTypeRoots = [path.dirname(path.dirname(require.resolve("@types/node/package.json")))];
+/** The @types/node tcm checks code against, so projects typecheck without installing it: tcm's own dependency. */
+export const NODE_TYPES_RANGE = "24";
+
+/** Where the compiler finds @types/node: a type root, and the directory in it to load (`node`, or a cache alias). */
+export interface NodeTypes {
+  typeRoots: string[];
+  types: string[];
+}
+
+let nodeTypes: NodeTypes | undefined;
+
+/**
+ * tcm's @types/node: installed next to tcm (from source, or as an npm package), else in the project tcm runs in,
+ * else the one a codebase there uses (`.tcm/cache/node-types.json`, written by the CLI: code running from the
+ * codebase, like its tests, may be far from any). Undefined when none has it, as when tcm runs from a codebase
+ * somewhere else that hasn't provided it yet.
+ */
+export function tcmNodeTypes(): NodeTypes | undefined {
+  if (nodeTypes) return nodeTypes;
+  for (const from of [import.meta.filename, path.join(process.cwd(), "package.json")]) {
+    try {
+      const pkg = createRequire(from).resolve("@types/node/package.json");
+      return (nodeTypes = { typeRoots: [path.dirname(path.dirname(pkg))], types: ["node"] });
+    } catch {
+      // not there
+    }
+  }
+  for (let dir = process.cwd(); ; dir = path.dirname(dir)) {
+    const recorded = path.join(dir, ".tcm", "cache", "node-types.json");
+    if (fs.existsSync(recorded)) return (nodeTypes = JSON.parse(fs.readFileSync(recorded, "utf8")) as NodeTypes);
+    if (path.dirname(dir) === dir) return undefined;
+  }
+}
+
+/** Check against the @types/node installed at `dir` (a package directory, e.g. in a codebase's cache). */
+export function useNodeTypes(dir: string) {
+  nodeTypes = { typeRoots: [path.dirname(dir)], types: [path.basename(dir)] };
+}
 
 export const TS_VERSION = ts.version;
 
@@ -40,8 +74,7 @@ export function compilerOptions(): CompilerOptions {
     allowImportingTsExtensions: true,
     jsx: ts.JsxEmit.ReactJSX,
     skipLibCheck: true,
-    typeRoots: tcmTypeRoots,
-    types: ["node"],
+    ...tcmNodeTypes(),
   };
 }
 
@@ -104,7 +137,7 @@ export function projectCompilerOptions(tsconfig: string | undefined, mode: "scra
     options.typeRoots = roots;
   }
   // without its own `types`, a project gets tcm's @types/node, so scratch files typecheck without installing it
-  if (options.types === undefined) Object.assign(options, { typeRoots: tcmTypeRoots, types: ["node"] });
+  if (options.types === undefined) Object.assign(options, tcmNodeTypes());
   for (const [k, v] of Object.entries(required)) {
     // in import mode, resolution settings are tcm's business (it renders imports itself): no need to mention them
     const quiet = mode === "import" && ["module", "moduleResolution", "verbatimModuleSyntax", "erasableSyntaxOnly"].includes(k);
@@ -239,14 +272,6 @@ export function transpileModule(): { url: string; export: string; transpile: typ
   return { url: import.meta.url, export: hash ? exportId(hash) : "transpileModule", transpile: transpileForNode };
 }
 
-/** Where TypeScript lives, for processes that compile on their own (runners spawned by tcm). */
-export function typescriptUrl(): string | undefined {
-  try {
-    return pathToFileURL(require.resolve("typescript")).href;
-  } catch {
-    return undefined;
-  }
-}
 
 /**
  * Where a bare package import in a scratch file resolves when tcm provides the package: the cache's directory for
