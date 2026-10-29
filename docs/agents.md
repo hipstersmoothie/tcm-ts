@@ -27,7 +27,7 @@ next where there's a next step (dependents to fix, a check to save).
 | `tcm_edit` | definitions into a scratch file, path and contents returned (a scratch file holding work is never overwritten: another is used) |
 | `tcm_check`, `tcm_update` | what saving a scratch file would do; saving it |
 | `tcm_todo` | conflicts, and dependents that stopped typechecking |
-| `tcm_test`, `tcm_run` | tests (cached by hash, `fresh` to run them all); running a definition |
+| `tcm_test`, `tcm_run` | tests (cached by hash, `fresh` to run them all) and [suites](testing.md#suites-testing-a-command-as-a-program) (cached by the code they ran, `definitions` to leave them out); running a definition |
 | `tcm_mv`, `tcm_rm`, `tcm_history` | renaming, removing, history |
 | `tcm_cli` | any other command ([CLI](cli.md)) |
 | `tcm_guide` | longer explanations, by topic: the model, editing, testing, apps, packages and releases, mirrors, troubleshooting |

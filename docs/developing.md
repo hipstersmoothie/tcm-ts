@@ -64,7 +64,7 @@ back to `packages/`, and those edits are what's committed:
 pnpm tcm edit tcmts.core.semver.compatRange    # into codebase/scratch.ts
 pnpm tcm update                                # the codebase, its 200-odd dependents, and packages/core/src/semver.ts
 pnpm tcm mv tcmts.core.semver.meetsComparator tcmts.core.semver.matchesComparator
-pnpm tcm test tcmts                            # the tests the change reaches, the rest cached
+pnpm tcm test tcmts                            # the tests and suites the change reaches, the rest cached
 ```
 
 Agents work on tcm the same way: the repository's `.mcp.json` runs [`tcm mcp`](agents.md) on this codebase
@@ -82,7 +82,8 @@ that breaks tcm, even its mirror, can't break the tcm writing it to `packages/`,
 the tcm that's running. `pnpm verify` replaces it when everything passes.
 
 The code being changed is what runs everywhere else: `tcm test tcmts` runs the codebase's own test definitions,
-and `TCM_LIVE=1 pnpm tcm <command>` runs `packages/` as it is, to try a change before verifying it. Before
+and its end-to-end tests as [suites](testing.md#suites-testing-a-command-as-a-program) against the codebase's own
+tcm (the `tcm-ts` manifest declares `packages/*/test/*.test.ts`), each only if code it ran changed. And `TCM_LIVE=1 pnpm tcm <command>` runs `packages/` as it is, to try a change before verifying it. Before
 the first `pnpm verify`, there's no known-good build, and `pnpm tcm` says so and runs `packages/`.
 
 ## Self-hosting
@@ -91,7 +92,7 @@ the first `pnpm verify`, there's no known-good build, and `pnpm tcm` says so and
 then:
 
 1. runs `tcm verify` with the **self-hosted** tcm: every definition round-trips to its own hash;
-2. runs tcm's test definitions with the self-hosted `tcm test` (imported with `--tests`), then again: the second
+2. runs tcm's test definitions with the self-hosted `tcm test --definitions` (imported with `--tests`), then again: the second
    run must be all cached. Afterwards, a change to one definition re-runs only the tests that reach it;
 3. checks the fixed point: the self-hosted tcm imports `packages/` again and assigns exactly the same hashes;
 4. checks the self-hosted tcm works far from this repository (it makes a codebase in a temporary directory);

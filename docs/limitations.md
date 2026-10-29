@@ -17,6 +17,9 @@ What isn't done yet, or is deliberately out of scope:
   an editor extension), but only the mirror's files are checked against the codebase afterwards. A definition
   declared alongside others in one statement (`const a = 1, b = 2`) is edited by hand. Files changed outside tcm
   are imported before each command, but not by `tcm watch` or the language server while they run.
+- **A suite's cached result only knows the code it ran from the codebase.** Files it reads (fixtures, a project
+  it builds), code it imports from source rather than through the command, and the outside world can change
+  without it running again: `tcm test --fresh` runs it. A suite that runs nothing of the codebase always runs.
 - **Adding the same code at two paths creates two definitions** (lineage salts, see
   [hashing](hashing.md#identity)). To share one definition under two names, use `tcm alias`.
 - **TypeScript 7.1 is a beta.** tcm checks code with `typescript@7.1.0-beta` ([the compiler](compiler-options.md#the-compiler)).

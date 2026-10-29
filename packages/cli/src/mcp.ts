@@ -40,7 +40,8 @@ const GUIDE: Record<string, string> = {
 
 - A test is a definition named test… (testSortIsStable) or any definition under a tests namespace. It passes by returning (or resolving) without throwing; expect and vi come from "vitest", node:assert works too.
 - tcm_test [namespace] runs them with Vitest, in Node (or Chrome when a test renders a component with state). Results are cached by hash: a re-run only runs tests whose code, or something they use, changed. fresh: true runs everything.
-- Tests in a scratch file run when you tcm_check it.`,
+- Tests in a scratch file run when you tcm_check it.
+- A package can declare suites: test files that run its command as a program (manifest suites: { cmd: ["test/*.test.ts"] }). tcm_test runs them too, each only if code it ran changed; definitions: true leaves them out.`,
   apps: `# Apps
 
 - An app is a definition (a React component, or a handler); tcm_cli ["dev", "<name>"] serves it while you work, ["build", …] and ["start", …] for production.
@@ -138,7 +139,7 @@ const TOOLS: Tool[] = [
   {
     name: "tcm_view",
     description: "Show definitions as code, with current names, where each runs (server, browser, anywhere) and its hash.",
-    inputSchema: schema({ names }, ["names"]),
+    inputSchema: schema({ names: names }, ["names"]),
     argv: (a) => ["view", ...strs(a.names)],
   },
   { name: "tcm_deps", description: "What a definition uses (codebase definitions, packages).", inputSchema: schema({ name: { type: "string" } }, ["name"]), argv: (a) => ["deps", str(a.name)] },
@@ -147,7 +148,7 @@ const TOOLS: Tool[] = [
   {
     name: "tcm_edit",
     description: "Write definitions to a scratch file for editing (default scratch.ts, or scratch.tsx for JSX), with lines saying where each goes back. Returns the file's path and contents: edit it with your file tools, then tcm_check and tcm_update.",
-    inputSchema: schema({ names, file: { type: "string", description: "the scratch file (relative to the project)" }, force: { type: "boolean", description: "overwrite a scratch file holding definitions that aren't saved" } }, ["names"]),
+    inputSchema: schema({ names: names, file: { type: "string", description: "the scratch file (relative to the project)" }, force: { type: "boolean", description: "overwrite a scratch file holding definitions that aren't saved" } }, ["names"]),
     run: async (a, ctx) => {
       const argv = (file?: string) => ["edit", ...strs(a.names), ...(file ? ["--file", file] : []), ...(a.force ? ["--force"] : [])];
       let r = await ctx.tcm(argv(a.file ? str(a.file) : undefined));
@@ -178,9 +179,13 @@ const TOOLS: Tool[] = [
   { name: "tcm_todo", description: "What needs fixing: conflicted names, and dependents that stopped typechecking (with the error).", inputSchema: schema({}), argv: () => ["todo"] },
   {
     name: "tcm_test",
-    description: "Run tests (definitions named test…, or under a tests namespace), optionally in one namespace. Results are cached by hash: only tests whose code or dependencies changed run again.",
-    inputSchema: schema({ namespace: { type: "string" }, fresh: { type: "boolean", description: "run everything again, ignoring cached results" } }),
-    argv: (a) => ["test", ...(a.namespace ? [str(a.namespace)] : []), ...(a.fresh ? ["--fresh"] : [])],
+    description: "Run tests (definitions named test…, or under a tests namespace), optionally in one namespace, and the suites packages declare (test files running a package's command). Results are cached by hash: only tests whose code or dependencies changed run again, and only suites that ran code that changed.",
+    inputSchema: schema({
+      namespace: { type: "string" },
+      fresh: { type: "boolean", description: "run everything again, ignoring cached results" },
+      definitions: { type: "boolean", description: "only the test definitions, not the suites (which can take minutes when much changed)" },
+    }),
+    argv: (a) => ["test", ...(a.namespace ? [str(a.namespace)] : []), ...(a.fresh ? ["--fresh"] : []), ...(a.definitions ? ["--definitions"] : [])],
   },
   {
     name: "tcm_run",
@@ -189,7 +194,7 @@ const TOOLS: Tool[] = [
     argv: (a) => ["run", str(a.name), "--", ...strs(a.args)],
   },
   { name: "tcm_mv", description: "Rename a definition or namespace. References are by hash, so no code changes.", inputSchema: schema({ from: { type: "string" }, to: { type: "string" } }, ["from", "to"]), argv: (a) => ["mv", str(a.from), str(a.to)] },
-  { name: "tcm_rm", description: "Remove names (refused while something depends on them).", inputSchema: schema({ names }, ["names"]), argv: (a) => ["rm", ...strs(a.names)] },
+  { name: "tcm_rm", description: "Remove names (refused while something depends on them).", inputSchema: schema({ names: names }, ["names"]), argv: (a) => ["rm", ...strs(a.names)] },
   { name: "tcm_history", description: "This branch's history: an entry per command and what it changed. tcm_cli [\"reset\", \"<n>\"] goes back.", inputSchema: schema({ n: { type: "number" } }), argv: (a) => ["history", String(a.n ?? 10)] },
   {
     name: "tcm_cli",

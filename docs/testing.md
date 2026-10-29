@@ -17,7 +17,7 @@ export const testRetriesOnce = async () => {
 
 - **A test is a definition named `test…`, or any definition under a `tests` namespace.** It passes by returning
   (or resolving) without throwing.
-- **`tcm test [namespace]`** runs them. The watcher, `tcm check` and VS Code run a scratch file's tests inline.
+- **`tcm test [namespace]`** runs them (and [suites](#suites-testing-a-command-as-a-program)). The watcher, `tcm check` and VS Code run a scratch file's tests inline.
 - **Tests run with [Vitest](https://vitest.dev), with nothing to set up.** Each test definition is one Vitest
   test: `expect`, `vi` (mocks, spies, fake timers) and the rest come from `vitest`, which tcm provides like any
   package, and failures read like Vitest's, diffs included. Tests that use `node:assert` (or just throw) work too.
@@ -25,6 +25,42 @@ export const testRetriesOnce = async () => {
   so only tests whose code or dependencies changed re-run. Tests that read the filesystem, clock or network can go
   stale in the cache: `--fresh` re-runs everything. Watch expressions are cached the same way ([scratch
   files](scratch-files.md)).
+
+## Suites: testing a command as a program
+
+A package's command (its `bin`) can be tested the way people use it: by running it. A suite is a test file that
+does, declared in the package's [manifest](publishing.md#packages) under `suites` (command → test files,
+relative to the codebase root):
+
+```ts
+export const manifest = { name: "greeter", bin: { greet: "main" }, suites: { greet: ["suites/*.test.ts"] } };
+```
+
+```ts
+// suites/greet.test.ts
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+
+test("greets", () => {
+  const r = spawnSync(process.execPath, [process.env.GREET_BIN!, "tcm"], { encoding: "utf8" });
+  assert.equal(r.stdout, "hello, tcm\n");
+});
+```
+
+- **`tcm test`** runs the suites after the test definitions, with `node --test`, against the codebase's own build
+  of the command: the suite finds it in `<COMMAND>_BIN` (`GREET_BIN` here; `MY_TOOL_BIN` for `my-tool`). They
+  run when the namespace given is the package's or contains it; `--definitions` leaves them out.
+- **Results are cached by the code a suite ran.** V8's coverage of each run (every process it starts) says which
+  definitions executed, and the result holds until the suite's files (it and what it imports from beside it)
+  change, or the code of one of those definitions does. A definition it didn't run can change without running it
+  again, though everything using it is re-hashed: that changes no code the suite ran. Values computed when a
+  module loads count as run.
+- **A `<name>.test.ts` beside a `<name>.ts`** registers that file's test definitions with another runner (below),
+  so it isn't a suite: `tcm test` runs those as definitions.
+
+tcm's own end-to-end tests are its suites: changing the mirror's code re-runs the suites that used a mirror, and
+leaves the other 28 cached.
 
 ## Tests in a project you import
 

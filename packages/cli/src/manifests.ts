@@ -18,6 +18,8 @@ export interface Manifest {
   with: string[];
   /** files to copy in, relative to the codebase root */
   files: string[];
+  /** command → test files that run it as a program (relative to the codebase root): `tcm test` runs them */
+  suites: Record<string, string[]>;
 }
 
 export interface Pkg {
@@ -63,9 +65,17 @@ function validate(at: string, v: Record<string, unknown>, doc: string | undefine
       bin[cmd] = t as string;
     }
   }
+  const suites: Record<string, string[]> = {};
+  if (v.suites !== undefined) {
+    if (typeof v.suites !== "object" || !v.suites || Array.isArray(v.suites)) fail("`suites` must map commands to test files");
+    for (const [cmd, files] of Object.entries(v.suites as object)) {
+      if (!(cmd in bin)) fail(`\`suites.${cmd}\` is for a command \`bin\` doesn't have`);
+      suites[cmd] = strings(files, `\`suites.${cmd}\``);
+    }
+  }
   const list = (k: "with" | "files") => (v[k] === undefined ? [] : strings(v[k], `\`${k}\``));
   const description = typeof v.description === "string" ? v.description : doc?.split(/\n\s*\n/)[0]!.replace(/\s+/g, " ").trim() || undefined;
-  return { name: v.name as string, description, exports, bin, with: list("with"), files: list("files") };
+  return { name: v.name as string, description, exports, bin, with: list("with"), files: list("files"), suites };
 }
 
 /** The packages a branch's names (or a past namespace's) declare. */

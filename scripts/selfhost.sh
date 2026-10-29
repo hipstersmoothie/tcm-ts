@@ -12,10 +12,11 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 sh "$REPO/scripts/build.sh"
 cd "$REPO/selfhost"
 node tcm.ts verify
-# the tests written as definitions (packages/*/test/*.ts), run from the codebase and cached by hash
-first="$(NO_COLOR=1 node tcm.ts test tcmts)" || { echo "$first"; exit 1; }
+# the tests written as definitions (packages/*/test/*.ts), run from the codebase and cached by hash (the suites run
+# once, below, against the package)
+first="$(NO_COLOR=1 node tcm.ts test tcmts --definitions)" || { echo "$first"; exit 1; }
 echo "tcm test: $(printf '%s\n' "$first" | tail -1)"
-second="$(NO_COLOR=1 node tcm.ts test tcmts | tail -1)"
+second="$(NO_COLOR=1 node tcm.ts test tcmts --definitions | tail -1)"
 passed="${second%% passed*}"
 case "$second" in *"passed, 0 failed ($passed cached)") echo "tcm test again: $second" ;; *) echo "a second tcm test run wasn't all cached: $second"; exit 1 ;; esac
 

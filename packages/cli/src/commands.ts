@@ -105,7 +105,13 @@ export const commands = {
   rm: command(name("rm"), description("remove a name"), definition("a name"), force("remove it even if named definitions use it (they keep working)")),
   todo: command(name("todo"), description("conflicts and dependents that need fixing")),
   resolve: command(name("resolve"), description("pick one definition for a conflicted name"), definition("a conflicted name"), argument(name("hash"), description("the #hash to keep"), schema(text(null)))),
-  test: command(name("test"), description("run tests (definitions named test… or under `tests`); results are cached by hash"), namespace("only tests under this namespace"), fresh),
+  test: command(
+    name("test"),
+    description("run tests (definitions named test… or under `tests`), and the suites packages declare; results are cached by hash, and by the code a suite ran"),
+    namespace("only tests under this namespace"),
+    fresh,
+    toggle(name("definitions"), description("only the test definitions, not the suites")),
+  ),
   lint: command(name("lint"), description("lint definitions with oxlint (configure with a `lint.config` definition)"), namespace("only definitions under this namespace"), fresh),
   fmt: command(name("fmt"), description("reformat stored definitions with oxfmt; no hashes change"), namespace("only definitions under this namespace")),
   verify: command(name("verify"), description("re-render and re-hash every live definition; must be the identity")),
@@ -240,7 +246,7 @@ export const commands = {
   mcp: command(name("mcp"), description("tools for AI agents to work in the codebase: a Model Context Protocol server (stdio)")),
   lsp: command(name("lsp"), description("language server for editors (stdio)"), toggle(name("stdio"), description("accepted for editors that pass it; stdio is the only transport"))),
   complete: command(name("complete"), description("shell completion: `source <(tcm complete zsh)` (or bash, fish, powershell)"), argument(name("shell"), description("zsh, bash, fish or powershell"), schema(text(null)))),
-};
+}
 
 /** Sections of `tcm help`, in order; every command is in one. */
 export const SECTIONS: [string, string[]][] = [

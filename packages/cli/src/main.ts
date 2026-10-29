@@ -36,6 +36,7 @@ import { ask, choose, chooseName, confirm, interactive, intro, outro, showInstal
 import { syncMirror } from "./mirror.ts";
 import type { Mirror } from "./mirror.ts";
 import { changedFiles } from "./mirror.ts";
+import { runSuites, suitesIn } from "./suites.ts";
 
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
@@ -956,14 +957,27 @@ square(12);
       const { model } = execute(cmd, parse(commands.test, { argv: rest }));
       const ns = model.namespace ?? "";
       const names = cb.store.names().filter((n) => n.kind !== "type" && isTestPath(n.path) && (!ns || n.path === ns || n.path.startsWith(ns + ".")));
-      if (!names.length) {
+      const suites = model.definitions ? [] : suitesIn(cb, ns);
+      if (!names.length && !suites.length) {
         console.log(dim(`no tests${ns ? ` under ${ns}` : ""} (tests are definitions named test… or under a \`tests\` namespace)`));
         return 0;
       }
-      const outcomes = runCached(cb, names.map((n) => ({ path: n.path, rec: cb.store.getDef(n.hash)! })), cb.source(), model.fresh);
-      printOutcomes(outcomes);
-      console.log(`\n${summary(outcomes)}`);
-      return outcomes.every((o) => o.result.ok) ? 0 : 1;
+      let ok = true;
+      if (names.length) {
+        const outcomes = runCached(cb, names.map((n) => ({ path: n.path, rec: cb.store.getDef(n.hash)! })), cb.source(), model.fresh);
+        printOutcomes(outcomes);
+        console.log(`\n${summary(outcomes)}`);
+        ok = outcomes.every((o) => o.result.ok);
+      }
+      // suites: test files running a package's command, as a program
+      if (suites.length) {
+        console.log(`${names.length ? "\n" : ""}${bold("suites")} ${dim(`(running ${[...new Set(suites.map((s) => s.bin))].join(", ")})`)}`);
+        const outcomes = await runSuites(cb, suites, model.fresh);
+        printOutcomes(outcomes);
+        console.log(`\nsuites: ${summary(outcomes)}`);
+        ok &&= outcomes.every((o) => o.result.ok);
+      }
+      return ok ? 0 : 1;
     }
     case "view": {
       const { model } = execute(cmd, parse(commands.view, { argv: rest }));
