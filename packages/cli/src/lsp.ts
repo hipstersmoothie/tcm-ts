@@ -21,6 +21,9 @@ import { decode } from "./codec.ts";
 import { renderDoc } from "./docs.ts";
 import { definitionPage, docSummary, find } from "./pages.ts";
 import { packageList, packagePage, packageUsers } from "./package-pages.ts";
+import { publishingList, releaseCheck, releaseList, releasePage } from "./release-pages.ts";
+import { changelog, contributionsOn, generatedNotes, packPackage, planRelease, reasonFor, releasePackage, writeDraft } from "./releases.ts";
+import { author } from "./contributions.ts";
 import { upgradeTo, upgradeWithin } from "./upgrade.ts";
 import { prepareTestRun } from "./vitest.ts";
 import { lintScratch, type LintIssue } from "./lint.ts";
@@ -408,6 +411,31 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       const r = capture(() => tools.edit(c, args.map(String), file, false));
       if (!r.ok) message(1, r.output);
       return r.ok ? pathToFileURL(file).href : null;
+    }
+    // releases: [package, version?]; a draft (tcm.releaseDraft) opens in the editor; a release's notes come from its draft, if any
+    if (command === "tcm.release" || command === "tcm.releaseDraft" || command === "tcm.pack") {
+      const [name, version] = args.map((a) => (a === undefined || a === null || a === "" ? undefined : String(a)));
+      return (async () => {
+        try {
+          if (command === "tcm.releaseDraft") {
+            const plan = planRelease(c, name, undefined, true);
+            const file = writeDraft(c, plan, generatedNotes(c, plan, [...c.store.contributions(), ...(await contributionsOn(c, undefined))]));
+            return pathToFileURL(file).href;
+          }
+          if (command === "tcm.pack") {
+            const r = packPackage(c, name, version, undefined);
+            message(3, `packed ${r.pkg.name}@${r.version} into ${path.relative(c.lay.root, r.dir)}: ${r.modules} module(s)`);
+            return r.dir;
+          }
+          const { release, plan } = await releasePackage(c, { name, version, force: false, author: author() });
+          message(3, `released ${release.package}@${release.version}: ${reasonFor(plan)}`);
+          refreshAll();
+          return { package: release.package, version: release.version };
+        } catch (e) {
+          message(1, (e as Error).message);
+          return null;
+        }
+      })();
     }
     if (command === "tcm.upgrade") {
       // [name] within its ranges; [name, target, namespace?] to another range
@@ -894,7 +922,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
               hoverProvider: true,
               codeLensProvider: { resolveProvider: false },
               inlayHintProvider: true,
-              executeCommandProvider: { commands: ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.dataMigrate", "tcm.upgrade"] },
+              executeCommandProvider: { commands: ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.dataMigrate", "tcm.upgrade", "tcm.release", "tcm.releaseDraft", "tcm.pack"] },
               definitionProvider: true,
               referencesProvider: true,
               documentSymbolProvider: true,
@@ -1044,6 +1072,21 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         }
         return;
       }
+      // the codebase's own packages (manifests) and their releases
+      case "tcm/publishing":
+      case "tcm/releaseCheck":
+      case "tcm/releasePage":
+      case "tcm/releaseList":
+      case "tcm/changelog":
+        try {
+          const name = String(p?.name ?? "");
+          const result =
+            !cb ? [] : m.method === "tcm/publishing" ? publishingList(cb) : m.method === "tcm/releaseCheck" ? releaseCheck(cb, name) : m.method === "tcm/releasePage" ? releasePage(cb, name) : m.method === "tcm/releaseList" ? releaseList(cb, name) : { markdown: changelog(cb, name) };
+          send({ id: m.id, result });
+        } catch (e) {
+          send({ id: m.id, error: { code: -32602, message: (e as Error).message } });
+        }
+        return;
       // the packages the codebase runs: the lock, what uses each, and a page per package and range
       case "tcm/packages":
         send({ id: m.id, result: cb ? packageList(cb) : [] });

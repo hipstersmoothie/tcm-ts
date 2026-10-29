@@ -104,7 +104,7 @@ and open as pages.
 
 `editors/vscode` is the extension. Beyond starting `tcm lsp` in workspaces with a codebase, it adds:
 
-The `#` icon in the activity bar opens three views:
+The `#` icon in the activity bar opens these views:
 
 - **Apps.** A launcher: every app in the codebase, meaning every browser entry point (a function that runs in
   the browser, takes no arguments and isn't called by other code, like `polls.main`). **▶ Start** runs `tcm dev`
@@ -138,8 +138,22 @@ The `#` icon in the activity bar opens three views:
     another range** (`tcm upgrade <package>@<range> [namespace]`).
 
   A definition page's **Packages** list links to these pages too.
+- **Releases.** The codebase's own packages ([publishing](publishing.md#packages)), each with its latest
+  version. Under each:
+  - **Next:** what its next release would be (the version, and why: breaking changes, additions, or the same
+    API), and every [semver finding](releases.md#semver-checks) behind it, coloured by level: what changed and how,
+    with the lint and what it means for code using the package on hover. Click a finding to open its definition.
+  - its releases, newest first, with the summary of each; hover for the notes.
 
-All four refresh when the codebase changes (including from a terminal), and the Data view also when the data
+  **Release** (the rocket) shows the version and its notes, and asks; afterwards it offers **Push**, **Pack** and
+  the package page. **Draft release notes** opens `release-<package>.md` to write a summary in; above it, a lens
+  says what the release would be as things stand and releases it from there (saving the file first), and another
+  regenerates the list of changes. **Pack** packs the package, or a release of it, and **Save changelog…**
+  writes its changelog where you choose. Click a package to open its **package page**: what it exports and its
+  commands, the next release with every finding and its notes as they'd be, the whole changelog rendered, and
+  the same buttons.
+
+All five refresh when the codebase changes (including from a terminal), and the Data view also when the data
 does, so rows appear as a running app writes them.
 - **tcm: Find by type** (the search icon in the sidebar, or the command palette): type a TypeScript type, pick a
   match, and it opens.
@@ -156,7 +170,7 @@ Install from VSIX…**, or with VS Code's CLI (on macOS it's inside the app if `
 
 ```sh
 cd editors/vscode && npm install && npx @vscode/vsce package
-"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --install-extension tcm-ts-0.1.0.vsix
+"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --install-extension tcm-ts-*.vsix
 ```
 
 Don't symlink the folder into `~/.vscode/extensions`: VS Code only keeps extensions listed in its manifest, and

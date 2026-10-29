@@ -7,6 +7,7 @@ const vscode = require("vscode");
 const { LanguageClient } = require("vscode-languageclient/node");
 const { showTable, refreshTables } = require("./data-panel.js");
 const { Pages } = require("./pages-panel.js");
+const { ReleasesTree, DraftLenses } = require("./releases.js");
 
 let client;
 
@@ -17,7 +18,7 @@ let client;
 function tcmCommand() {
   const setting = vscode.workspace.getConfiguration("tcm").get("path", "tcm").trim();
   // a file: tcm itself, or its bin/tcm.js (spaces in the path and all)
-  if (fs.existsSync(setting)) return /\.(c|m)?js$/.test(setting) ? ["node", setting] : [setting];
+  if (fs.existsSync(setting)) return /\.(c|m)?(js|ts)$/.test(setting) ? ["node", setting] : [setting];
   return [...setting.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
 }
 
@@ -244,6 +245,10 @@ async function activate(context) {
       upgradePackage: (p) => vscode.commands.executeCommand("tcm.upgradePackage", p),
       upgradePackageTo: (p) => vscode.commands.executeCommand("tcm.upgradePackageTo", p),
       edit: (p) => vscode.commands.executeCommand("tcm.editDefinition", p.names[0]),
+      release: (p) => vscode.commands.executeCommand("tcm.releasePackage", p),
+      draftRelease: (p) => vscode.commands.executeCommand("tcm.draftRelease", p),
+      packPackage: (p) => vscode.commands.executeCommand("tcm.packPackage", p),
+      saveChangelog: (p) => vscode.commands.executeCommand("tcm.saveChangelog", p),
       usages: (p) => vscode.commands.executeCommand("tcm.findUsages", p.uri),
       run: (p) => vscode.commands.executeCommand("tcm.runDefinition", p.names[0]),
       debug: (p) => vscode.commands.executeCommand("tcm.debugDefinition", p.names[0]),
@@ -259,6 +264,20 @@ async function activate(context) {
   const apps = new AppsTree(running);
   const data = new DataTree();
   const packages = new PackagesTree();
+  const releases = new ReleasesTree((method, params) => client.sendRequest(method, params));
+  const lenses = new DraftLenses((method, params) => client.sendRequest(method, params));
+  const releasesChanged = () => {
+    releases.refresh();
+    lenses.changed.fire();
+    pages.refresh();
+  };
+  /** A package's name, from a tree item, a page, or by asking. */
+  const packageOf = async (x) => {
+    if (x?.name) return x.name;
+    const pkgs = await client.sendRequest("tcm/publishing", {});
+    if (pkgs.length === 1) return pkgs[0].name;
+    return (await vscode.window.showQuickPick(pkgs.map((p) => ({ label: p.name, description: p.latest?.version ?? "unreleased" })), { placeHolder: "Which package?" }))?.label;
+  };
   const upgrade = async (name, target, namespace) => {
     const label = target ? `${name} → ${target}${namespace ? ` in ${namespace}` : ""}` : name;
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Upgrading ${label}…` }, () =>
@@ -360,6 +379,62 @@ async function activate(context) {
     vscode.window.createTreeView("tcm.apps", { treeDataProvider: apps }),
     vscode.window.createTreeView("tcm.data", { treeDataProvider: data }),
     vscode.window.createTreeView("tcm.packages", { treeDataProvider: packages }),
+    vscode.window.createTreeView("tcm.releases", { treeDataProvider: releases, showCollapseAll: true }),
+    vscode.languages.registerCodeLensProvider({ language: "markdown", pattern: "**/release-*.md" }, lenses),
+    vscode.commands.registerCommand("tcm.openReleasePage", async (x) => {
+      const name = await packageOf(x);
+      if (name) pages.open({ release: { name } });
+    }),
+    // what the semver checks found is the version: say it, show the notes, and ask
+    vscode.commands.registerCommand("tcm.releasePackage", async (x) => {
+      const name = await packageOf(x);
+      if (!name) return;
+      if (x?.fromDraft) await vscode.workspace.textDocuments.find((d) => d.uri.toString() === x.fromDraft.toString())?.save();
+      const check = await client.sendRequest("tcm/releaseCheck", { name });
+      if (check.blocked) return vscode.window.showWarningMessage(check.blocked);
+      const go = await vscode.window.showInformationMessage(
+        `Release ${name}@${check.version}?`,
+        { modal: true, detail: `${check.after ? `After ${check.after}: ` : ""}${check.reason}.\n\n${check.notes}` },
+        "Release",
+      );
+      if (go !== "Release") return;
+      const r = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Releasing ${name}…` }, () => run("tcm.release", [name]));
+      releasesChanged();
+      if (!r) return;
+      const next = await vscode.window.showInformationMessage(`Released ${r.package}@${r.version}.`, "Push", "Pack", "Open page");
+      if (next === "Push") {
+        const term = vscode.window.createTerminal({ name: "tcm push", cwd: folder });
+        term.show();
+        term.sendText([...tcmCommand(), "push"].map(quote).join(" "));
+      } else if (next === "Pack") vscode.commands.executeCommand("tcm.packPackage", { name: r.package, version: r.version });
+      else if (next === "Open page") pages.open({ release: { name: r.package } });
+    }),
+    // a markdown scratch file for the release's words; the list of changes in it is regenerated when it's made
+    vscode.commands.registerCommand("tcm.draftRelease", async (x) => {
+      const name = await packageOf(x);
+      if (!name) return;
+      const open = vscode.workspace.textDocuments.find((d) => d.uri.path.endsWith(`/release-${name.replace(/^@/, "").replace("/", "-")}.md`));
+      await open?.save();
+      const uri = await run("tcm.releaseDraft", [name]);
+      if (!uri) return;
+      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.parse(uri)));
+      lenses.changed.fire();
+    }),
+    vscode.commands.registerCommand("tcm.packPackage", async (x) => {
+      const name = await packageOf(x);
+      if (!name) return;
+      const dir = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Packing ${name}${x?.version ? `@${x.version}` : ""}…` }, () => run("tcm.pack", [name, x?.version]));
+      if (dir && (await vscode.window.showInformationMessage(`Packed into ${dir}.`, "Reveal")) === "Reveal") vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(dir));
+    }),
+    vscode.commands.registerCommand("tcm.saveChangelog", async (x) => {
+      const name = await packageOf(x);
+      if (!name) return;
+      const { markdown } = await client.sendRequest("tcm/changelog", { name });
+      const to = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(`${folder}/CHANGELOG.md`), filters: { Markdown: ["md"] }, title: `${name}'s changelog` });
+      if (!to) return;
+      await vscode.workspace.fs.writeFile(to, Buffer.from(markdown));
+      vscode.window.showTextDocument(to);
+    }),
     vscode.commands.registerCommand("tcm.openPackagePage", (x) => x?.name && pages.open({ package: { name: x.name, range: x.range ?? x.ranges?.[0]?.range } })),
     // within the ranges in use: no hashes change, everything using it is re-checked
     vscode.commands.registerCommand("tcm.upgradePackage", (x) => x?.name && upgrade(x.name)),
@@ -465,6 +540,8 @@ async function activate(context) {
       tree.refresh();
       apps.refresh();
       data.refresh();
+      packages.refresh();
+      releases.refresh();
     }),
     vscode.commands.registerCommand("tcm.openDefinition", (item) => item && vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(item.uri))),
     vscode.commands.registerCommand("tcm.editDefinition", async (x) => {
@@ -534,8 +611,8 @@ async function activate(context) {
     apps.refresh();
     data.refresh();
     packages.refresh();
+    releasesChanged();
     refreshTables();
-    pages.refresh();
     for (const d of vscode.workspace.textDocuments) if (d.uri.scheme === "tcm") views.fire(d.uri);
   });
   // rows changed (a running app wrote some, or a migration): refresh the data views and open row documents
@@ -548,6 +625,7 @@ async function activate(context) {
   apps.refresh();
   data.refresh();
   packages.refresh();
+  releases.refresh();
 }
 
 function deactivate() {

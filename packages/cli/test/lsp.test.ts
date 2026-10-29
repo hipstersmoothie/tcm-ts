@@ -86,7 +86,7 @@ square(12);
   const c = client();
   const init = await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir).href, capabilities: {}, clientInfo: { name: "test" } });
   assert.ok(init.capabilities.codeLensProvider && init.capabilities.inlayHintProvider && init.capabilities.hoverProvider);
-  assert.deepEqual(init.capabilities.executeCommandProvider.commands, ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.dataMigrate", "tcm.upgrade"]);
+  assert.deepEqual(init.capabilities.executeCommandProvider.commands, ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.dataMigrate", "tcm.upgrade", "tcm.release", "tcm.releaseDraft", "tcm.pack"]);
   c.notify("initialized", {});
   c.notify("textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text } });
   const doc = { textDocument: { uri } };
@@ -462,4 +462,68 @@ test("debugging from the editor: launch configurations for a definition, a test 
   const lenses = await c.request("textDocument/codeLens", { textDocument: { uri: pathToFileURL(path.join(dir6, ".tcm", "src", "lib", "testAnswer.ts")).href } });
   assert.ok(lenses.some((l: { command: { title: string; command: string } }) => l.command.title === "Debug" && l.command.command === "tcm.debugTest"));
   c.child.kill();
+});
+
+test("releases in the editor: packages, the next release and why, drafting, releasing, the changelog, packing", async () => {
+  const dir6 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "tcm lsp releases ")));
+  const tcm = (...args: string[]) => spawnSync(process.execPath, [BIN, ...args], { cwd: dir6, env, encoding: "utf8" });
+  tcm("init");
+  fs.writeFileSync(path.join(dir6, "scratch.ts"), `// tcm: namespace geo\n/** Plane geometry. */\nexport const manifest = { name: "geo" };\nexport interface Point { x: number; y: number }\n/** The distance between two points. */\nexport const distance = (a: Point, b: Point): number => Math.hypot(a.x - b.x, a.y - b.y);\n`);
+  assert.equal(tcm("add").status, 0);
+  assert.equal(tcm("release").status, 0);
+  fs.writeFileSync(path.join(dir6, "scratch.ts"), `// tcm: namespace geo\nexport interface Point { x: number; y: number; label: string }\n`);
+  assert.equal(tcm("update").status, 0);
+
+  const c = client();
+  await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir6).href, capabilities: {}, clientInfo: { name: "Visual Studio Code" } });
+  c.notify("initialized", {});
+  const list = await c.request("tcm/publishing", {});
+  assert.deepEqual(list.map((p: { name: string; namespace: string; latest: { version: string } }) => [p.name, p.namespace, p.latest.version]), [["geo", "geo", "0.1.0"]]);
+  assert.equal(list[0].description, "Plane geometry.");
+
+  // the next release, and every finding behind it, with the definition each is about
+  const check = await c.request("tcm/releaseCheck", { name: "geo" });
+  assert.equal(check.version, "0.2.0");
+  assert.equal(check.reason, "breaking changes");
+  const f = check.findings.find((x: { lint: string }) => x.lint === "type_required_property_added");
+  assert.deepEqual([f.path, f.level, f.detail], ["geo.Point", "major", "label"]);
+  assert.match(f.why, /values written for the old type lack it/);
+  assert.ok(f.hash, "a finding links to its definition");
+  assert.match(check.notes, /### Breaking changes\n\n- `geo\.Point` has a new required property: `label`/);
+
+  // drafting writes the scratch file the editor opens; releasing takes its words
+  const draft = await c.request("workspace/executeCommand", { command: "tcm.releaseDraft", arguments: ["geo"] });
+  const file = fileURLToPath(draft);
+  assert.equal(path.basename(file), "release-geo.md");
+  fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("<!-- what this release is about, for the people who use it -->", "Points have labels."));
+  assert.deepEqual(await c.request("workspace/executeCommand", { command: "tcm.release", arguments: ["geo"] }), { package: "geo", version: "0.2.0" });
+  await c.waitFor(() => c.notes.find((n) => n.method === "window/showMessage" && /released geo@0\.2\.0: breaking changes/.test(n.params.message)));
+  assert.ok(!fs.existsSync(file));
+
+  // the page: the manifest, the next release, the changelog
+  const page = await c.request("tcm/releasePage", { name: "geo" });
+  assert.deepEqual(page.exports, [{ subpath: ".", count: 2 }]);
+  assert.deepEqual(page.releases.map((r: { version: string }) => r.version), ["0.2.0", "0.1.0"]);
+  assert.equal(page.releases[0].summary, "Points have labels.");
+  assert.equal(page.next.upToDate, true, "nothing new since the release");
+  assert.deepEqual((await c.request("tcm/releaseList", { name: "geo" })).map((r: { version: string }) => r.version), ["0.2.0", "0.1.0"]);
+  assert.match((await c.request("tcm/releaseList", { name: "geo" }))[0].body, /^Points have labels\.\n\n### Breaking changes/);
+  assert.match((await c.request("tcm/changelog", { name: "geo" })).markdown, /^# Changelog\n\n## 0\.2\.0 .*\n\nPoints have labels\./);
+
+  const dir = await c.request("workspace/executeCommand", { command: "tcm.pack", arguments: ["geo", "0.2.0"] });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).version, "0.2.0");
+  assert.ok(fs.existsSync(path.join(dir, "CHANGELOG.md")));
+  await assert.rejects(c.request("tcm/releasePage", { name: "nope" }), /no package nope/);
+  await c.request("shutdown", null);
+});
+
+test("the VS Code extension registers none of the commands the server offers (its client registers those)", async () => {
+  const c = client();
+  const init = await c.request("initialize", { processId: null, rootUri: null, capabilities: {}, clientInfo: { name: "Visual Studio Code" } });
+  const offered: string[] = init.capabilities.executeCommandProvider.commands;
+  const extension = fs.readFileSync(fileURLToPath(new URL("../../../editors/vscode/extension.js", import.meta.url)), "utf8");
+  const registered = [...extension.matchAll(/registerCommand\("([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(registered.length > 10);
+  assert.deepEqual(registered.filter((r) => offered.includes(r)), [], "both registering one fails the client's start: 'command already exists'");
+  await c.request("shutdown", null);
 });

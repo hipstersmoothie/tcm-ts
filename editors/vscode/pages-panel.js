@@ -16,7 +16,7 @@ class Pages {
   }
 
   async open(target) {
-    const key = target.package ? `pkg:${target.package.name}@${target.package.range}` : target.hash ? `def:${target.hash}` : `ns:${target.namespace}`;
+    const key = target.release ? `rel:${target.release.name}` : target.package ? `pkg:${target.package.name}@${target.package.range}` : target.hash ? `def:${target.hash}` : `ns:${target.namespace}`;
     const open = this.panels.get(key);
     if (open) {
       open.panel.reveal();
@@ -41,7 +41,12 @@ class Pages {
     if (!open) return;
     const { panel, target } = open;
     try {
-      if (target.package) {
+      if (target.release) {
+        const page = await this.request("tcm/releasePage", { name: target.release.name });
+        panel.title = `${page.name} (releases)`;
+        const [nextHtml, ...notesHtml] = await Promise.all([markdown(page.next.notes), ...page.releases.map((r) => markdown(r.body))]);
+        panel.webview.postMessage({ type: "page", card: { kind: "release", page, nextHtml, notesHtml } });
+      } else if (target.package) {
         const page = await this.request("tcm/packagePage", target.package);
         panel.title = `${page.name} ${page.range} (package)`;
         const docs = await Promise.all(page.api.map((a) => (a.doc ? markdown(a.doc) : "")));
@@ -126,6 +131,39 @@ function html(webview) {
   .group h3 { margin: 10px 14px 4px; font-size: .95em; opacity: .8; }
   .group ul { list-style: none; margin: 0 14px 8px; padding: 0; }
   .group li { margin: 3px 0; } .group .summary { opacity: .75; }
+  /* package (releases) pages */
+  .lede { margin: 10px 14px 4px; font-size: 1.05em; }
+  .facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 10px 14px 18px; font-size: .92em; }
+  .facts dt { opacity: .6; } .facts dd { margin: 0; }
+  code { font-family: var(--vscode-editor-font-family); font-size: .95em; background: var(--vscode-textCodeBlock-background); padding: 0 4px; border-radius: 3px; }
+  .muted { opacity: .65; }
+  .next { margin: 0 14px 24px; padding: 12px 16px 10px; border: 1px solid var(--vscode-panel-border); border-left: 4px solid var(--vscode-charts-blue); border-radius: 6px; background: var(--vscode-sideBar-background, transparent); }
+  .next.level-major { border-left-color: var(--vscode-charts-red); } .next.level-minor { border-left-color: var(--vscode-charts-yellow); }
+  .next.done { border-left-color: var(--vscode-charts-green); } .next.blocked { border-left-color: var(--vscode-charts-orange); }
+  .next-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .next-head h3 { margin: 0; font-size: 1.1em; }
+  .next-actions { margin-left: auto; display: flex; gap: 6px; }
+  button.primary, .next-actions button { font: inherit; font-size: .9em; padding: 3px 10px; border-radius: 3px; border: 1px solid var(--vscode-button-border, transparent); cursor: pointer;
+    background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+  .next-actions button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .next h4 { margin: 14px 0 4px; font-size: .78em; text-transform: uppercase; letter-spacing: .06em; }
+  .level-major { color: var(--vscode-charts-red); } .level-minor { color: var(--vscode-charts-yellow); } .level-patch { color: var(--vscode-charts-blue); }
+  ul.findings { list-style: none; margin: 0; padding: 0; }
+  ul.findings li { padding: 4px 0; border-top: 1px solid var(--vscode-panel-border); }
+  ul.findings li:first-child { border-top: none; }
+  ul.findings a { color: var(--vscode-textLink-foreground); cursor: pointer; font-family: var(--vscode-editor-font-family); }
+  ul.findings a:hover { text-decoration: underline; }
+  ul.findings .why { opacity: .65; font-size: .88em; margin-top: 1px; } .lint { font-family: var(--vscode-editor-font-family); }
+  details.preview { margin-top: 10px; } details.preview summary, .timeline summary { cursor: pointer; }
+  .section-title { margin: 0 14px 8px; font-size: 1.1em; }
+  ol.timeline { list-style: none; margin: 0 14px; padding: 0 0 0 16px; border-left: 2px solid var(--vscode-panel-border); }
+  ol.timeline > li { position: relative; margin: 0 0 14px; }
+  ol.timeline > li::before { content: ""; position: absolute; left: -22px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--vscode-charts-blue); }
+  .timeline summary { display: flex; align-items: baseline; gap: 10px; }
+  .timeline .version { font-weight: 600; font-size: 1.05em; font-family: var(--vscode-editor-font-family); }
+  .notes { padding: 4px 0 0; }
+  .notes h3 { font-size: .78em; text-transform: uppercase; letter-spacing: .06em; opacity: .7; margin: 12px 0 2px; }
+  .notes ul { margin: 2px 0 6px; padding-left: 18px; } .notes p { margin: 4px 0 8px; }
 </style></head>
 <body>
 <div id="cards"></div>
@@ -186,6 +224,54 @@ function packageCard(c) {
   return h;
 }
 
+const LEVELS = [["major", "Breaking", "level-major"], ["minor", "Additions", "level-minor"], ["patch", "Same API", "level-patch"]];
+const day = (ts) => new Date(ts).toISOString().slice(0, 10);
+function releaseCard(c) {
+  const p = c.page;
+  const n = p.next;
+  const latest = p.releases[0];
+  const sub = (s) => (s === "." ? p.name : p.name + s.slice(1));
+  let h = '<div class="head"><h2>' + esc(p.name) + '</h2><span class="badge">' + esc(latest ? latest.version : "unreleased") + "</span>" +
+    '<div class="actions"><button data-action="packPackage">Pack</button>' + (p.releases.length ? '<button data-action="saveChangelog">Save changelog</button>' : "") +
+    '<button data-hash="' + esc(p.manifestHash) + '">Manifest</button></div></div>';
+  if (p.description) h += '<p class="lede">' + esc(p.description) + "</p>";
+  const facts = [
+    ["Namespace", "<code>" + esc(p.namespace || "(the codebase)") + "</code>"],
+    ["Exports", p.exports.map((e) => "<code>" + esc(sub(e.subpath)) + "</code> " + e.count + " definition" + (e.count === 1 ? "" : "s")).join(", ")],
+    p.bin.length ? ["Commands", p.bin.map((b) => "<code>" + esc(b.command) + "</code> runs " + esc(b.target)).join(", ")] : null,
+    p.with.length ? ["Also needs", p.with.map((w) => "<code>" + esc(w) + "</code>").join(", ")] : null,
+    ["Releases", p.releases.length ? p.releases.length + ", latest " + esc(latest.version) + " on " + day(latest.ts) : "none yet"],
+  ].filter(Boolean);
+  h += '<dl class="facts">' + facts.map(([k, v]) => "<dt>" + k + "</dt><dd>" + v + "</dd>").join("") + "</dl>";
+
+  // the next release: what it would be, and why
+  const tone = n.blocked ? "blocked" : n.upToDate ? "done" : n.level ? "level-" + n.level : "level-patch";
+  h += '<section class="next ' + tone + '"><div class="next-head">';
+  if (n.upToDate) h += '<h3>Up to date</h3><span class="muted">nothing new since ' + esc(n.after) + "</span>";
+  else h += "<h3>Next release: " + esc(n.version) + '</h3><span class="muted">' + (n.after ? "after " + esc(n.after) + " · " : "") + esc(n.reason) + "</span>";
+  if (!n.upToDate) h += '<div class="next-actions">' + (n.blocked ? "" : '<button class="primary" data-action="release">Release ' + esc(n.version) + "</button>") + '<button data-action="draftRelease">Write notes</button></div>';
+  h += "</div>";
+  if (n.blocked) h += '<p class="problem">' + esc(n.blocked) + "</p>";
+  for (const [level, label, cls] of LEVELS) {
+    const fs = n.findings.filter((f) => f.level === level);
+    if (!fs.length) continue;
+    h += '<h4 class="' + cls + '">' + label + '</h4><ul class="findings">' + fs.map((f) =>
+      '<li><div>' + (f.hash ? '<a data-hash="' + esc(f.hash) + '">' + esc(f.path) + "</a>" : "<code>" + esc(f.path) + "</code>") + " " + esc(f.summary) +
+      (f.detail ? ": <code>" + esc(f.detail) + "</code>" : "") + '</div><div class="why">' + esc(f.why) + ' · <span class="lint">' + esc(f.lint) + "</span></div></li>").join("") + "</ul>";
+  }
+  if (n.following.length) h += '<p class="muted">' + n.following.length + " definition(s) only follow these changes.</p>";
+  if (!n.upToDate && c.nextHtml) h += '<details class="preview"><summary>Preview its notes</summary><div class="doc notes">' + c.nextHtml + "</div></details>";
+  h += "</section>";
+
+  // the changelog
+  h += '<h3 class="section-title">Releases</h3>';
+  if (!p.releases.length) h += '<p class="muted">None yet.</p>';
+  h += '<ol class="timeline">' + p.releases.map((r, i) =>
+    '<li><details' + (i < 3 ? " open" : "") + '><summary><span class="version">' + esc(r.version) + '</span><span class="muted">' + day(r.ts) + " · " + esc(r.author) + " · " + esc(r.causal) + "</span></summary>" +
+    '<div class="doc notes">' + c.notesHtml[i] + "</div></details></li>").join("") + "</ol>";
+  return h;
+}
+
 function namespaceCard(c) {
   const p = c.page;
   let h = '<div class="head"><h2>' + esc(p.namespace || "(root)") + '</h2><span class="badge">namespace</span></div>';
@@ -204,7 +290,7 @@ window.addEventListener("message", (e) => {
   if (m.type !== "page") return;
   const c = m.card;
   const root = document.getElementById("cards");
-  root.innerHTML = '<div class="card">' + (c.error ? '<div class="problem">' + esc(c.error) + "</div>" : c.kind === "def" ? defCard(c) : c.kind === "package" ? packageCard(c) : namespaceCard(c)) + "</div>";
+  root.innerHTML = '<div class="card">' + (c.error ? '<div class="problem">' + esc(c.error) + "</div>" : c.kind === "def" ? defCard(c) : c.kind === "package" ? packageCard(c) : c.kind === "release" ? releaseCard(c) : namespaceCard(c)) + "</div>";
   root.firstChild.addEventListener("click", (ev) => {
     const a = ev.target.closest("a, button");
     if (!a) return;
