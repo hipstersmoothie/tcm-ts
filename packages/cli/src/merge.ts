@@ -123,7 +123,7 @@ export function mergeBranch(cb: Codebase, theirs: string, command = `merge ${the
   });
 
   // the other side's code may still reference definitions this merge replaced: re-derive it
-  const { updated, failed } = result.patches.size ? cb.propagate(new Map(result.patches), new Set()) : { updated: [], failed: [] };
+  const { updated, failed } = result.patches.size ? cb.propagate(new Map(result.patches)) : { updated: [], failed: [] };
   cb.refreshShim();
 
   const after = stateOf(cb.store.names());

@@ -533,14 +533,14 @@ export class Codebase {
   /**
    * After names moved to new hashes (`patches`: old → new), re-derive every live dependent:
    * re-render its stored source against the patched references, typecheck, and re-hash.
-   * Dependents that no longer typecheck go to `todo` and keep their old hash.
+   * Dependents that no longer typecheck go to `todo` and keep their old hash. That includes definitions just
+   * saved: one saved with a scratch file refers to what it uses as it was, and if that's re-derived too, so is it.
    *
    * `repin` re-derives some definitions against other package versions too (`tcm upgrade`): those definitions,
    * rendered with their imports re-pinned, then everything that depends on them.
    */
   propagate(
     patches: Map<string, string>,
-    exclude: Set<string>,
     repin?: { hashes: Set<string>; module: (module: string) => string; command: string },
   ): { updated: string[]; failed: string[] } {
     const { store, lay } = this;
@@ -549,7 +549,7 @@ export class Codebase {
     const queue = [...patches.keys(), ...(repin?.hashes ?? [])];
     while (queue.length) {
       for (const dep of store.dependents(queue.pop()!)) {
-        if (live.has(dep) && !patches.has(dep) && !exclude.has(dep) && !affected.has(dep)) {
+        if (live.has(dep) && !patches.has(dep) && !affected.has(dep)) {
           affected.add(dep);
           queue.push(dep);
         }

@@ -241,7 +241,7 @@ function apply(cb: Codebase, rows: Row[], mode: "add" | "update", command: strin
   for (const r of skipped) console.log(`${yellow("  ~ skipped  ")} ${bold(r.path)} ${dim("already names a different definition; use `tcm update`")}`);
   checkStoredRows(cb, rows.map((r) => r.def));
   if (patches.size) {
-    const { updated, failed } = cb.propagate(patches, new Set(rows.map((r) => r.def.hash)));
+    const { updated, failed } = cb.propagate(patches);
     for (const p of updated) console.log(`${yellow("  ~ updated  ")} ${bold(p)} ${dim("(dependent)")}`);
     if (failed.length) console.log(red(`\n  ${failed.length} dependent definition(s) no longer typecheck; see \`tcm todo\``));
   }

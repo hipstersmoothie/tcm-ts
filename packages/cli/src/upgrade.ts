@@ -146,7 +146,7 @@ export function upgradeTo(cb: Codebase, name: string, target: string, namespace:
     return true;
   }
   console.log(`re-pinning ${hashes.size} definition(s)${where} to ${bold(`${name} ${range}`)}${peerRanges.size ? dim(`, with ${[...peerRanges].map(([n, r]) => `${n} ${r}`).join(", ")}`) : ""}`);
-  const r = cb.propagate(new Map(), new Set(), { hashes, module, command: `upgrade ${name}@${range}` });
+  const r = cb.propagate(new Map(), { hashes, module, command: `upgrade ${name}@${range}` });
   for (const p of r.updated) console.log(`  ${green("~")} ${p}`);
   if (r.failed.length) {
     console.log(yellow(`\n${r.failed.length} definition(s) didn't typecheck on ${name} ${range}; they keep their old versions and are in \`tcm todo\`:`));

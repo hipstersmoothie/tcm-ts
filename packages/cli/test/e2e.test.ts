@@ -126,6 +126,15 @@ export const probe = () => { cacheA.set("k", 1); return String(cacheA === cacheB
   assert.equal(hashOf("state.check"), before);
 });
 
+test("a definition saved with what it uses re-derived reaches the new version", () => {
+  scratch(`// tcm: namespace chain\nexport const a = () => 1;\nexport const b = () => a() * 10;\nexport const c = () => b() + 100;\n`);
+  tcm("add");
+  // a and c change together; b, between them and not in the file, is re-derived: c must use the new b
+  scratch(`// tcm: namespace chain\nimport { b } from "#codebase/chain";\nexport const a = () => 2;\nexport const c = () => b() + 200;\n`);
+  assert.match(tcm("update"), /~ updated +chain\.b \(dependent\)/);
+  assert.equal(tcm("run", "chain.c").trim(), "220");
+});
+
 test("tests are definitions, cached by hash", () => {
   scratch(`// tcm: namespace calc
 import assert from "node:assert/strict";
