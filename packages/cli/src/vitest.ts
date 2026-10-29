@@ -18,7 +18,7 @@ import { pathToFileURL } from "node:url";
 import { exportId, type DefRecord } from "@tcm/core";
 import { materialize, moduleFile, type DefSource, type TestRun } from "@tcm/loader";
 import { Codebase } from "./codebase.ts";
-import { testPlugins } from "./web.ts";
+import { pluginsForTests } from "./web.ts";
 import { provideTool, toolRange } from "./lint.ts";
 import { Placement } from "./placement.ts";
 
@@ -43,7 +43,7 @@ interface Request {
 }
 
 /** The key test results are cached under: the runtime and the test framework that produced them. */
-export function testRunKey(cb: Codebase): string {
+export function resultKey(cb: Codebase): string {
   const range = toolRange(cb, "vitest");
   const vitest = range && cb.store.lockedVersion("vitest", range);
   return `${process.version}${vitest ? ` vitest@${vitest}` : ""}`;
@@ -124,7 +124,7 @@ export function runTestsWithVitest(cb: Codebase, tests: { hash: string; componen
 }
 
 /** One generated Vitest file: each test definition as a `test()`, named by its hash. */
-function testFile(dir: string, cacheDir: string, vitestImport: string, tests: TestEntry[]): string {
+function vitestModule(dir: string, cacheDir: string, vitestImport: string, tests: TestEntry[]): string {
   const rel = path.relative(dir, cacheDir).split(path.sep).join("/");
   const lines = [`import { test } from ${JSON.stringify(vitestImport)};`];
   tests.forEach((t, i) => lines.push(`import { ${t.export} as t${i} } from ${JSON.stringify(`${rel}/${t.module}`)};`));
@@ -171,15 +171,15 @@ export async function vitestChild(requestFile: string): Promise<void> {
   const vitestImport = path.basename(request.vitest);
   const projects: Record<string, unknown>[] = [];
   if (request.node.length) {
-    fs.writeFileSync(path.join(run, "node.test.ts"), testFile(run, cb.lay.cacheDir, vitestImport, request.node));
+    fs.writeFileSync(path.join(run, "node.test.ts"), vitestModule(run, cb.lay.cacheDir, vitestImport, request.node));
     projects.push({ test: { name: "node", include: ["node.test.ts"], environment: "node" } });
   }
   if (request.browserTests.length && request.browser) {
-    fs.writeFileSync(path.join(run, "browser.test.ts"), testFile(run, cb.lay.cacheDir, vitestImport, request.browserTests));
+    fs.writeFileSync(path.join(run, "browser.test.ts"), vitestModule(run, cb.lay.cacheDir, vitestImport, request.browserTests));
     const { playwright } = (await import(pathToFileURL(path.join(request.browser.provider, "dist", "index.js")).href)) as { playwright: (o: unknown) => unknown };
     const unsaved = new Map(request.unsaved.map((r) => [r.hash, r]));
     projects.push({
-      plugins: testPlugins(
+      plugins: pluginsForTests(
         cb,
         request.browserTests.map((t) => t.hash),
         (h) => unsaved.get(h) ?? cb.store.getDef(h),

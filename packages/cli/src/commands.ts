@@ -77,6 +77,7 @@ export const commands = {
     toggle(name("update"), description("replace definitions that changed since an earlier import")),
     option(name("exclude"), description("paths to skip, comma-separated"), schema(list)),
     toggle(name("verbose"), description("report every definition")),
+    toggle(name("tests"), description("also import test/ and tests/ directories of test definitions (*.test.ts files stay skipped)")),
   ),
   edit: command(name("edit"), description("write definitions to a scratch file for editing"), argument(name("names"), description("names or #hashes"), multiple(), schema(words)), option(name("file"), description("the scratch file (default scratch.ts, or scratch.tsx for JSX)"), schema(text(null))), force("overwrite a scratch file that has unsaved definitions")),
   view: command(name("view"), description("show definitions with current names"), argument(name("names"), description("names or #hashes"), multiple(), schema(words))),

@@ -14,7 +14,7 @@ import { checkDocExamples, renderDoc } from "./docs.ts";
 import { build, dev, listBuilds, migrateTable, parseHttpFlag, pruneBuilds, start } from "./web.ts";
 import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
-import { evaluateCached, isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
+import { evaluateCached, isTestPath, printOutcomes, runCached, summary } from "./testing.ts";
 import { listPackages, upgradeTo, upgradeWithin } from "./upgrade.ts";
 import { pack } from "./pack.ts";
 import { vitestChild } from "./vitest.ts";
@@ -303,12 +303,14 @@ function data(cb: Codebase, table?: string, limit = 20) {
 // ---- importing existing projects ---------------------------------------------------------------------
 
 const SKIP_DIRS = new Set(["node_modules", "test", "tests", "__tests__", "dist", "build"]);
+/** With `--tests`: directories of tests written as definitions (`test…`), imported like the code they test. */
+const TEST_DIRS = new Set(["test", "tests"]);
 
-function sourceFiles(dir: string, exclude: Set<string>): string[] {
+function sourceFiles(dir: string, exclude: Set<string>, tests: boolean): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
     if (exclude.has(path.resolve(p))) return [];
-    if (e.isDirectory()) return e.name.startsWith(".") || SKIP_DIRS.has(e.name) ? [] : sourceFiles(p, exclude);
+    if (e.isDirectory()) return e.name.startsWith(".") || (SKIP_DIRS.has(e.name) && !(tests && TEST_DIRS.has(e.name))) ? [] : sourceFiles(p, exclude, tests);
     return /\.(m|c)?ts$/.test(e.name) && !/\.d\.(m|c)?ts$|\.(test|spec)(-d)?\.(m|c)?ts$/.test(e.name) ? [p] : [];
   });
 }
@@ -320,9 +322,9 @@ function namespaceForFile(root: string, file: string): string {
   return segs.map((s) => s.replace(/[^\w$]/g, "_").replace(/^(\d)/, "_$1")).join(".");
 }
 
-function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: string, verbose: boolean, exclude: string[]): boolean {
+function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: string, verbose: boolean, exclude: string[], tests: boolean): boolean {
   const root = path.resolve(dir);
-  const files = sourceFiles(root, new Set(exclude.map((e) => path.resolve(root, e))));
+  const files = sourceFiles(root, new Set(exclude.map((e) => path.resolve(root, e))), tests);
   if (!files.length) throw new UsageError(`no .ts files under ${dir}`);
   console.log(dim(`analyzing ${files.length} files under ${dir}…`));
   cb.refreshShim();
@@ -768,7 +770,7 @@ square(12);
     }
     case "import": {
       const { model } = execute(cmd, parse(commands.import, { argv: rest }));
-      return importProject(cb, model.dir, model.update ? "update" : "add", checkInto(model.into) ?? "", model.verbose, model.exclude) ? 0 : 1;
+      return importProject(cb, model.dir, model.update ? "update" : "add", checkInto(model.into) ?? "", model.verbose, model.exclude, model.tests) ? 0 : 1;
     }
     case "verify":
       execute(cmd, parse(commands.verify, { argv: rest }));

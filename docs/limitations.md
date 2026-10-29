@@ -11,7 +11,7 @@ What isn't done yet, or is deliberately out of scope:
 - **Cached watch and test results can go stale** when they depend on the outside world (files, the clock,
   randomness); `--fresh` re-runs them.
 - **`import.meta`** is location-dependent: it's evaluated inside `.tcm/cache`, so tcm warns about it.
-- **`tcm import` skips test files** ([importing](importing.md)) and refuses `declare module`/`declare global`,
+- **`tcm import` skips test files**, except test definitions with `--tests` ([importing](importing.md)), and refuses `declare module`/`declare global`,
   `import x = require()`, decorators and top-level statements.
 - **Adding the same code at two paths creates two definitions** (lineage salts, see
   [hashing](hashing.md#identity)). To share one definition under two names, use `tcm alias`.

@@ -504,7 +504,7 @@ function rpcHandler(
  * Vite plugins for browser tests: like an app's (server code stubbed, called by hash), with the endpoints
  * answered by the test server itself. `get` sees definitions not stored yet.
  */
-export function testPlugins(cb: Codebase, tests: string[], get: (h: string) => DefRecord | undefined, members: (c: string) => DefRecord[]): Plugin[] {
+export function pluginsForTests(cb: Codebase, tests: string[], get: (h: string) => DefRecord | undefined, members: (c: string) => DefRecord[]): Plugin[] {
   const placement = new Placement(cb, get);
   const plan: AppPlan = {
     browser: new Set(), components: new Set(), clientRefs: new Set(), refsOf: new Map(), endpoints: new Set(), stubbed: new Set(), streaming: new Set(), errors: [], warnings: [],

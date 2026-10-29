@@ -5,7 +5,7 @@
 import type { NameRow } from "@tcm/store";
 import type { Codebase } from "./codebase.ts";
 import { configValue } from "./config.ts";
-import { isTestPath } from "./tests.ts";
+import { isTestPath } from "./testing.ts";
 
 export interface Manifest {
   name: string;

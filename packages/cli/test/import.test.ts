@@ -156,3 +156,26 @@ test("a project's own @types are found from the project, wherever tcm runs", () 
   if (!fs.existsSync(path.join(dir, ".tcm"))) tcm("init");
   assert.match(tcm("import", project, "--into", "host"), /\+ new/);
 });
+
+test("--tests imports tests written as definitions; tcm test runs them, cached by hash", () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "tcm import tests "));
+  const put = (file: string, text: string) => {
+    fs.mkdirSync(path.dirname(path.join(project, file)), { recursive: true });
+    fs.writeFileSync(path.join(project, file), text);
+  };
+  put("package.json", JSON.stringify({ type: "module" }));
+  put("src/math.ts", `export const double = (x: number): number => x * 2;\nexport const half = (x: number): number => x / 2;\n`);
+  // a helper next to the tests is a plain definition; only `test…` names are tests
+  put("test/math.ts", `import assert from "node:assert/strict";\nimport { double, half } from "../src/math.ts";\nexport const sample = 21;\nexport const testDouble = () => assert.equal(double(sample), 42);\nexport const testHalf = () => assert.equal(half(42), sample);\n`);
+  // a framework's test file (top-level test() calls) stays skipped
+  put("test/math.test.ts", `import { test } from "node:test";\ntest("x", () => {});\n`);
+  if (!fs.existsSync(path.join(dir, ".tcm"))) tcm("init");
+  assert.doesNotMatch(tcm("import", project, "--into", "calc"), /testDouble/, "without --tests, tests stay out");
+  assert.match(tcm("import", project, "--into", "calc", "--tests", "--update", "--verbose"), /calc\.test\.math\.testDouble/);
+  assert.match(tcm("test", "calc"), /2 passed, 0 failed\n/);
+  assert.match(tcm("test", "calc"), /2 passed, 0 failed \(2 cached\)/);
+  // a change reaches the tests that use it, and only those
+  put("src/math.ts", `export const double = (x: number): number => x + x;\nexport const half = (x: number): number => x / 2;\n`);
+  tcm("import", project, "--into", "calc", "--tests", "--update");
+  assert.match(tcm("test", "calc"), /2 passed, 0 failed \(1 cached\)/);
+});

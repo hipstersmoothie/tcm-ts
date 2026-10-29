@@ -67,7 +67,7 @@ export function satisfies(version: string, range: string): boolean {
     const comparators = hyphen ? [`>=${hyphen[1]}`, `<=${hyphen[2]}`] : trimmed.split(/\s+/).filter(Boolean);
     // a prerelease only satisfies a range that names a prerelease of the same version
     if (v.pre && !comparators.some((c) => { const p = parse(c.replace(/^[\^~<>=]+/, "")); return p && p.pre && p.major === v.major && p.minor === v.minor && p.patch === v.patch; })) return false;
-    return comparators.every((c) => test(version, c));
+    return comparators.every((c) => meetsComparator(version, c));
   });
 }
 
@@ -84,7 +84,7 @@ function partial(spec: string): [string, string | undefined] | undefined {
   return undefined;
 }
 
-function test(version: string, comparator: string): boolean {
+function meetsComparator(version: string, comparator: string): boolean {
   const m = /^(\^|~|>=|<=|>|<|=)?\s*(.*)$/.exec(comparator)!;
   const op = m[1] ?? "";
   const spec = m[2]!.replace(/^v/, "");

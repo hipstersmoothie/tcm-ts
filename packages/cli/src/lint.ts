@@ -17,7 +17,7 @@ import { compareVersions, compatRange } from "@tcm/core";
 import { ensureExternals, newestVersion, npmAlias, render } from "@tcm/loader";
 import { configDefinition } from "./config.ts";
 import type { Codebase } from "./codebase.ts";
-import { isTestPath } from "./tests.ts";
+import { isTestPath } from "./testing.ts";
 
 export interface LintIssue {
   rule: string;

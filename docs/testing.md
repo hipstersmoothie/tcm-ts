@@ -26,6 +26,21 @@ export const testRetriesOnce = async () => {
   stale in the cache: `--fresh` re-runs everything. Watch expressions are cached the same way ([scratch
   files](scratch-files.md)).
 
+## Tests in a project you import
+
+Tests are definitions, so they can live beside the code they test in an imported project too: write them as
+exports named `test…` in a `test/` (or `tests/`) directory, and `tcm import --tests` brings them in with
+everything else ([importing](importing.md)). Helpers there are plain definitions. A `*.test.ts` file next to
+them can register the same exports with another runner (tcm's own repository does that for `node:test`):
+
+```ts
+// test/math.ts
+import assert from "node:assert/strict";
+import { double } from "../src/math.ts";
+
+export const testDouble = () => assert.equal(double(21), 42);
+```
+
 ## Where a test runs
 
 A test runs in Node, unless it needs a browser: it (or something it uses or renders) touches the DOM or is a

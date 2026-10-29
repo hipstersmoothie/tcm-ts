@@ -1,7 +1,7 @@
 # Importing existing projects
 
 ```sh
-tcm import <dir> --into ns [--exclude a,b] [--update] [--verbose]
+tcm import <dir> --into ns [--exclude a,b] [--update] [--tests] [--verbose]
 ```
 
 Each file becomes a namespace: `core/src/analyze.ts` → `ns.core.analyze` (`src` path segments and `index` file
@@ -9,6 +9,10 @@ names are dropped). Imports between files, barrels and workspace packages resolv
 
 - **Test files are skipped:** `*.test.ts`, `*.spec.ts`, `*.test-d.ts`, and `test`, `tests`, `__tests__`,
   `dist`, `build` and `node_modules` directories.
+- **`--tests`** imports `test` and `tests` directories too, for tests written as [test definitions](testing.md)
+  (exports named `test…`, plus whatever helpers they use) rather than as calls to a framework's `test()`.
+  `*.test.ts` files in them are still skipped, so a thin runner there can register the same definitions with
+  another framework. `tcm test` then runs them, cached by hash.
 - **`--exclude`** takes paths relative to `<dir>`, comma-separated, e.g. test helpers that need a dev
   dependency.
 - **All problems at once.** Import reports every problem in the project in one pass and imports nothing until

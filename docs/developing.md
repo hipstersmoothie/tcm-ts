@@ -41,22 +41,28 @@ written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything i
 | `pnpm test:package` | pack and install the npm package, then run every suite against the installed copy |
 | `pnpm docs:dev` | serve the docs site locally (port 4321, or the next free one), rebuilding and reloading open pages when `docs/` or `examples/` change |
 | `pnpm docs:site` | build the docs site (`docs/*.md` and the examples page) into `dist/site`; it fails on any broken link or anchor. A GitHub Actions workflow (`.github/workflows/docs.yml`) builds and deploys it to GitHub Pages on pushes to `main` |
-| `pnpm compare-compilers` | hash the repo and the golden corpus with TypeScript 7 and with [tsrs](compiler-options.md#the-compiler); hashes must match |
+| `pnpm compare-compilers` | hash the repo with TypeScript 7 and with [tsrs](compiler-options.md#the-compiler), and run the golden test with tsrs; hashes must match |
 
 All three of `pnpm test`, `pnpm selfhost` and `pnpm test:package` should pass before a commit.
+
+Core and store tests are [test definitions](testing.md), in `packages/core/test/*.ts` and
+`packages/store/test/*.ts` (exports named `test…`, beside the helpers they use), so they live in tcm's own
+codebase like the code they test. A `<name>.test.ts` runner next to each registers them with `node:test` for
+`pnpm test`. The CLI's tests are end-to-end `node:test` files: they run the `tcm` binary by path.
 
 ## Self-hosting
 
 `pnpm selfhost` imports `packages/` into `selfhost/.tcm` and then:
 
 1. runs `tcm verify` with the **self-hosted** tcm: every definition round-trips to its own hash;
-2. runs the whole test suite against the self-hosted CLI and analyzer (`TCM_BIN=selfhost/tcm.ts
-   TCM_CORE=selfhost/core.ts`), which execute entirely from `.tcm/cache`;
-3. checks the fixed point: the self-hosted tcm imports `packages/` again and assigns exactly the same hashes;
-4. makes tcm's npm package from the codebase with [`tcm pack`](publishing.md) (the `tcm` bins run
+2. runs tcm's test definitions with the self-hosted `tcm test` (imported with `--tests`), then again: the second
+   run must be all cached. Afterwards, a change to one definition re-runs only the tests that reach it;
+3. runs the whole test suite against the self-hosted CLI (`TCM_BIN=selfhost/tcm.ts`), which executes entirely
+   from `.tcm/cache`;
+4. checks the fixed point: the self-hosted tcm imports `packages/` again and assigns exactly the same hashes;
+5. makes tcm's npm package from the codebase with [`tcm pack`](publishing.md) (the `tcm` bins run
    `tcmts.cli.main.runCli`, and `tcm-ts/core` exports the analyzer), installs it and runs code with it. The
-   whole suite passes against that package too (`TCM_BIN=<it>/bin/tcm.js TCM_CORE=<it>/core/index.js`; the
-   script prints where it is).
+   whole suite passes against that package too (`TCM_BIN=<it>/bin/tcm.js`; the script prints where it is).
 
 Getting there took two small refactors, both now enforced by the tool. A top-level `for` loop that filled a
 lookup table became an immediately-invoked function, and the CLI's top-level `try` moved into an exported

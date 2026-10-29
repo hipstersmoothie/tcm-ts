@@ -1,7 +1,8 @@
 #!/bin/sh
 # Build tcm's own codebase from packages/, then check the self-hosted build three ways:
 #   1. every definition re-renders and re-hashes to itself (`tcm verify`, run by the self-hosted tcm)
-#   2. the test suite passes against the self-hosted CLI and analyzer
+#   2. tcm's tests in the codebase pass under the self-hosted `tcm test`, and a second run is all cached; the
+#      test suite passes against the self-hosted CLI and analyzer
 #   3. fixed point: the self-hosted tcm imports packages/ and assigns exactly the same hashes
 #   4. `tcm pack` makes tcm's npm package from the codebase, and the installed package works
 set -eu
@@ -10,8 +11,14 @@ cd "$REPO/selfhost"
 rm -rf .tcm
 node ../packages/cli/bin/tcm.js init > /dev/null
 rm -f scratch.ts
-node ../packages/cli/bin/tcm.js import ../packages --into tcmts
+node ../packages/cli/bin/tcm.js import ../packages --into tcmts --tests
 node tcm.ts verify
+# the tests written as definitions (packages/*/test/*.ts), run from the codebase and cached by hash
+first="$(NO_COLOR=1 node tcm.ts test tcmts)" || { echo "$first"; exit 1; }
+echo "tcm test: $(printf '%s\n' "$first" | tail -1)"
+second="$(NO_COLOR=1 node tcm.ts test tcmts | tail -1)"
+passed="${second%% passed*}"
+case "$second" in *"passed, 0 failed ($passed cached)") echo "tcm test again: $second" ;; *) echo "a second tcm test run wasn't all cached: $second"; exit 1 ;; esac
 
 cd "$REPO"
 # the suites' totals and the names of failing tests; fails if a test did
@@ -23,10 +30,10 @@ suites() {
   grep '^✖ ' "$out" | grep -v '^✖ failing tests' | sort -u
   return "$status"
 }
-TCM_BIN=selfhost/tcm.ts TCM_CORE=selfhost/core.ts suites node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts'
+TCM_BIN=selfhost/tcm.ts suites node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts'
 
 FIX="$(mktemp -d)"
-if ! (cd "$FIX" && node "$REPO/selfhost/tcm.ts" init > /dev/null && rm scratch.ts && node "$REPO/selfhost/tcm.ts" import "$REPO/packages" --into tcmts) > "$FIX/import.log" 2>&1; then
+if ! (cd "$FIX" && node "$REPO/selfhost/tcm.ts" init > /dev/null && rm scratch.ts && node "$REPO/selfhost/tcm.ts" import "$REPO/packages" --into tcmts --tests) > "$FIX/import.log" 2>&1; then
   grep -v '^warning' "$FIX/import.log"
   exit 1
 fi

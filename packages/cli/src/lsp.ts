@@ -15,7 +15,7 @@ import { cacheRefOf, schemaText, SERVER_API_MODULE, shortHash, type Analysis, ty
 import { nodeArgs, writeRunner } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 import { Placement } from "./placement.ts";
-import { evaluateCached, isTestPath, runCached } from "./tests.ts";
+import { evaluateCached, isTestPath, runCached } from "./testing.ts";
 import { searchByType } from "./search.ts";
 import { decode } from "./codec.ts";
 import { renderDoc } from "./docs.ts";
@@ -29,7 +29,7 @@ import { prepareTestRun } from "./vitest.ts";
 import { lintScratch, type LintIssue } from "./lint.ts";
 import { formatText } from "./fmt.ts";
 import { ensureView, hashesOfViewFile, srcDir, viewText, type View } from "./views.ts";
-import { testRunKey } from "./vitest.ts";
+import { resultKey } from "./vitest.ts";
 
 /** What the language server needs from the CLI (passed in, so this module doesn't import the CLI's entry). */
 export interface LspTools {
@@ -187,7 +187,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     if (run && tests.length) {
       for (const o of runCached(c, tests.map((r) => ({ path: r.path, rec: r.def })), src, false)) state.tests.set(o.path, { ...o.result, cached: o.cached });
     } else for (const t of tests) {
-      const r = c.store.testResult(t.def.hash, testRunKey(c));
+      const r = c.store.testResult(t.def.hash, resultKey(c));
       if (r) state.tests.set(t.path, { ...r, cached: true });
     }
   };
@@ -617,7 +617,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     const rec = c.store.getDef(hash)!;
     const isTest = rec.kind !== "type" && isTestPath(p);
     const place = rec.kind === "term" ? placement.placeOf(hash).place : undefined;
-    const test = isTest ? c.store.testResult(hash, testRunKey(c)) : undefined;
+    const test = isTest ? c.store.testResult(hash, resultKey(c)) : undefined;
     const role = isTest ? "test"
       : rec.kind !== "term" ? "type"
       : rec.table ? "table"

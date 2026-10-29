@@ -19,4 +19,4 @@ suites() {
   grep '^✖ ' "$out" | grep -v '^✖ failing tests' | sort -u
   return "$status"
 }
-TCM_BIN="$PKG/bin/tcm.js" TCM_CORE="$PKG/core/index.js" suites node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts'
+TCM_BIN="$PKG/bin/tcm.js" suites node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts'
