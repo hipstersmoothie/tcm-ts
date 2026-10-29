@@ -93,7 +93,10 @@ overwrites). Edit, then
 when its path isn't the file's namespace plus its name, so `update` puts it back where it came from.
 
 Definitions that refer to each other (functions calling each other, a class and the functions that take it) are
-hashed together, as one. Editing one brings the rest of them into the scratch file, so they're updated together.
+hashed together, as one, so they're updated together. `tcm edit` writes only what you asked for, and says what it's
+in a cycle with. Saving a change to some of them saves the rest with them, as they are, against the new code
+(`with lib.isOdd: in a cycle with what changed, so saved with it`): none goes on using an old one. To change those
+too, edit them as well.
 `tcm update` refuses a file that replaces only some of them, since the others would go on using the old ones.
 
 ## Names

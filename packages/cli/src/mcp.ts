@@ -34,6 +34,7 @@ const GUIDE: Record<string, string> = {
 - New definitions: put "// tcm: namespace lib.math" at the top of a scratch file and write them; tcm_update adds them there.
 - Bare expressions in a scratch file (square(4)) are watch expressions: tcm_check evaluates and shows them, nothing saves them.
 - Only top-level const (not let/var), function, class, type and interface; enums, namespaces and decorators aren't supported (use an as-const object).
+- Definitions that refer to each other are a cycle, hashed and updated together. tcm_edit writes only the ones you name (and says what they're in a cycle with); saving saves the rest of the cycle with them, as it is.
 - After tcm_update, check tcm_todo: dependents that no longer typecheck are listed there with the error.
 - To undo: tcm_cli ["reset", "1"] brings back the names as they were before the last command.`,
   testing: `# Testing

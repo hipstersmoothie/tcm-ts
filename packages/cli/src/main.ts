@@ -37,6 +37,9 @@ import { syncMirror } from "./mirror.ts";
 import type { Mirror } from "./mirror.ts";
 import { changedFiles } from "./mirror.ts";
 import { runSuites, suitesIn } from "./suites.ts";
+import { isNamespaceImport as ts_isNamespaceImport, isImportDeclaration as ts_isImportDeclaration, isStringLiteral as ts_isStringLiteral } from "typescript/ast";
+import { parse as parse_1, isTypeOnlyImport } from "../../core/src/ts.ts";
+import { declarations } from "./mirror.ts";
 
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
@@ -131,9 +134,11 @@ function printIssue(text: string, i: LintIssue, indent = "  ") {
 }
 
 function check(cb: Codebase, file: string, into?: string, fresh = false): boolean {
-  const a = analyzeScratch(cb, file, into);
-  if (!a) return false;
-  const rows = classify(cb, a.defs, into ?? a.namespace ?? "");
+  const scratch = analyzeScratch(cb, file, into);
+  if (!scratch) return false;
+  const whole = withTheirCycles(cb, file, into, scratch);
+  if (!whole) return false;
+  const { a, rows } = whole;
   console.log(`${bold(path.basename(file))}${a.namespace || into ? dim(` → ${into ?? a.namespace}`) : ""}`);
   if (rows.length) printRows(rows);
   else if (!a.watches.length) console.log(dim("  (no definitions)"));
@@ -161,23 +166,11 @@ function check(cb: Codebase, file: string, into?: string, fresh = false): boolea
 }
 
 function save(cb: Codebase, file: string, mode: "add" | "update", into?: string): boolean {
-  const a = analyzeScratch(cb, file, into);
-  if (!a) return false;
-  const rows = classify(cb, a.defs, into ?? a.namespace ?? "");
-  // definitions that refer to each other are hashed as one: replacing some of them alone would leave the others
-  // using the old ones
-  if (mode === "update") {
-    const here = new Set(rows.map((r) => r.path));
-    for (const r of rows.filter((x) => x.status === "update" || x.status === "conflict")) {
-      for (const old of cb.store.hashesAt(r.path, r.def.kind)) {
-        const missing = cb.store.componentMembers(cb.store.getDef(old)!.componentHash).flatMap((m) => (m.hash === old ? [] : cb.store.pathsOf(m.hash).slice(0, 1))).filter((p) => !here.has(p));
-        if (missing.length) {
-          console.log(red(`${r.path} refers to ${missing.join(", ")} and back (they're hashed together), and ${missing.length > 1 ? "they aren't" : "it isn't"} in ${path.basename(file)}: \`tcm edit ${r.path}\` writes them all, to update together`));
-          return false;
-        }
-      }
-    }
-  }
+  const scratch = analyzeScratch(cb, file, into);
+  if (!scratch) return false;
+  const whole = withTheirCycles(cb, file, into, scratch);
+  if (!whole) return false;
+  const { a, rows } = whole;
   // lint what's being saved: warnings are shown, errors (rules set to "error" in lint.config) stop the save
   const saving = changedCode(cb, rows);
   if (saving.length && printScratchLint(cb, file, saving)) {
@@ -512,15 +505,13 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
     if (!hs.length) throw new UsageError(`'${t}' not found`);
     for (const h of hs) if (!pathOf.has(h)) pathOf.set(h, t.startsWith("#") ? cb.store.pathsOf(h)[0] : t);
   }
-  // definitions that refer to each other are hashed as one: editing one brings the rest, as in Unison, so they're
-  // changed (and re-hashed) together
-  const cycle: string[] = [];
-  for (const h of [...pathOf.keys()]) {
+  // definitions that refer to each other are hashed as one: saving changes to some saves the rest with them, as
+  // they are, so the file holds only what was asked for
+  const cycle = new Set<string>();
+  for (const h of pathOf.keys()) {
     for (const m of cb.store.componentMembers(cb.store.getDef(h)!.componentHash)) {
       const p = cb.store.pathsOf(m.hash)[0];
-      if (pathOf.has(m.hash) || !p) continue;
-      pathOf.set(m.hash, p);
-      cycle.push(p);
+      if (!pathOf.has(m.hash) && p) cycle.add(p);
     }
   }
   const nsOf = (p: string) => (p.includes(".") ? p.slice(0, p.lastIndexOf(".")) : "");
@@ -542,7 +533,10 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
   }).text;
   fs.writeFileSync(file, (ns ? `// tcm: namespace ${ns}\n` : "") + text);
   console.log(`wrote ${targets.join(", ")} to ${path.basename(file)}`);
-  if (cycle.length) console.log(dim(`  with ${cycle.join(", ")}: ${cycle.length > 1 ? "they refer" : "it refers"} to ${targets.length > 1 ? "them" : "it"} and back, so they're hashed (and updated) together`));
+  if (cycle.size) {
+    const them = [...cycle];
+    console.log(dim(`  in a cycle with ${them.slice(0, 5).join(", ")}${them.length > 5 ? `, and ${them.length - 5} more` : ""}: saving ${targets.length > 1 ? "them" : "it"} saves ${them.length > 1 ? "those" : "that"} too, as ${them.length > 1 ? "they are" : "it is"} (\`tcm edit\` ${them.length > 1 ? "them" : "it"} to change ${them.length > 1 ? "them" : "it"} too)`));
+  }
 }
 
 // ---- names --------------------------------------------------------------------------------------------
@@ -1441,3 +1435,110 @@ export const withoutCyclePositions = (ir: string) => ir.replace(/\["Cyc","\d+"\]
  * How much of a definition's type a report line shows.
  */
 export const SIGNATURE_WIDTH = 120;
+
+/**
+ * A module's text without the imports of these names, blanked (spaces where they were) so nothing else moves.
+ */
+export function blankImports(file: string, text: string, names: Set<string>): string {
+  const sf = parse_1(file, text);
+  const blanks: [number, number][] = [];
+  for (const st of sf.statements) {
+    if (!ts_isImportDeclaration(st) || !st.importClause) continue;
+    const c = st.importClause;
+    const b = c.namedBindings;
+    const elements = b && !ts_isNamespaceImport(b) ? [...b.elements] : [];
+    const locals = [...(c.name ? [c.name.text] : []), ...(b && ts_isNamespaceImport(b) ? [b.name.text] : []), ...elements.map((e) => e.name.text)];
+    if (!locals.some((l) => names.has(l))) continue;
+    if (locals.every((l) => names.has(l)) || (b && ts_isNamespaceImport(b))) {
+      blanks.push([st.getStart(sf), st.end]);
+      continue;
+    }
+    // the default, with its comma
+    if (c.name && names.has(c.name.text)) blanks.push([c.name.getStart(sf), text.indexOf(",", c.name.end) + 1]);
+    elements.forEach((e, i) => {
+      if (!names.has(e.name.text)) return;
+      // with the comma between it and the next one kept, or the one before it if it's the last kept
+      const next = elements[i + 1];
+      if (next) blanks.push([e.getStart(sf), next.getStart(sf)]);
+      else blanks.push([elements[i - 1]!.end, e.end]);
+    });
+  }
+  let out = text;
+  for (const [from, to] of blanks.sort((x, y) => y[0] - x[0])) out = out.slice(0, from) + out.slice(from, to).replace(/[^\n]/g, " ") + out.slice(to);
+  return out;
+}
+
+/**
+ * What a module's imports bind: local name → the module, and whether only as a type.
+ */
+export function importBindings(file: string, text: string): Map<string, { module: string; type: boolean }> {
+  const out = new Map<string, { module: string; type: boolean }>();
+  for (const st of parse_1(file, text).statements) {
+    if (!ts_isImportDeclaration(st) || !st.importClause || !ts_isStringLiteral(st.moduleSpecifier)) continue;
+    const module = st.moduleSpecifier.text;
+    const type = isTypeOnlyImport(st.importClause);
+    if (st.importClause.name) out.set(st.importClause.name.text, { module, type });
+    const b = st.importClause.namedBindings;
+    if (b && ts_isNamespaceImport(b)) out.set(b.name.text, { module, type });
+    else if (b) for (const e of b.elements) out.set(e.name.text, { module, type: type || e.isTypeOnly });
+  }
+  return out;
+}
+
+/**
+ * A scratch file's text followed by definitions of a cycle it changes, as stored (written as `tcm edit` would). Its
+ * imports of them go, and so do their imports of what it declares or imports already: blanked, so positions in
+ * the file stay where they were. A name the two would bind differently is a problem.
+ */
+export function withCycle(cb: Codebase, file: string, text: string, members: string[]): { text: string } | { problem: string } {
+  const rendered = render(members.map((h) => cb.store.getDef(h)!), cb.source(), cb.lay, {
+    style: "scratch",
+    exportDeclarations: true,
+    remap: (h) => cb.store.patched(h),
+    annotate: (h) => `// tcm: path ${cb.store.pathsOf(h)[0]}`,
+  }).text;
+  const declared = new Set(declarations(file, text).keys());
+  const ours = importBindings(file, text);
+  const drop = new Set<string>();
+  for (const [local, theirs] of importBindings(file, rendered)) {
+    const mine = ours.get(local);
+    if (declared.has(local) || (mine && mine.module === theirs.module && mine.type === theirs.type)) drop.add(local);
+    else if (mine) return { problem: `${local} is imported from ${mine.module} here, and from ${theirs.module} there` };
+  }
+  return { text: `${blankImports(file, text, new Set(declarations(file, rendered).keys()))}\n${blankImports(file, rendered, drop)}` };
+}
+
+/**
+ * A scratch file's analysis with the rest of the cycles it changes: definitions that refer to each other are hashed
+ * as one, so the members it doesn't hold are saved with it, as they are, against its new code (none goes on using
+ * an old one). Undefined, said why, if they can't be.
+ */
+export function withTheirCycles(cb: Codebase, file: string, into: string | undefined, a: Analysis): { a: Analysis; rows: Row[] } | undefined {
+  const rows = classify(cb, a.defs, into ?? a.namespace ?? "");
+  const here = new Set(rows.map((r) => r.path));
+  const missing = new Map<string, string>();
+  for (const r of rows) {
+    if (r.status !== "update" && r.status !== "conflict") continue;
+    for (const old of cb.store.hashesAt(r.path, r.def.kind)) {
+      for (const m of cb.store.componentMembers(cb.store.getDef(old)!.componentHash)) {
+        const p = cb.store.pathsOf(m.hash)[0];
+        if (m.hash !== old && p && !here.has(p)) missing.set(m.hash, p);
+      }
+    }
+  }
+  if (!missing.size) return { a, rows };
+  const names = [...missing.values()];
+  const listed = `${names.slice(0, 5).join(", ")}${names.length > 5 ? `, and ${names.length - 5} more` : ""}`;
+  const whole = withCycle(cb, file, fs.readFileSync(file, "utf8"), [...missing.keys()]);
+  const b = "problem" in whole ? undefined : cb.analyze(file, cb.scratchSalts(into), [], new Map([[file, whole.text]]));
+  if (!b || b.errors.length || b.diagnostics.length) {
+    if (b) for (const d of b.diagnostics) process.stdout.write(d.formatted);
+    if (b) for (const e of b.errors) console.log(red(e));
+    console.log(red(`${listed}, in a cycle with what ${path.basename(file)} changes, can't be saved with it as ${names.length > 1 ? "they are" : "it is"}${"problem" in whole ? `: ${whole.problem}` : " (above)"}; \`tcm edit\` ${names.length > 1 ? "them" : "it"} too`));
+    return undefined;
+  }
+  const saved = classify(cb, b.defs, into ?? b.namespace ?? "");
+  // (a member checked without the rest hashes differently: with them, it may be as it was)
+  if (saved.some((r) => r.status !== "identical")) console.log(dim(`with ${listed}: in a cycle with what changed, so saved with it, as ${names.length > 1 ? "they are" : "it is"}`));
+  return { a: b, rows: saved };
+}
