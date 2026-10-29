@@ -24,7 +24,8 @@ Once code is saved, you can empty or delete the file. Many people keep one scrat
 
 ## Check, add, update
 
-`tcm check` (or `tcm`, which checks every time you save) reports each definition in the file:
+`tcm check` (or `tcm`, which checks every time you save) reports each definition in the file, a line each with
+its type (cut at 120 characters; `tcm view` shows all of it):
 
 | status | meaning | to save it |
 |---|---|---|

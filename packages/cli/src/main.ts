@@ -92,7 +92,9 @@ const STATUS_LABEL: Record<Status, string> = {
 
 function printRows(rows: Row[]) {
   for (const r of rows) {
-    const sig = r.def.kind === "type" ? dim(r.def.signature) : dim(`: ${r.def.signature}`);
+    // a report line per definition: a type too long for one is cut (`tcm view` has all of it)
+    const full = r.def.kind === "type" ? r.def.signature : `: ${r.def.signature}`;
+    const sig = dim(full.length > SIGNATURE_WIDTH ? `${full.slice(0, SIGNATURE_WIDTH - 1)}…` : full);
     console.log(`${STATUS_LABEL[r.status]} ${bold(r.path)} ${sig}${r.note ? dim(`  (${r.note})`) : ""}`);
   }
 }
@@ -1434,3 +1436,8 @@ export function holdsOnlySaved(cb: Codebase, file: string): boolean {
  * A definition's IR without the positions of the cycle members it refers to.
  */
 export const withoutCyclePositions = (ir: string) => ir.replace(/\["Cyc","\d+"\]/g, '["Cyc"]');
+
+/**
+ * How much of a definition's type a report line shows.
+ */
+export const SIGNATURE_WIDTH = 120;
