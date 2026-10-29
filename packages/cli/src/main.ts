@@ -25,6 +25,9 @@ import { diffNamespaces, keyPath, printDiff, stateOf, type NameState } from "./d
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
 import { addRemote, contribute, listRemotes, newToken, openRemote, pull, push, reviewUrl, runOn, serve, tlsMaterial } from "./sync.ts";
 import { author, printContribution, printContributions } from "./contributions.ts";
+import { changelog, contributionsOn, generatedNotes, MARKER, packPackage, parseSpec, planRelease, reasonFor, releasePackage, writeDraft, writtenPart, type Plan } from "./releases.ts";
+import { findPackage, packagesIn } from "./manifests.ts";
+import { LINTS } from "./semver-checks.ts";
 import { commands, root } from "./commands.ts";
 import { helpText, suggest, usageError } from "./help.ts";
 import { complete } from "./complete.ts";
@@ -542,12 +545,14 @@ function causalArg(cb: Codebase, ref: string): string {
     if (!c) throw new UsageError(`this branch's history isn't ${n} entries long`);
     return c.hash;
   }
+  if (/^(@?[^@]+)?@v?\d+\.\d+\.\d+/.test(ref)) return releaseAt(cb, ref).causal;
   const hs = cb.store.causalsWithPrefix(ref.replace(/^#/, ""));
   if (hs.length !== 1) throw new UsageError(hs.length ? `${ref} matches ${hs.length} history entries; give more of the hash` : `no history entry ${ref} (see \`tcm history\`)`);
   return hs[0]!;
 }
 
-const isHistoryRef = (ref: string) => /^(\d+|#?[a-z2-7]{4,})$/.test(ref) && (/^\d+$/.test(ref) || ref.startsWith("#") || /[2-7]/.test(ref));
+const isHistoryRef = (ref: string) => /^(@?[^@]+)?@v?\d+\.\d+\.\d+/.test(ref) || isEntryRef(ref);
+const isEntryRef = (ref: string) => /^(\d+|#?[a-z2-7]{4,})$/.test(ref) && (/^\d+$/.test(ref) || ref.startsWith("#") || /[2-7]/.test(ref));
 const stateAt = (cb: Codebase, causal: string) => stateOf(cb.store.namespaceRows(cb.store.causal(causal)!.namespace));
 
 function diff(cb: Codebase, args: string[]) {
@@ -562,7 +567,8 @@ function diff(cb: Codebase, args: string[]) {
   if (args.length === 1 && isHistoryRef(args[0]!) && !cb.store.hasBranch(args[0]!)) {
     const c = causalArg(cb, args[0]!);
     const before = stateAt(cb, c);
-    return printDiff(cb, diffNamespaces(before, now, irOf), before, now, `changes since ${shortHash(c)}`);
+    const label = /@\d/.test(args[0]!) ? args[0]! : shortHash(c);
+    return printDiff(cb, diffNamespaces(before, now, irOf), before, now, `changes since ${label}`);
   }
   const [from, to] = args.length === 1 ? [cb.store.branch().name, args[0]!] : [args[0]!, args[1]!];
   const side = (ref: string) => {
@@ -1018,8 +1024,72 @@ square(12);
       if (ok) cb.refreshShim();
       return ok ? 0 : 1;
     }
+    case "release": {
+      const r = execute(cmd, parse(commands.release, { argv: rest }));
+      if (r.route === "/view") {
+        const spec = r.model.release ?? (await choose("release view <package>@<version>", "Which release?", cb.store.releases().map((x) => ({ value: `${x.package}@${x.version}`, label: `${x.package}@${x.version}`, hint: when(x.ts) })), false));
+        const rel = releaseAt(cb, spec);
+        console.log(rel.notes.replace(`${MARKER}\n\n`, "").trimEnd());
+        return 0;
+      }
+      if (r.route === "/check") {
+        printCheck(planRelease(cb, r.model.package, undefined, true));
+        return 0;
+      }
+      const m = r.model;
+      const { name, version } = releaseSpec(m.package);
+      if (m.draft) {
+        const plan = planRelease(cb, name, version, m.force);
+        const file = writeDraft(cb, plan, generatedNotes(cb, plan, [...cb.store.contributions(), ...(await contributionsOn(cb, m.remote))]));
+        console.log(`wrote ${path.relative(cwd, file)} (${plan.pkg.name}'s next release, ${plan.version} as things stand): write what it's about above the marker, then \`tcm release ${plan.pkg.name}\`; the changes below the marker are regenerated`);
+        return 0;
+      }
+      const { release: rel, plan } = await releasePackage(cb, { name, version, notesFile: m.notes === undefined ? undefined : path.resolve(cwd, m.notes), remote: m.remote, force: m.force, author: author() });
+      console.log(`${green("released")} ${bold(`${rel.package}@${rel.version}`)} ${dim(`as ${shortHash(rel.causal)}${plan.prev ? `, after ${plan.prev.version}` : ""}: ${reasonFor(plan)}`)}\n`);
+      console.log(rel.notes.replace(`${MARKER}\n\n`, "").trimEnd());
+      if (listRemotes(cb).length) console.log(dim(`\n  \`tcm push\` publishes it`));
+      return 0;
+    }
+    case "releases": {
+      const { model } = execute(cmd, parse(commands.releases, { argv: rest }));
+      const pkgs = packagesIn(cb, cb.store.names());
+      const names = model.package ? [model.package] : [...new Set([...pkgs.map((p) => p.name), ...cb.store.releases().map((x) => x.package)])].sort();
+      if (!names.length) console.log(dim("no packages yet (a definition named `manifest` makes its namespace one)"));
+      for (const n of names) {
+        const pkg = pkgs.find((p) => p.name === n);
+        const all = cb.store.releases(n);
+        console.log(`${bold(n)}${pkg ? dim(`  ${pkg.namespace || "(the codebase)"}`) : dim("  (no longer in this branch)")}`);
+        if (!all.length) console.log(dim("  no releases yet"));
+        for (const x of all) {
+          const summary = writtenPart(x.notes).split("\n").find((l) => l.trim() && !l.startsWith("<!--")) ?? "";
+          console.log(`  ${x.version.padEnd(10)} ${dim(`${when(x.ts)}  ${shortHash(x.causal)}  ${x.author}`)}  ${summary}`);
+        }
+      }
+      return 0;
+    }
+    case "changelog": {
+      const { model } = execute(cmd, parse(commands.changelog, { argv: rest }));
+      const name = model.package ?? findPackage(packagesIn(cb, cb.store.names()), undefined).name;
+      const text = changelog(cb, name);
+      if (model.out === undefined) process.stdout.write(text);
+      else {
+        fs.writeFileSync(path.resolve(cwd, model.out), text);
+        console.log(`wrote ${model.out} ${dim(`(${cb.store.releases(name).length} release(s) of ${name})`)}`);
+      }
+      return 0;
+    }
     case "pack": {
       const { model } = execute(cmd, parse(commands.pack, { argv: rest }));
+      // a package of the codebase, from its manifest
+      if (model.name === undefined && !model.bin.length && model.entries.length <= 1) {
+        const spec = model.entries[0] === undefined ? undefined : parseSpec(model.entries[0]);
+        const r = packPackage(cb, spec?.name, spec?.version, model.out);
+        const deps = Object.keys(r.dependencies);
+        const shown = path.relative(cwd, r.dir);
+        console.log(`packed ${r.pkg.name}@${r.version} into ${shown.startsWith("..") ? r.dir : shown || "."}: ${r.modules} module(s)${deps.length ? `, depends on ${deps.join(", ")}` : ""}`);
+        return 0;
+      }
+
       if (!model.entries.length && !model.bin.length) throw new UsageError("usage: tcm pack [[subpath=]<namespace|name>...] --name <pkg>[@version] [--bin cmd=<name>]");
       const spec = model.name ?? (await ask("pack [[subpath=]<namespace|name>...] --name <pkg>[@version]", "Package name (and version: name@1.0.0)", "my-package"));
       const at = spec.lastIndexOf("@");
@@ -1097,6 +1167,41 @@ square(12);
     }
   }
 }
+
+/** What `tcm release` was given: `<package>[@version]`, or (with one package) `@version`, a bare version, or nothing. */
+function releaseSpec(arg: string | undefined): { name?: string; version?: string } {
+  if (arg === undefined) return {};
+  if (/^v?\d+\.\d+\.\d+/.test(arg)) return { version: arg.replace(/^v/, "") };
+  if (/^@v?\d/.test(arg)) return { version: arg.slice(1).replace(/^v/, "") };
+  return parseSpec(arg);
+}
+
+/** A release: `<package>@<version>`, or `@<version>` when the codebase has one package. */
+function releaseAt(cb: Codebase, spec: string) {
+  const { name, version } = releaseSpec(spec);
+  const pkg = name ?? findPackage(packagesIn(cb, cb.store.names()), undefined).name;
+  if (!version) throw new UsageError(`which release of ${pkg}? (${pkg}@<version>; see \`tcm releases\`)`);
+  const rel = cb.store.release(pkg, version);
+  if (!rel) throw new UsageError(`no release ${pkg}@${version} (see \`tcm releases\`)`);
+  return rel;
+}
+
+/** `tcm release check`: the next version, and every finding behind it. */
+function printCheck(plan: Plan) {
+  if (!plan.prev) return console.log(`${plan.pkg.name}'s first release: ${bold(plan.computed)} ${dim(`(${plan.now.exported.size} definition(s))`)}`);
+  const findings = plan.report!.findings;
+  const level = plan.level ? { major: red("breaking changes"), minor: yellow("additions"), patch: "changes with the same API" }[plan.level] : dim("no API changes");
+  console.log(`${plan.pkg.name}'s next release: ${bold(plan.computed)} ${dim(`(after ${plan.prev.version})`)}: ${level}`);
+  const tone = { major: red, minor: yellow, patch: dim };
+  for (const f of findings) {
+    const l = LINTS[f.lint];
+    console.log(`\n  ${tone[l.level](l.level.padEnd(5))}  ${bold(f.path)} ${l.summary}${f.detail ? `: ${f.detail}` : ""}`);
+    console.log(dim(`         ${f.lint}: ${l.why}`));
+  }
+  if (plan.report!.following.length) console.log(dim(`\n  and ${plan.report!.following.length} definition(s) that follow those changes (${plan.report!.following.slice(0, 5).join(", ")}${plan.report!.following.length > 5 ? ", …" : ""})`));
+}
+
+const when = (ts: number) => new Date(ts).toISOString().replace("T", " ").slice(0, 16);
 
 function unknownCommand(word: string): string {
   const close = suggest(word);

@@ -32,7 +32,8 @@ New here? Read the [introduction](introduction.md), then follow [your first code
 | [History and branches](history.md) | diffs, undo, branches and merging |
 | [Sharing code](sync.md) | pushing and pulling between codebases, running code on another machine |
 | [Contributions](contributions.md) | proposing a branch, reviewing it as definitions, commenting, merging on the server |
-| [Publishing to npm](publishing.md) | `tcm pack`: definitions as an npm package, with types, bins and dependencies |
+| [Publishing to npm](publishing.md) | packages in a codebase (`manifest`), and `tcm pack`: an npm package with types, bins and dependencies |
+| [Releases and changelogs](releases.md) | versions from semver checks of the API, release notes and changelogs written from the codebase |
 | [Web apps](apps.md) | how tcm splits an app between server and browser |
 | [React](react.md) | components, and server components without `"use client"` or `"use server"` |
 | [Server functions](server-api.md) | requests, cookies, sessions, errors, streaming, HTTP endpoints |

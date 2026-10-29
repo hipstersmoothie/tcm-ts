@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomBytes, timingSafeEqual, X509Certificate } from "node:crypto";
 import { shortHash, type DefRecord } from "@tcm/core";
-import type { Causal, Contribution, NameRow } from "@tcm/store";
+import type { Causal, Contribution, NameRow, Release } from "@tcm/store";
 import { runStreaming } from "@tcm/loader";
 import { Codebase, IDENT_PATH, type LockEntry } from "./codebase.ts";
 import { diffNamespaces, printDiff, stateOf } from "./diff.ts";
@@ -51,6 +51,9 @@ export interface Remote {
   missingNamespaces(hashes: string[]): Promise<string[]>;
   getNamespaces(hashes: string[]): Promise<NamespaceNode[]>;
   putNamespaces(nodes: NamespaceNode[]): Promise<void>;
+  releases(): Promise<Release[]>;
+  /** releases whose history was sent first */
+  putReleases(releases: Release[]): Promise<void>;
   /** contributions: branches proposed for merging, reviewed and merged there */
   contributions(all: boolean): Promise<Contribution[]>;
   contribution(id: number): Promise<ContributionView>;
@@ -133,6 +136,16 @@ export class Peer {
   }
   putNamespaces(nodes: NamespaceNode[]) {
     this.cb.store.putNamespaces(nodes);
+  }
+  releases(): Release[] {
+    return this.cb.store.releases();
+  }
+  putReleases(releases: Release[]) {
+    this.cb.store.transaction(() =>
+      releases.forEach((r) =>
+        this.cb.store.putRelease({ package: String(r.package), version: String(r.version), namespace: String(r.namespace), causal: String(r.causal), notes: String(r.notes), author: String(r.author), ts: Number(r.ts) }),
+      ),
+    );
   }
   contributions(all: boolean): Contribution[] {
     return this.cb.store.contributions(all ? undefined : "open");
@@ -223,6 +236,12 @@ class DirectoryRemote implements Remote {
   }
   async putNamespaces(n: NamespaceNode[]) {
     this.peer.putNamespaces(n);
+  }
+  async releases() {
+    return this.peer.releases();
+  }
+  async putReleases(r: Release[]) {
+    this.peer.putReleases(r);
   }
   async contributions(all: boolean) {
     return this.peer.contributions(all);
@@ -354,6 +373,12 @@ class HttpRemote implements Remote {
   }
   async putNamespaces(nodes: NamespaceNode[]) {
     await this.call("put-namespaces", { nodes });
+  }
+  async releases() {
+    return (await this.call<{ releases: Release[] }>("releases", {})).releases;
+  }
+  async putReleases(releases: Release[]) {
+    await this.call("put-releases", { releases });
   }
   async contributions(all: boolean) {
     return (await this.call<{ contributions: Contribution[] }>("contributions", { all })).contributions;
@@ -541,6 +566,38 @@ async function fetchHistory(cb: Codebase, remote: Remote, head: string): Promise
   return stored;
 }
 
+const releaseKey = (r: Release) => `${r.package}@${r.version}`;
+const differ = (remote: Remote, theirs: Release, mine: Release) =>
+  new Error(`${remote.label} has a different ${releaseKey(mine)} (${shortHash(theirs.causal)}, here ${shortHash(mine.causal)}): a version names one release, for good`);
+
+/** Send the releases the remote lacks, with their history. A release both have must be the same. */
+async function sendReleases(cb: Codebase, remote: Remote): Promise<string[]> {
+  const theirs = new Map((await remote.releases()).map((r) => [releaseKey(r), r]));
+  const missing: Release[] = [];
+  for (const r of cb.store.releases()) {
+    const t = theirs.get(releaseKey(r));
+    if (t && (t.causal !== r.causal || t.notes !== r.notes)) throw differ(remote, t, r);
+    if (!t) missing.push(r);
+  }
+  for (const r of missing) await sendHistory(cb, remote, r.causal);
+  if (missing.length) await remote.putReleases(missing);
+  return missing.map(releaseKey).reverse();
+}
+
+/** Fetch the releases this codebase lacks, with their history. */
+async function fetchReleases(cb: Codebase, remote: Remote): Promise<string[]> {
+  const got: string[] = [];
+  for (const r of (await remote.releases()).reverse()) {
+    const mine = cb.store.release(r.package, r.version);
+    if (mine && (mine.causal !== r.causal || mine.notes !== r.notes)) throw differ(remote, r, mine);
+    if (mine) continue;
+    await fetchHistory(cb, remote, r.causal);
+    cb.store.putRelease(r);
+    got.push(releaseKey(r));
+  }
+  return got;
+}
+
 export async function push(cb: Codebase, spec: string, remoteBranch: string | undefined, force: boolean) {
   const { remote, name } = openRemote(cb, spec);
   if (!name) throw new Error(`push needs a configured remote: \`tcm remote add <name> ${spec}\``);
@@ -556,6 +613,8 @@ export async function push(cb: Codebase, spec: string, remoteBranch: string | un
   const sent = await sendHistory(cb, remote, mine);
   if (theirs?.head !== mine) await remote.setBranch(branch, mine, theirs?.head ?? null, `push from ${os.hostname()}:${cb.lay.root}`);
   cb.store.setHead(`${name}/${branch}`, mine, `push ${name}`);
+  const released = await sendReleases(cb, remote);
+  if (released.length) console.log(`${green("released")} ${released.join(", ")} ${dim(`on ${name}`)}`);
   const d = theirs ? diffNamespaces(stateOf(theirs.names), stateOf(names), (h) => cb.store.getDef(h)!.ir) : undefined;
   const summary = d ? `${d.added.length} added, ${d.edited.length + d.propagated.length} changed, ${d.removed.length} removed, ${d.renamed.length} renamed` : `${names.length} names (new branch)`;
   console.log(theirs?.head === mine ? dim(`${name}/${branch} is up to date`) : `${green("pushed")} ${bold(`${name}/${branch}`)}: ${summary}; sent ${sent} definition(s)`);
@@ -571,6 +630,8 @@ export async function pull(cb: Codebase, spec: string, remoteBranch: string | un
   const tracking = `${name}/${branch}`;
   cb.store.setHead(tracking, theirs.head, `pull ${name}`);
   if (stored) console.log(dim(`received ${stored} definition(s), verified by re-hashing`));
+  const released = await fetchReleases(cb, remote);
+  if (released.length) console.log(dim(`received release(s) ${released.join(", ")}`));
 
   const local = cb.store.branch().name;
   const mine = cb.store.head();
@@ -717,6 +778,12 @@ export function serve(cb: Codebase, opts: ServeOptions, insecure = false): http.
           return reply(200, { nodes: peer.getNamespaces(body.hashes ?? []) });
         case "put-namespaces":
           peer.putNamespaces(body.nodes ?? []);
+          return reply(200, {});
+        case "releases":
+          return reply(200, { releases: peer.releases() });
+        case "put-releases":
+          peer.putReleases(body.releases ?? []);
+          for (const r of body.releases ?? []) console.log(`${green("released")} ${bold(`${r.package}@${r.version}`)}`);
           return reply(200, {});
         case "contributions":
           return reply(200, { contributions: peer.contributions(!!body.all) });

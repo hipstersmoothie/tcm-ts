@@ -32,7 +32,7 @@ const completions = (...words: string[]) =>
 
 test("help, read from the command definitions", () => {
   const help = tcm("help");
-  for (const section of ["Codebase", "Packages", "History and branches", "Apps, data and jobs", "Sync, review and remote execution"]) assert.match(help, new RegExp(`^${section}$`, "m"));
+  for (const section of ["Codebase", "Packages and releases", "History and branches", "Apps, data and jobs", "Sync, review and remote execution"]) assert.match(help, new RegExp(`^${section}$`, "m"));
   assert.match(help, /^ {2}view +show definitions with current names$/m);
   assert.equal(tcm("--help"), help);
 

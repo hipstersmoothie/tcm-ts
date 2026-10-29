@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS contributions (
   author TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('open','merged','closed')), created INTEGER NOT NULL,
   updated INTEGER NOT NULL, merged_from TEXT, merged_as TEXT
 );
+-- releases: a package's version names a point in history, for good (the package being the namespace it was then);
+-- its notes are markdown kept with it
+CREATE TABLE IF NOT EXISTS releases (
+  package TEXT NOT NULL, version TEXT NOT NULL, namespace TEXT NOT NULL, causal TEXT NOT NULL, notes TEXT NOT NULL,
+  author TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (package, version)
+);
 CREATE TABLE IF NOT EXISTS contribution_comments (
   id INTEGER PRIMARY KEY, contribution INTEGER NOT NULL, author TEXT NOT NULL, body TEXT NOT NULL, about TEXT, ts INTEGER NOT NULL
 );
@@ -125,6 +131,18 @@ export interface Contribution {
   /** once merged: the target's head before, and the history entry the merge made it */
   mergedFrom: string | null;
   mergedAs: string | null;
+}
+
+/** A package's version: an immutable name for a history entry, with its release notes (markdown). */
+export interface Release {
+  package: string;
+  version: string;
+  /** where the package was, in that entry's namespace */
+  namespace: string;
+  causal: string;
+  notes: string;
+  author: string;
+  ts: number;
 }
 
 export interface Comment {
@@ -285,6 +303,10 @@ export class Store {
   /** Hash format versions of stored definitions. */
   irVersions(): number[] {
     return (this.db.prepare("SELECT DISTINCT ir_version AS v FROM components").all() as { v: number }[]).map((r) => r.v);
+  }
+
+  getMetadata(hash: string, key: string): string | undefined {
+    return (this.db.prepare("SELECT value FROM metadata WHERE hash = ? AND key = ?").get(hash, key) as { value: string } | undefined)?.value;
   }
 
   setMetadata(hash: string, key: string, value: string) {
@@ -838,6 +860,31 @@ export class Store {
       if (this.causal(head)!.namespace !== ns) head = this.putCausal(ns, [head], Date.now(), "names as found");
       this.db.prepare("UPDATE branches SET head = ? WHERE id = ?").run(head, b.id);
     }
+  }
+
+  // ---- releases ------------------------------------------------------------
+
+  release(pkg: string, version: string): Release | undefined {
+    return this.db.prepare("SELECT * FROM releases WHERE package = ? AND version = ?").get(pkg, version) as unknown as Release | undefined;
+  }
+
+  /** Releases (of one package, or all), newest first. */
+  releases(pkg?: string): Release[] {
+    const q = "SELECT * FROM releases" + (pkg === undefined ? "" : " WHERE package = ?") + " ORDER BY ts DESC, version DESC";
+    return (pkg === undefined ? this.db.prepare(q).all() : this.db.prepare(q).all(pkg)) as unknown as Release[];
+  }
+
+  /** Record a release; one that exists must be identical (a version names one thing, for good). */
+  putRelease(r: Release) {
+    const had = this.release(r.package, r.version);
+    if (had) {
+      if (had.causal !== r.causal || had.notes !== r.notes) throw new Error(`${r.package}@${r.version} is already released here as ${had.causal.slice(0, 8)}, differently; a version can't change`);
+      return;
+    }
+    if (!this.hasCausal(r.causal)) throw new Error(`release ${r.package}@${r.version}: its history entry ${r.causal.slice(0, 8)} isn't here`);
+    this.db
+      .prepare("INSERT INTO releases (package, version, namespace, causal, notes, author, ts) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(r.package, r.version, r.namespace, r.causal, r.notes, r.author, r.ts);
   }
 
   // ---- contributions -------------------------------------------------------

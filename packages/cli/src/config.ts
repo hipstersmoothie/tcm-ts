@@ -13,8 +13,17 @@ const values = new Map<string, unknown>();
 /** The definition at `name`, evaluated (once per hash; functions in it are dropped), or undefined if none. */
 export function configDefinition(cb: Codebase, name: string): { value: Record<string, unknown>; hash: string; rec: DefRecord } | undefined {
   const hash = cb.store.hashesAt(name, "term")[0];
-  if (!hash) return undefined;
+  return hash ? { value: configValue(cb, hash, name), hash, rec: cb.store.getDef(hash)! } : undefined;
+}
+
+/**
+ * A stored definition's value (any version of it, by hash), evaluated once per hash; functions in it are dropped.
+ * A hash fixes the value, so it's kept in the codebase: later commands don't evaluate it again.
+ */
+export function configValue(cb: Codebase, hash: string, name = hash.slice(0, 8)): Record<string, unknown> {
   const rec = cb.store.getDef(hash)!;
+  const kept = values.has(hash) ? undefined : cb.store.getMetadata(hash, "value");
+  if (kept !== undefined) values.set(hash, JSON.parse(kept));
   if (!values.has(hash)) {
     materialize([hash], cb.source(), cb.lay);
     const runner = path.join(cb.lay.cacheDir, `config_${hash}.ts`);
@@ -28,6 +37,7 @@ export function configDefinition(cb: Codebase, name: string): { value: Record<st
     fs.rmSync(runner, { force: true });
     if (r.status !== 0) throw new Error(`${name} failed to evaluate:\n${r.stderr}`);
     values.set(hash, JSON.parse(r.stdout || "{}"));
+    cb.store.setMetadata(hash, "value", r.stdout || "{}");
   }
-  return { value: values.get(hash) as Record<string, unknown>, hash, rec };
+  return values.get(hash) as Record<string, unknown>;
 }

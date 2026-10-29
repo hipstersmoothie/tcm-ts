@@ -6,4 +6,4 @@ export { analyzeFile, analyzeProject, saltOf, scratchNamespace, type Analysis, t
 export { TcmError } from "./extract.ts";
 export { checkArgs, checkValue, paramsSchema, schemaCheckerSource, schemaText, typeSchema, type ParamsSchema, type Schema, type TableSchema } from "./schema.ts";
 export { checkProfile, incrementalCompiler, packageNameOf, projectCompilerOptions, type Compile, type PackageResolver, transpileForNode, transpileModule, type CheckProfile, TS_VERSION, typescriptUrl, tcmTypeRoots, type Diagnostic } from "./program.ts";
-export { compareVersions, compatRange, isExactVersion, satisfies } from "./semver.ts";
+export { bumpVersion, compareVersions, compatRange, isExactVersion, satisfies } from "./semver.ts";

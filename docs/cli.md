@@ -43,7 +43,13 @@ or option a command doesn't take is an error naming it.
 | `tcm packages` | the npm packages the codebase runs: range, locked version, what uses them ([packages](packages.md)) |
 | `tcm upgrade <pkg> [--force]` | newest versions within the ranges in use (and of what's built against it); no hashes change, everything using them is re-checked |
 | `tcm upgrade <pkg>@<range\|latest> [namespace]` | re-pin code to another range: re-hashed, dependents follow |
-| `tcm pack [[subpath=]<namespace\|name>...] --name <pkg>[@version] [--bin cmd=<name>,...] [--with pkg,...] [--files a,b] [--out dir]` | make an npm package from definitions: JavaScript with types, entry points exporting them by name, bins, dependencies at their locked versions ([publishing](publishing.md)) |
+| `tcm pack <package>[@version] [--out dir]` | an npm package of a package (a `manifest` definition's namespace): a release of it, or the branch as it is ([publishing](publishing.md)) |
+| `tcm pack [[subpath=]<namespace\|name>...] --name <pkg>[@version] [--bin cmd=<name>,...] [--with pkg,...] [--files a,b] [--out dir]` | an npm package of the definitions given ([publishing](publishing.md#packing-definitions-directly)) |
+| `tcm release [<package>][@version] [--draft] [--notes file] [--remote r] [--force]` | release a package at the version its API's changes call for (or a further one), with notes whose list of changes tcm writes ([releases](releases.md)) |
+| `tcm release check [package]` | what the next release would be, and each semver finding behind it |
+| `tcm release view <package>@<version>` | a release's notes |
+| `tcm releases [package]` | the packages and their releases |
+| `tcm changelog [package] [--out file]` | a package's changelog, from its releases |
 | `tcm resolve <name> <#hash>` | pick one definition for a conflicted name |
 | `tcm test [namespace] [--fresh]` | run tests, cached by hash ([testing](testing.md)) |
 | `tcm verify` | re-render and re-hash every live definition; must be the identity ([hashing](hashing.md)) |

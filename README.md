@@ -44,6 +44,10 @@ tcm add           # save new definitions from scratch.ts
 - **History by meaning, as Unison keeps it.** History entries are hashed namespaces with parents, the same in
   every codebase; diffs ignore renames and reformatting; merges go by history; undo anything.
   [History and merging](docs/history.md)
+- **Releases with versions and changelogs that can't be wrong.** Any number of packages per codebase; each
+  release's version comes from semver checks of what changed in the package's API (in the manner of
+  cargo-semver-checks), and its notes list those changes, so the changelog writes itself.
+  [Releases](docs/releases.md) · [publishing](docs/publishing.md)
 - **Contributions.** Propose a branch with `tcm contribute`, review it as a diff of definitions (in the terminal
   or on `tcm serve`'s review page), comment, and merge it on the server. [Contributions](docs/contributions.md)
 - **Sync and remote execution by hash.** Push, pull and `run --on` send only missing hashes, and received

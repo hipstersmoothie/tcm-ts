@@ -29,6 +29,16 @@ export function compatRange(version: string): string {
   return `0.0.${p.patch}`;
 }
 
+/** The next version at a level: `1.2.3` → `2.0.0` (major), `1.3.0` (minor), `1.2.4` (patch). */
+export function bumpVersion(version: string, level: "major" | "minor" | "patch"): string {
+  const p = parse(version);
+  if (!p) throw new Error(`'${version}' isn't a version`);
+  if (level === "major") return `${p.major + 1}.0.0`;
+  if (level === "minor") return `${p.major}.${p.minor + 1}.0`;
+  // a prerelease's patch release is the release itself
+  return p.pre ? `${p.major}.${p.minor}.${p.patch}` : `${p.major}.${p.minor}.${p.patch + 1}`;
+}
+
 /** Whether `v` is an exact version (`2.1.3`, `3.0.0-rc.1`) rather than a range (`2`, `0.3`). */
 export function isExactVersion(v: string): boolean {
   return !!parse(v);

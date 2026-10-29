@@ -11,6 +11,7 @@ import path from "node:path";
 import ts from "typescript";
 import { exportId, type DefKind } from "@tcm/core";
 import { externalsOf, npmAlias, parseModule, render, type DefSource } from "@tcm/loader";
+import type { NameRow } from "@tcm/store";
 import type { Codebase } from "./codebase.ts";
 
 export interface PackOptions {
@@ -26,6 +27,21 @@ export interface PackOptions {
   /** files and directories to copy in, relative to the codebase root: kept at that path, or by name if outside it */
   files: string[];
   out: string;
+  /** the names to pack from (a release's), instead of the current branch's */
+  names?: NameRow[];
+  /** CHANGELOG.md's contents, for a release */
+  changelog?: string;
+  /** other packages of the codebase: what of theirs this one uses comes from their releases, not copied in */
+  siblings?: Sibling[];
+}
+
+/** Another package of the codebase, and what its releases export. */
+export interface Sibling {
+  name: string;
+  /** its own definitions (hash → name), where this package is packed from */
+  owned: Map<string, string>;
+  /** its releases, newest first: what each exports, by hash */
+  releases: { version: string; exported: Map<string, { subpath: string; name: string }> }[];
 }
 
 interface Exported {
@@ -38,10 +54,9 @@ interface Exported {
  * What a subpath exports: definitions under their last names, namespaces' definitions under theirs. A type and
  * a value can share a name; two of either can't.
  */
-function exportsOf(cb: Codebase, targets: string[]): Exported[] {
+function exportsOf(all: NameRow[], targets: string[]): Exported[] {
   const out: Exported[] = [];
   const taken = new Map<string, string>();
-  const all = cb.store.names();
   for (const target of targets) {
     const names = all.filter((n) => n.path === target || n.path.startsWith(`${target}.`));
     if (!names.length) throw new Error(`'${target}' isn't a definition or namespace`);
@@ -74,26 +89,105 @@ function forPackage(text: string, aliases: Map<string, string>): string {
     });
 }
 
+/**
+ * Which components the package carries, and what it takes from its sibling packages instead: a definition one of
+ * them owns comes from the oldest release of it that exports every such definition used, as it is here.
+ */
+function provide(cb: Codebase, roots: string[], siblings: Sibling[]) {
+  const ownerOf = new Map<string, Sibling>();
+  for (const s of siblings) for (const h of s.owned.keys()) ownerOf.set(h, s);
+  const rootSet = new Set(roots);
+  const used = new Map<Sibling, Set<string>>();
+  const kept = new Set<string>();
+  const queue = [...roots];
+  while (queue.length) {
+    const h = queue.pop()!;
+    const owner = ownerOf.get(h);
+    if (owner && !rootSet.has(h)) {
+      used.set(owner, (used.get(owner) ?? new Set()).add(h));
+      continue;
+    }
+    const rec = cb.store.getDef(h);
+    if (!rec || kept.has(rec.componentHash)) continue;
+    kept.add(rec.componentHash);
+    for (const m of cb.store.componentMembers(rec.componentHash)) for (const d of m.deps) if (d.ref.startsWith("#")) queue.push(d.ref.slice(1));
+  }
+  const provided = new Map<string, { module: string; name: string }>();
+  const links: Record<string, string> = {};
+  for (const [s, hashes] of used) {
+    // the oldest release with all of it: the widest range of the other's versions this works with
+    const release = s.releases.findLast((r) => [...hashes].every((h) => r.exported.has(h)));
+    if (!release) {
+      const latest = s.releases[0];
+      const missing = [...hashes].filter((h) => !latest?.exported.has(h)).map((h) => s.owned.get(h)!).sort();
+      throw new Error(
+        `this uses ${missing.join(", ")} from ${s.name}, which ${latest ? `${s.name}@${latest.version} doesn't export as it is here` : `${s.name} hasn't released yet`}: release ${s.name} first (\`tcm release ${s.name}\`)${missing.some((m) => !latest) ? "" : ", or export what this uses"}`,
+      );
+    }
+    links[s.name] = `^${release.version}`;
+    for (const h of hashes) {
+      const e = release.exported.get(h)!;
+      provided.set(h, { module: e.subpath === "." ? s.name : `${s.name}/${e.subpath.replace(/^\.\//, "")}`, name: e.name });
+    }
+  }
+  return { kept, provided, links };
+}
+
+/** Imports of modules another package provides, rewritten to import from that package by name. */
+function fromSiblings(text: string, kept: Set<string>, provided: Map<string, { module: string; name: string }>): string {
+  const target = (hash: string) => {
+    const p = provided.get(hash);
+    if (!p) throw new Error(`internal: #${hash.slice(0, 8)} is neither packed nor provided`);
+    return p;
+  };
+  return text
+    .replace(/import (type )?\{([^}]*)\} from "\.\/([a-z2-7]{52})\.js";/g, (m, type: string | undefined, specs: string, comp: string) => {
+      if (kept.has(comp)) return m;
+      const byModule = new Map<string, string[]>();
+      for (const spec of specs.split(",").map((x) => x.trim()).filter(Boolean)) {
+        const s = /^(type )?h_([a-z2-7]{52})(?: as ([\w$]+))?$/.exec(spec);
+        if (!s) throw new Error(`internal: can't read the import '${spec}'`);
+        const p = target(s[2]!);
+        byModule.set(p.module, [...(byModule.get(p.module) ?? []), `${s[1] ?? ""}${p.name} as ${s[3] ?? `h_${s[2]}`}`]);
+      }
+      return [...byModule].map(([mod, ss]) => `import ${type ?? ""}{ ${ss.join(", ")} } from "${mod}";`).join("\n");
+    })
+    .replace(/import\("\.\/([a-z2-7]{52})\.js"\)\.h_([a-z2-7]{52})/g, (m, comp: string, hash: string) => {
+      if (kept.has(comp)) return m;
+      const p = target(hash);
+      return `import("${p.module}").${p.name}`;
+    });
+}
+
 export function pack(cb: Codebase, opts: PackOptions): { dir: string; modules: number; dependencies: Record<string, string> } {
   const subpaths = new Map<string, string[]>();
   for (const e of opts.entries) subpaths.set(e.subpath, [...(subpaths.get(e.subpath) ?? []), e.target]);
-  const entries = [...subpaths].map(([subpath, targets]) => ({ subpath, exports: exportsOf(cb, targets) }));
-  const bins = opts.bins.map((b) => ({ ...b, hash: cb.lookupOne(b.target, "value") }));
+  const names = opts.names ?? cb.store.names();
+  const entries = [...subpaths].map(([subpath, targets]) => ({ subpath, exports: exportsOf(names, targets) }));
+  const valueAt = (target: string) => {
+    if (!opts.names) return cb.lookupOne(target, "value");
+    const hs = names.filter((n) => n.path === target && n.kind !== "type").map((n) => n.hash);
+    if (hs.length !== 1) throw new Error(hs.length ? `'${target}' is conflicted` : `'${target}' isn't a value`);
+    return hs[0]!;
+  };
+  const bins = opts.bins.map((b) => ({ ...b, hash: valueAt(b.target) }));
   const roots = [...entries.flatMap((e) => e.exports.map((x) => x.hash)), ...bins.map((b) => b.hash)];
+  // every component the code needs, to compile it; those it carries are the ones other packages don't provide
   const comps = [...cb.closureComponents(roots)];
+  const { kept, provided, links } = provide(cb, roots, opts.siblings ?? []);
   // generated without source maps: the published modules are the code
   const base = cb.source();
   const src: DefSource = { get: base.get, members: base.members, nameOf: base.nameOf };
 
   // the package's dependencies: every package the code imports, at its locked version
   const modules = new Set<string>();
-  for (const c of comps) for (const e of externalsOf(src.members(c))) if (e.module.startsWith("npm:")) modules.add(e.module);
+  for (const c of kept) for (const e of externalsOf(src.members(c))) if (e.module.startsWith("npm:")) modules.add(e.module);
   const byName = new Map<string, string[]>();
   for (const m of modules) {
     const { name } = parseModule(m);
     byName.set(name, [...(byName.get(name) ?? []), m]);
   }
-  const dependencies: Record<string, string> = {};
+  const dependencies: Record<string, string> = { ...links };
   const aliases = new Map<string, string>();
   for (const [name, ms] of byName) {
     for (const m of ms) {
@@ -135,7 +229,7 @@ export function pack(cb: Codebase, opts: PackOptions): { dir: string; modules: n
     for (const c of comps) {
       const members = src.members(c);
       const text = render(members, src, cb.lay, { style: "cache", docs: true }).text;
-      if (text.includes('"./tcm-server.js"')) server = true;
+      if (kept.has(c) && text.includes('"./tcm-server.js"')) server = true;
       const file = path.join(work, `${c}${members.some((m) => m.jsx) ? ".tsx" : ".ts"}`);
       fs.writeFileSync(file, text);
       files.push(file);
@@ -161,10 +255,12 @@ export function pack(cb: Codebase, opts: PackOptions): { dir: string; modules: n
       skipLibCheck: true,
     });
     const emitted = program.emit(undefined, (file, text) => {
+      // what another package provides is imported from it, not shipped again
+      if (!kept.has(path.basename(file).replace(/\.(d\.ts|js)$/, ""))) return;
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, forPackage(text, aliases));
+      fs.writeFileSync(file, fromSiblings(forPackage(text, aliases), kept, provided));
     });
-    const missing = files.filter((f) => !fs.existsSync(path.join(outModules, path.basename(f).replace(/\.tsx?$/, ".js"))));
+    const missing = files.filter((f) => kept.has(path.basename(f).replace(/\.tsx?$/, ""))).filter((f) => !fs.existsSync(path.join(outModules, path.basename(f).replace(/\.tsx?$/, ".js"))));
     if (missing.length) {
       const why = emitted.diagnostics.map((d) => ts.flattenDiagnosticMessageText(d.messageText, " ")).slice(0, 3).join("\n");
       throw new Error(`couldn't compile ${missing.length} module(s)${why ? `:\n${why}` : ""}`);
@@ -208,6 +304,7 @@ export function pack(cb: Codebase, opts: PackOptions): { dir: string; modules: n
     );
     binField[b.command] = `bin/${b.command}.js`;
   }
+  if (opts.changelog) fs.writeFileSync(path.join(dir, "CHANGELOG.md"), opts.changelog);
   for (const f of opts.files) {
     const from = path.resolve(cb.lay.root, f);
     if (!fs.existsSync(from)) throw new Error(`--files: ${f} doesn't exist`);
@@ -225,5 +322,5 @@ export function pack(cb: Codebase, opts: PackOptions): { dir: string; modules: n
     dependencies: Object.fromEntries(Object.entries(dependencies).sort()),
   };
   fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
-  return { dir, modules: comps.length, dependencies: pkg.dependencies };
+  return { dir, modules: kept.size, dependencies: pkg.dependencies };
 }

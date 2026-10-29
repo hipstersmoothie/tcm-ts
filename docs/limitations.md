@@ -30,4 +30,9 @@ What isn't done yet, or is deliberately out of scope:
 - **Contributions trust names.** A `tcm serve` server has one token, so who commented or merged is what the
   client says (`$TCM_AUTHOR` or the OS user), not checked; there are no per-person permissions. Merging one on
   the server briefly makes its target the server's current branch.
+- **Semver checks see types, not behaviour.** A definition whose code changed with the same API is a patch;
+  release at a higher version when a behaviour change deserves one. Generic types and generic functions whose
+  type parameters changed are compared as written, so some compatible changes to them count as breaking.
+- **Packages that use each other** depend on each other's releases; one that uses another's internals, or
+  changes to it that aren't released yet, can't be packed until they are.
 - **Transactions lock per process** ([data](data.md#transactions)).

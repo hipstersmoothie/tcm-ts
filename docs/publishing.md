@@ -1,12 +1,19 @@
 # Publishing to npm
 
 Code in a codebase is definitions, not files, so there's nothing to point `npm publish` at. `tcm pack` makes
-the package: the definitions you name and everything they use, compiled to JavaScript with type declarations,
-with an entry point that exports them by name and a `package.json` that depends on the packages they import.
+the package: the definitions it exports and everything they use, compiled to JavaScript with type declarations,
+with entry points that export them by name and a `package.json` that depends on the packages they import.
+
+## Packages
+
+A definition named `manifest` makes its namespace a package. A codebase can hold any number:
 
 ```ts
 // tcm: namespace greet
 import escape from "escape-string-regexp";
+
+/** Greetings, and patterns that find them. */
+export const manifest = { name: "greeter", bin: { greeter: "main" } };
 
 export interface Greeting {
   to: string;
@@ -27,8 +34,10 @@ export function main(...names: string[]): number {
 ```
 
 ```text
-$ tcm pack greet --name greeter@1.2.0 --bin greeter=greet.main --files README.md
-packed greeter@1.2.0 into .tcm/pack/greeter: 4 module(s), depends on escape-string-regexp
+$ tcm release greeter
+released greeter@0.1.0 as #pnlegqdu: its first release
+$ tcm pack greeter@0.1.0
+packed greeter@0.1.0 into .tcm/pack/greeter: 4 module(s), depends on escape-string-regexp
 $ cd .tcm/pack/greeter && npm publish
 ```
 
@@ -43,7 +52,44 @@ $ npx greeter Ada
 hello, Ada
 ```
 
+The manifest is a definition like any other: hashed, in the history, diffed and reviewed in
+[contributions](contributions.md). Names in it are relative to its namespace, so `tcm mv greet hello` takes the
+package along. A `manifest` at the root makes the whole codebase one package.
+
+| Field | |
+|---|---|
+| `name` | the npm package's name |
+| `exports` | subpath (`"."`, `"./ui"`) → names under the namespace whose definitions it exports (`""` is all of it). Default `{ ".": "" }` |
+| `bin` | command → the definition it runs |
+| `with` | packages the code needs but doesn't import, like `@types/node@^24` |
+| `files` | files to copy in, relative to the codebase root (a README, a licence) |
+| `description` | defaults to the first paragraph of the manifest's doc comment |
+
+A package's own definitions are its namespace's, except for packages nested in it (their namespaces are theirs),
+tests, tool configs and the manifest. Its [releases](releases.md) are its own too: their versions come from what
+changed in what it exports, and their notes are its changelog.
+
+- **`tcm pack <package>@<version>`** packs a release: its definitions as they were, at its version, with its
+  `CHANGELOG.md`.
+- **`tcm pack <package>`** packs it as it is on the branch, at version `0.0.0`.
+
+### Packages that use each other
+
+When one package uses definitions another exports (an app's package using a library's, say), it depends on the
+other's oldest release that has those exact definitions (the widest range it works with), and imports them from it: `"geo": "^0.2.0"` in its
+`package.json`, `import { distance } from "geo"` in its modules. It doesn't carry a copy, which would duplicate code
+and break `instanceof` across the two. If it uses something no release of the other exports as it is (changed since
+its last release, or not exported), packing it is refused: release the other first.
+
+## Packing definitions directly
+
+Without a manifest, `tcm pack` takes the definitions on the command line:
+`tcm pack greet ui=ui --name greeter@1.2.0 --bin greeter=greet.main --files README.md`.
+
 ## What goes in
+
+In a manifest, or on the command line:
+
 
 - **Entries** are namespaces or definitions. A namespace exports every definition beneath it, each under its
   last name (`greet.greet` as `greet`). Several entries can share an entry point, and two definitions that would
