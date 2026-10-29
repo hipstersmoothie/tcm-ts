@@ -279,3 +279,19 @@ export const testRejectsNonErasableAndMutableSyntax = () => {
   scratch(`export let counter = 0;\n`);
   assert.throws(() => tcm("check"), /immutable/);
 };
+
+/**
+ * A definition using one that's saved and then re-derived in the same update reaches its final version.
+ */
+export const testUsesFinalVersionOfRederived = () => {
+  const dir = tempDir("e2e");
+  const ok = (...args: string[]) => okIn(dir, ...args);
+  const scratch = (text: string) => fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace chain\n${text}`);
+  ok("init");
+  scratch(`export const c = () => 1;\nexport const y = () => c() + 1;\nexport const x = () => y() * 10;\nexport const z = () => x() + 1000;\n`);
+  ok("add");
+  // c and x change; y (using c) is re-derived, so x (using y) is too; z must use that x, not the one saved
+  scratch(`import { y } from "#codebase/chain";\nexport const c = () => 2;\nexport const x = () => y() * 100;\n`);
+  ok("update");
+  assert.equal(ok("run", "chain.z").trim(), "1300");
+}

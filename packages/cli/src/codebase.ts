@@ -563,23 +563,24 @@ export class Codebase {
     }
     const compOf = new Map<string, string>();
     for (const [c, ms] of comps) for (const m of ms) compOf.set(m.hash, c);
+    // a dependency is what it was replaced by: one saved and then re-derived here too comes first
+    const resolve = (h: string) => {
+      for (let i = 0; i < 1000 && patches.has(h); i++) h = patches.get(h)!;
+      return h;
+    };
     const order: string[] = [];
     const seen = new Set<string>();
     const visit = (c: string) => {
       if (seen.has(c)) return;
       seen.add(c);
       for (const m of comps.get(c)!) for (const d of m.deps) {
-        const dc = d.ref.startsWith("#") ? compOf.get(d.ref.slice(1)) : undefined;
+        const dc = d.ref.startsWith("#") ? compOf.get(resolve(d.ref.slice(1))) : undefined;
         if (dc && dc !== c) visit(dc);
       }
       order.push(c);
     };
     [...comps.keys()].forEach(visit);
 
-    const resolve = (h: string) => {
-      for (let i = 0; i < 1000 && patches.has(h); i++) h = patches.get(h)!;
-      return h;
-    };
     const updated: string[] = [];
     const failed = new Set<string>();
     // components whose dependencies are all re-hashed are re-checked together, in one program: a wave per level
@@ -588,7 +589,7 @@ export class Codebase {
     for (const c of order) {
       let l = 0;
       for (const m of comps.get(c)!) for (const d of m.deps) {
-        const dc = d.ref.startsWith("#") ? compOf.get(d.ref.slice(1)) : undefined;
+        const dc = d.ref.startsWith("#") ? compOf.get(resolve(d.ref.slice(1))) : undefined;
         if (dc && dc !== c) l = Math.max(l, level.get(dc)! + 1);
       }
       level.set(c, l);
