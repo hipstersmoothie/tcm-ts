@@ -25,7 +25,8 @@ export function sourceFiles(dir: string, exclude: Set<string>, tests: boolean): 
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
     if (exclude.has(path.resolve(p))) return [];
-    if (e.isDirectory()) return e.name.startsWith(".") || (SKIP_DIRS.has(e.name) && !(tests && TEST_DIRS.has(e.name))) ? [] : sourceFiles(p, exclude, tests);
+    // (a directory marked as holding files is files of the codebase, not code)
+    if (e.isDirectory()) return e.name.startsWith(".") || (SKIP_DIRS.has(e.name) && !(tests && TEST_DIRS.has(e.name))) || fs.existsSync(path.join(p, FILES_MARK)) ? [] : sourceFiles(p, exclude, tests);
     return /\.(m|c)?ts$/.test(e.name) && !/\.d\.(m|c)?ts$|\.(test|spec)(-d)?\.(m|c)?ts$/.test(e.name) ? [p] : [];
   });
 }
@@ -383,7 +384,7 @@ export function syncMirror(cb: Codebase): boolean {
   }
   const untouched = untextual(cb, m.log);
   // the files of code (a namespace each); the rest (Markdown, CSS, images) are files of the codebase, below
-  const code = () => Object.entries(m.files).filter(([rel]) => !isAsset(rel));
+  const code = () => Object.entries(m.files).filter(([rel]) => !isAsset(rel, m.dir));
   const byNs = new Map(code().map(([rel, f]) => [f.ns, rel]));
   const now = new Map<string, Record<string, string>>();
   for (const [, f] of code()) now.set(f.ns, namesIn(cb, f.ns));
@@ -516,7 +517,7 @@ export function syncMirror(cb: Codebase): boolean {
   const createdAssets: string[] = [];
   const recorded = new Set<string>();
   for (const [rel, f] of Object.entries(m.files)) {
-    if (!isAsset(rel)) continue;
+    if (!isAsset(rel, m.dir)) continue;
     const name = joinName(f.ns, fileLeaf(rel));
     recorded.add(name);
     const h = cb.store.hashesAt(name).find((x) => cb.store.getDef(x)?.kind === "file");
@@ -586,7 +587,7 @@ export function syncMirror(cb: Codebase): boolean {
   const changed = [...[...before].filter(([rel, text]) => fs.readFileSync(abs(rel), "utf8") !== text).map(([rel]) => rel), ...assetsBefore.keys(), ...createdAssets];
   if (changed.length) console.log(dim(`mirror: wrote ${changed.join(", ")}${outside.size ? ` (and renamed in ${[...outside.keys()].map((f) => path.relative(m.dir, f)).join(", ")}, outside it)` : ""}`));
   for (const [rel, f] of Object.entries(m.files)) {
-    if (!isAsset(rel)) {
+    if (!isAsset(rel, m.dir)) {
       m.files[rel] = { ...f, sha: sha(fs.readFileSync(abs(rel), "utf8")), names: now.get(f.ns)! };
       continue;
     }
@@ -664,14 +665,14 @@ export function checkMirror(cb: Codebase, m: Mirror, keepText = false): string[]
     if (!hs.includes(d.hash)) out.push(`${p}: the file's code hashes to #${d.hash.slice(0, 8)}, the codebase has ${hs.length ? hs.map((h) => `#${h.slice(0, 8)}`).join(", ") : "nothing there"}`);
   }
   for (const [rel, f] of Object.entries(m.files)) {
-    if (isAsset(rel)) continue;
+    if (isAsset(rel, m.dir)) continue;
     for (const leaf of Object.keys(namesIn(cb, f.ns))) if (!seen.has(joinName(f.ns, leaf))) out.push(`${joinName(f.ns, leaf)} is in the codebase but not in the files`);
   }
   // files of the codebase that aren't code: the same content
   for (const file of assetFiles(m.dir, new Set(m.exclude.map((e) => path.resolve(m.dir, e))))) {
     const name = assetName(m.dir, m.into, file);
     seen.add(name);
-    const { def } = fileDefinition(cb, name, fileFormat(file)!, fs.readFileSync(file));
+    const { def } = fileDefinition(cb, name, assetFormat(file), fs.readFileSync(file));
     const hs = cb.store.hashesAt(name);
     if (!hs.includes(def.hash)) out.push(`${name}: the file hashes to #${def.hash.slice(0, 8)}, the codebase has ${hs.length ? hs.map((h) => `#${h.slice(0, 8)}`).join(", ") : "nothing there"}`);
   }
@@ -1049,12 +1050,14 @@ export function mentions(sf: ReturnType<typeof ts.parse>, name: string): boolean
 /**
  * The files under a mirrored directory that aren't code (Markdown, CSS, images): files of the codebase.
  */
-export function assetFiles(dir: string, exclude: Set<string>): string[] {
+export function assetFiles(dir: string, exclude: Set<string>, marked = false): string[] {
+  // in a directory marked as holding files, all of it is
+  const all = marked || fs.existsSync(path.join(dir, FILES_MARK));
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
     if (exclude.has(path.resolve(p)) || e.name.startsWith(".")) return [];
-    if (e.isDirectory()) return ["node_modules", "dist", "build"].includes(e.name) ? [] : assetFiles(p, exclude);
-    return isAsset(e.name) ? [p] : [];
+    if (e.isDirectory()) return ["node_modules", "dist", "build"].includes(e.name) ? [] : assetFiles(p, exclude, all);
+    return all || isAsset(e.name) ? [p] : [];
   });
 }
 
@@ -1069,7 +1072,22 @@ export function assetName(root: string, into: string, file: string): string {
 /**
  * Formats a mirror keeps as files of the codebase: all but the project's configuration (JSON, YAML, TOML).
  */
-export const isAsset = (file: string): boolean => {
+export const isAsset = (file: string, root = ""): boolean => {
   const format = fileFormat(file);
-  return !!format && !["json", "yaml", "yml", "toml"].includes(format);
+  if (format && !["json", "yaml", "yml", "toml"].includes(format)) return true;
+  // or anything in a directory marked as holding files (examples: scratch files, kept as written)
+  for (let d = path.dirname(path.resolve(root, file)); root && d.startsWith(path.resolve(root)) && d !== path.dirname(d); d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, FILES_MARK))) return true;
+  }
+  return false;
 }
+
+/**
+ * A directory with this file in it holds files of the codebase, kept as written, not code (in a mirror).
+ */
+export const FILES_MARK = ".tcm-files";
+
+/**
+ * A file's format as a file of the codebase: its extension (any, in a directory marked as holding files).
+ */
+export const assetFormat = (file: string): string => fileFormat(file) ?? path.extname(file).slice(1).toLowerCase();

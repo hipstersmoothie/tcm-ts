@@ -20,6 +20,8 @@ What isn't done yet, or is deliberately out of scope:
 - **A suite's cached result only knows the code it ran from the codebase.** Files it reads (fixtures, a project
   it builds), code it imports from source rather than through the command, and the outside world can change
   without it running again: `tcm test --fresh` runs it. A suite that runs nothing of the codebase always runs.
+- **Mirrored code can't import files as values yet.** A mirror's files are plain TypeScript, which can't import
+  a page or an image as a value; until it can, code that does lives only in the codebase.
 - **Links between pages are kept as written, not by hash** ([pages](pages.md)): pages link to each other both
   ways, and by hash that would make cycles. They're checked when a page is saved, and `tcm mv` and `tcm rm` follow
   them. A directory's name in a mirror reads as a namespace the way code's do (`my-docs` is `my_docs`), so a new

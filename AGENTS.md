@@ -27,7 +27,7 @@ change and save with `tcm_update`; editing the file in `packages/docs/` works to
 - **Fixed or newly found limits** are updated in `packages/docs/limitations.md`.
 - **Check claims against the code**, not memory or older docs. Remove what's no longer true.
 - **The README stays short:** a pitch, quick start, and links into `packages/docs/`.
-- **`examples/` must keep working.** `packages/cli/test/e2e/examples.ts` builds and runs them; when a feature
+- **`packages/examples/` must keep working.** `packages/cli/test/e2e/examples.ts` builds and runs them; when a feature
   changes how code is written, update the examples too.
 
 ## Verifying a change

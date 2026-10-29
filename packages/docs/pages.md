@@ -39,6 +39,21 @@ A Markdown file can say where it goes in its first line, as `tcm edit` writes it
 
 Links in code (fences and `inline code`) aren't links.
 
+## Files are values
+
+Code imports a file like any definition, by its name: its content, as it was saved (text as a `string`, bytes as
+a `Uint8Array`). The code depends on it by hash, so updating the file re-derives the code that uses it.
+
+```ts
+// tcm: namespace ui
+import { app } from "#codebase/styles";      // styles.app, a .css file
+import { logo } from "#codebase/media";      // media.logo, a .png
+export const page = () => `<style>${app}</style>${logo.length} bytes of logo`;
+```
+
+A file whose own name isn't an identifier (`getting-started`) can't be imported by it. A file is data: what it
+links to doesn't make the code using it run on the server or in the browser.
+
 ## Writing them out
 
 `tcm export <namespace> <dir>` writes a namespace's files to a directory, laid out by their names (`docs.a.b` is
@@ -46,7 +61,8 @@ Links in code (fences and `inline code`) aren't links.
 can be a namespace of files instead of a path ([publishing](publishing.md#packages)).
 
 In a [mirror](importing.md#mirrors), the files under the mirrored directory that aren't code or configuration
-(Markdown, CSS, images; not JSON, YAML or TOML) are files of the codebase, written back as they change.
+(Markdown, CSS, images; not JSON, YAML or TOML) are files of the codebase, written back as they change. So is
+everything in a directory with a `.tcm-files` file in it, code included: example projects, kept as written.
 
 tcm's own docs are files of its codebase (`tcmts.docs`, mirrored to `packages/docs/`), and its docs site is built
 from them by a definition (`pnpm docs:site`, which is `pnpm tcm run tcmts.dev.site`). `pnpm verify` builds it too,

@@ -4,7 +4,7 @@ name: docs
 on:
   push:
     branches: [main]
-    paths: ["packages/docs/**", "packages/dev.ts", "examples/**", "package.json", "pnpm-lock.yaml", ".github/workflows/docs.yml"]
+    paths: ["packages/docs/**", "packages/dev.ts", "package.json", "pnpm-lock.yaml", ".github/workflows/docs.yml"]
   workflow_dispatch:
 
 permissions:

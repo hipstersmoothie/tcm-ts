@@ -10,7 +10,7 @@ dir=${1:-$PWD/notes-demo}
 tcm() {
   if [ -n "$TCM_BIN" ]; then node "$TCM_BIN" "$@"
   elif [ -n "$TCM" ]; then $TCM "$@"
-  else node "$here/../../packages/cli/bin/tcm.js" "$@"; fi
+  else node "$here/../../cli/bin/tcm.js" "$@"; fi
 }
 
 if [ -e "$dir/.tcm" ]; then echo "$dir already has a codebase" >&2; exit 1; fi

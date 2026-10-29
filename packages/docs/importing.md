@@ -46,7 +46,8 @@ and the rest of each file stays as written (comments, import style, barrels):
   and the files stay as they were.
 - **Files that aren't code or configuration** (Markdown, CSS, images) are [files of the codebase](pages.md), named
   by their directory's namespace and their own name, and written back as they change. JSON, YAML and TOML are left
-  alone: they're the project's configuration.
+  alone: they're the project's configuration. A directory with a `.tcm-files` file in it is files of the
+  codebase, all of it, `.ts` files too (examples, fixtures): kept as written, not read as code.
 - **Dependents re-hashed** by an update, and packages upgraded, don't change any text: their files stay as they are.
 - **The files' style is kept:** a mirrored codebase stores code as written (not reformatted), and `tcm edit`
   gives it back that way. Code edited in a scratch file is stored as its file spells it once it's written back,

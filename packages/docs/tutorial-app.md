@@ -154,7 +154,7 @@ stored the data in a typed table, and gave you a dev server and a production ser
 
 Next:
 
-- The [polls example](../../examples/README.md) goes further: sessions, a background job, a recurring job, a live
+- The [polls example](../examples/README.md) goes further: sessions, a background job, a recurring job, a live
   stream of results, tests and documented code.
 - Guides: [server functions](server-api.md) (sessions, errors, streaming), [data](data.md) (queries, changing a
   table's shape), [background jobs](jobs.md), [deploying](production.md).

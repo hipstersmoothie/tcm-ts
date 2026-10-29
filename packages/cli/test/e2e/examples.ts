@@ -36,7 +36,7 @@ async function startApp(keep: Keep, cwd: string, app: string): Promise<string> {
 export const testPollsExample = async () => {
   if (!CHROME) return console.log("skipped: no Chrome");
   const dir = path.join(tempDir("examples"), "polls");
-  const setup = spawnSync(repoPath("examples/polls/setup.sh"), [dir], { env: env(), encoding: "utf8" });
+  const setup = spawnSync(repoPath("packages/examples/polls/setup.sh"), [dir], { env: env(), encoding: "utf8" });
   const out = (setup.stdout + setup.stderr).replace(/\x1b\[[0-9;]*m/g, "");
   assert.equal(setup.status, 0, out);
   assert.match(out, /4 passed, 0 failed/);
@@ -70,7 +70,7 @@ export const testPollsExample = async () => {
 export const testNotesExample = async () => {
   if (!CHROME) return console.log("skipped: no Chrome");
   const notesDir = path.join(tempDir("examples"), "notes");
-  const setup = spawnSync(repoPath("examples/notes/setup.sh"), [notesDir], { env: env(), encoding: "utf8" });
+  const setup = spawnSync(repoPath("packages/examples/notes/setup.sh"), [notesDir], { env: env(), encoding: "utf8" });
   const out = (setup.stdout + setup.stderr).replace(/\x1b\[[0-9;]*m/g, "");
   assert.equal(setup.status, 0, out);
   assert.match(out, /8 passed, 0 failed/);
@@ -121,7 +121,7 @@ export const testNotesExample = async () => {
 /** the geometry example: two packages, their releases, a contribution, and what's next */
 export const testGeometryExample = () => {
   const root = path.join(tempDir("examples"), "geometry");
-  const built = spawnSync(repoPath("examples/geometry/setup.sh"), [root], { env: env(), encoding: "utf8" });
+  const built = spawnSync(repoPath("packages/examples/geometry/setup.sh"), [root], { env: env(), encoding: "utf8" });
   const out = (built.stdout + built.stderr).replace(/\x1b\[[0-9;]*m/g, "");
   assert.equal(built.status, 0, out);
   const tcm = (...args: string[]) => {

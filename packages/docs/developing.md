@@ -10,7 +10,8 @@ packages/
   cli/      the tcm command, placement inference, sync, merge, web (Vite plugin, dev/build/start), the
             #tcm/server runtime, the wire codec
 editors/    vscode/: the VS Code extension (a thin client for `tcm lsp`; not part of the npm package)
-examples/   polls/: an example app, built and run in a browser by packages/cli/test/e2e/examples.ts
+packages/examples/  polls, notes, geometry: example projects, files of tcm's codebase (tcmts.examples, kept as
+            written: their directory has a .tcm-files mark), built by their setup scripts, run by e2e/examples.ts
 scripts/    codebase.sh (`pnpm tcm`), compare-compilers.sh (verifying and the docs site are definitions: packages/dev.ts)
 packages/docs/  user documentation, one page per feature area: files of tcm's codebase (tcmts.docs)
 ```
@@ -38,7 +39,7 @@ written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything i
 | `pnpm verify` | everything a commit needs, from tcm's codebase ([below](#verifying-a-change)); names failing tests. When all pass, the package tested becomes the [known-good tcm](#the-known-good-tcm) |
 | `pnpm test` | every test from source with `node:test`, through the runners beside them: hashing invariants, frozen golden hashes, and end-to-end CLI scenarios (sync, merge, web apps in real Chrome, production, jobs, data, import) |
 | `pnpm typecheck` | typecheck the repo (TypeScript 7's `tsc`) |
-| `pnpm docs:dev` | serve the docs site locally (port 4321, or the next free one), building it again and reloading open pages when a page or `examples/` changes |
+| `pnpm docs:dev` | serve the docs site locally (port 4321, or the next free one), building it again and reloading open pages when a page or an example changes |
 | `pnpm docs:site` | build the docs site (`tcmts.docs`, from the codebase, and the examples page) into `dist/site`; it fails on any broken link or anchor. A GitHub Actions workflow (`.github/workflows/docs.yml`) builds and deploys it to GitHub Pages on pushes to `main` |
 | `pnpm compare-compilers` | hash the repo with TypeScript 7 and with [tsrs](compiler-options.md#the-compiler), and run the golden test with tsrs; hashes must match |
 

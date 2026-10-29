@@ -14,7 +14,7 @@ New here? Read the [introduction](introduction.md), then follow [your first code
 | [Install](getting-started.md) | getting `tcm`, making a codebase, setting up your editor |
 | [Tutorial: first codebase](tutorial-codebase.md) | write, add, change, rename, undo, test and document code (15 minutes) |
 | [Tutorial: first app](tutorial-app.md) | a web app with a database, server and browser code, no API layer (10 minutes) |
-| [Examples](../../examples/README.md) | a live polling app, a React notes app with server components, and packages with releases and changelogs |
+| [Examples](../examples/README.md) | a live polling app, a React notes app with server components, and packages with releases and changelogs |
 
 ## Guides
 
@@ -63,4 +63,4 @@ New here? Read the [introduction](introduction.md), then follow [your first code
 | [Limitations](limitations.md) | what isn't done yet |
 
 These pages describe what the code does now; they're updated in the same change as the feature they describe
-(see [AGENTS.md](../../AGENTS.md)).
+(see [developing tcm-ts](developing.md)).

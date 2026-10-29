@@ -218,11 +218,18 @@ export async function buildSite(out: string): Promise<{ pages: number; problems:
   const tcm = process.env.TCM_BIN;
   if (!tcm) throw new Error("run this with `tcm run`, which gives it the codebase's own tcm (TCM_BIN)");
   const repo = repository();
-  const docs = fs.mkdtempSync(path.join(os.tmpdir(), "tcm docs "));
-  const exported = sh(process.execPath, [tcm, "export", "tcmts.docs", docs], process.cwd());
-  if (!exported.ok) return { pages: 0, problems: [`tcm export tcmts.docs: ${exported.out.trim()}`] };
-  // a page of the codebase is read as it has it; the examples page, from the repository
-  const read = (src: string) => (src.startsWith("packages/docs/") ? fs.readFileSync(path.join(docs, src.slice("packages/docs/".length)), "utf8") : fs.readFileSync(path.join(repo, src), "utf8"));
+  // the pages as the codebase has them: the docs, and the examples' page
+  const exported = new Map<string, string>();
+  for (const ns of ["docs", "examples"]) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `tcm ${ns} `));
+    const r = sh(process.execPath, [tcm, "export", `tcmts.${ns}`, dir], process.cwd());
+    if (!r.ok) return { pages: 0, problems: [`tcm export tcmts.${ns}: ${r.out.trim()}`] };
+    exported.set(`packages/${ns}/`, dir);
+  }
+  const read = (src: string) => {
+    for (const [prefix, dir] of exported) if (src.startsWith(prefix)) return fs.readFileSync(path.join(dir, src.slice(prefix.length)), "utf8");
+    return fs.readFileSync(path.join(repo, src), "utf8");
+  };
 
   // pages, in the order the index lists them: its `## headings` are sections, the links in their tables pages
   const index = read("packages/docs/README.md");
@@ -234,7 +241,7 @@ export async function buildSite(out: string): Promise<{ pages: number; problems:
     const m = /^\| \[([^\]]+)\]\(([^)]+)\) \|/.exec(line);
     if (!m) continue;
     const src = path.normalize(path.join("packages/docs", m[2]!));
-    const name = src === "examples/README.md" ? "examples" : path.basename(src, ".md");
+    const name = src === "packages/examples/README.md" ? "examples" : path.basename(src, ".md");
     pages.push({ src, file: `${name}.html`, label: m[1]!.toLowerCase(), n: pages.length, ...(section ? { section } : {}) });
   }
   const bySrc = new Map(pages.map((p) => [p.src, p]));
@@ -363,7 +370,7 @@ export async function buildSite(out: string): Promise<{ pages: number; problems:
   for (const l of links) {
     if (l.anchor && !anchors.get(l.file)?.has(l.anchor)) problems.push(`${l.from}: link to ${l.text}: no heading #${l.anchor} there`);
   }
-  fs.rmSync(docs, { recursive: true, force: true });
+  for (const dir of exported.values()) fs.rmSync(dir, { recursive: true, force: true });
   return { pages: pages.length, problems };
 }
 
@@ -420,7 +427,7 @@ export async function siteDev(port = "4321"): Promise<void> {
   });
   await build();
   let timer: NodeJS.Timeout | undefined;
-  for (const dir of ["packages/docs", "examples"]) {
+  for (const dir of ["packages/docs", "packages/examples"]) {
     fs.watch(path.join(repo, dir), { recursive: true }, () => {
       clearTimeout(timer);
       timer = setTimeout(() => void build().then((ok) => ok && clients.forEach((c) => c.write("data: reload\n\n"))), 100);

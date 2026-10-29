@@ -8,7 +8,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 dir=${1:-$PWD/geometry-demo}
 # a function, not a variable: this checkout's path may contain spaces. TCM_BIN (a tcm.js to run with Node) is
 # what the test suites set.
-bin=${TCM_BIN:-$(cd "$here/../.." && pwd)/packages/cli/bin/tcm.js}
+bin=${TCM_BIN:-$(cd "$here/../.." && pwd)/cli/bin/tcm.js}
 tcm() {
   if [ -z "$TCM_BIN" ] && [ -n "$TCM" ]; then $TCM "$@"
   else node "$bin" "$@"; fi
@@ -36,16 +36,16 @@ done
 tcm test
 
 step "Their first releases, declared stable (1.0.0), with a summary each; the rest of the notes tcm writes"
-tcm release geo@1.0.0 --notes "$here/notes/geo-1.0.0.md"
-tcm release atlas@1.0.0 --notes "$here/notes/atlas-1.0.0.md"
+tcm release geo@1.0.0 --notes "$here/notes/geo-1-0-0.md"
+tcm release atlas@1.0.0 --notes "$here/notes/atlas-1-0-0.md"
 tcm push
 
 step "geo 1.1: perimeters, and rounded distances. Additions, so tcm makes it a minor release"
-cp "$here/steps/1.1-geo.ts" geo.ts && tcm update geo.ts && rm geo.ts
+cp "$here/steps/geo-1-1.ts" geo.ts && tcm update geo.ts && rm geo.ts
 tcm release check geo
-tcm release geo --notes "$here/notes/geo-1.1.0.md"
-cp "$here/steps/1.1-atlas.ts" atlas.ts && tcm add atlas.ts && rm atlas.ts
-tcm release atlas --notes "$here/notes/atlas-1.1.0.md"
+tcm release geo --notes "$here/notes/geo-1-1-0.md"
+cp "$here/steps/atlas-1-1.ts" atlas.ts && tcm add atlas.ts && rm atlas.ts
+tcm release atlas --notes "$here/notes/atlas-1-1-0.md"
 tcm push
 
 step "A contribution: hexagons, proposed on a branch, reviewed and merged on the hub"
@@ -60,7 +60,7 @@ tcm switch main
 tcm pull > /dev/null
 
 step "geo 2.0: the new case of Shape is breaking, and the notes name the contribution that brought it"
-tcm release geo --notes "$here/notes/geo-2.0.0.md"
+tcm release geo --notes "$here/notes/geo-2-0-0.md"
 tcm push
 
 step "What's next: an unreleased change to geo, and a draft of its notes for you to write"
