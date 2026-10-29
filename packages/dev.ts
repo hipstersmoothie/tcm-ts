@@ -7,6 +7,8 @@ import http from "node:http";
 import { Marked } from "marked";
 import type { Tokens } from "marked";
 import { createHighlighter } from "shiki";
+import { TS_VERSION } from "./core/src/program.ts";
+import { analyzeProject } from "./core/src/analyze.ts";
 
 /**
  * tcm's repository: up from here, the directory with its workspace. (Files kept outside the codebase, while some are.)
@@ -451,3 +453,58 @@ export async function siteDev(port = "4321"): Promise<void> {
  * GitHub's heading anchors (what the docs' own links use).
  */
 export const slug = (text: string) => text.trim().toLowerCase().replace(/<[^>]+>/g, "").replace(/[^\w\- ]/g, "").replace(/ /g, "-");
+
+/**
+ * Hashes don't depend on the compiler (`pnpm compare-compilers`): tcm's source hashed with TypeScript 7 and with
+ * tsrs (TypeScript 7 in Rust, installed into a temporary directory) must be the same, and the golden hashes must
+ * pass with tsrs too.
+ */
+export function compareCompilers(): void {
+  const tcm = process.env.TCM_BIN;
+  if (!tcm) throw new Error("run this with `tcm run`, which gives it the codebase's own tcm (TCM_BIN)");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tcm tsrs "));
+  fs.writeFileSync(path.join(tmp, "package.json"), '{"private":true}\n');
+  const installed = sh("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error", "tsrs"], tmp);
+  if (!installed.ok) throw new Error(`installing tsrs: ${installed.out}`);
+  const tsrs = sh(process.execPath, ["--input-type=module", "-e", 'import("./node_modules/tsrs/lib/getExePath.js").then((m) => console.log(m.default()))'], tmp).out.trim();
+  const hashes = (env: NodeJS.ProcessEnv) => {
+    const r = sh(process.execPath, [tcm, "run", "tcmts.dev.hashProject", path.join(repository(), "packages")], process.cwd(), env);
+    if (!r.ok) throw new Error(r.out);
+    return r.out.split("\n").filter((l) => /^\S+:\S+ [a-z2-7]+$/.test(l));
+  };
+  const ours = hashes({});
+  const theirs = hashes({ TCM_TYPESCRIPT: tsrs });
+  const differ = ours.filter((l, i) => l !== theirs[i]);
+  if (differ.length || ours.length !== theirs.length) {
+    console.log(`hashes differ: ${differ.slice(0, 10).join("\n")}`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`identical hashes (${ours.length} definitions)`);
+  const golden = sh(process.execPath, [tcm, "test", "tcmts.core.test", "--definitions", "--fresh"], process.cwd(), { TCM_TYPESCRIPT: tsrs });
+  console.log(`golden hashes with tsrs: ${golden.out.trim().split("\n").at(-1)}`);
+  process.exitCode = golden.ok ? 0 : 1;
+}
+
+/**
+ * Print `<file>:<name> <hash>` for every definition of the project in `dir` (tcm's packages/ by default), as this
+ * process's compiler hashes it: with TCM_TYPESCRIPT, another one (`compareCompilers`).
+ */
+export function hashProject(dir?: string): void {
+  const root = path.resolve(dir ?? path.join(repository(), "packages"));
+  // (not tests, nor directories of files kept as written: examples)
+  const walk = (d: string): string[] =>
+    fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) return ["node_modules", "test"].includes(e.name) || e.name.startsWith(".") || fs.existsSync(path.join(p, ".tcm-files")) ? [] : walk(p);
+      return e.name.endsWith(".ts") && !e.name.endsWith(".d.ts") ? [p] : [];
+    });
+  const a = analyzeProject(walk(root), { cacheDir: fs.mkdtempSync(path.join(os.tmpdir(), "tcm-hash-")), resolveName: () => "" });
+  if (a.errors.length || a.diagnostics.length) {
+    console.error([...a.errors, ...a.diagnostics.map((d) => d.formatted)].join("\n"));
+    process.exitCode = 1;
+    return;
+  }
+  console.error(`typescript ${TS_VERSION}: ${a.defs.length} definitions`);
+  for (const d of a.defs.map((d) => `${path.relative(root, d.file)}:${d.nameHint} ${d.hash}`).sort()) console.log(d);
+}
