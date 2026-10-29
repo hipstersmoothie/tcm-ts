@@ -160,6 +160,8 @@ export class Placement {
   }
 
   private valueDeps(h: string): string[] {
+    // a file is data: what it names ({@link}s) doesn't run
+    if (this.get(h)?.kind === "file") return [];
     let deps = this.valueDepsOf.get(h);
     if (!deps) this.valueDepsOf.set(h, (deps = (this.get(h)?.deps ?? []).filter((d) => d.pos === "value" && d.ref.startsWith("#")).map((d) => d.ref.slice(1))));
     return deps;
@@ -170,7 +172,7 @@ export class Placement {
     let uses = this.usesCache.get(h);
     if (!uses) {
       const rec = this.get(h);
-      this.usesCache.set(h, (uses = rec ? [...usesOf(rec, h)] : []));
+      this.usesCache.set(h, (uses = rec && rec.kind !== "file" ? [...usesOf(rec, h)] : []));
     }
     return uses;
   }

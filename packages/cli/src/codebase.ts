@@ -213,7 +213,8 @@ export class Codebase {
   refreshShim(force = false) {
     const stamp = `${this.store.branch().name}:${this.store.logHead()}`;
     if (!force && this.store.getSetting("shim_stamp") === stamp && fs.existsSync(path.join(this.lay.shimDir, "index.ts"))) return;
-    writeShim(this.store.names(), this.source(), this.lay);
+    // code imports files too: they're values
+    writeShim(this.store.names(undefined, true), this.source(), this.lay);
     writeViews(this, force);
     this.store.setSetting("shim_stamp", stamp);
     if (this.syncsMirror) syncMirror(this);
