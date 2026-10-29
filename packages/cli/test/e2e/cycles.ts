@@ -52,3 +52,18 @@ export const testClassEditedAlone = () => {
   ok("add");
   assert.equal(ok("run", "main"), "at 2\n2\n");
 }
+
+/**
+ * An update that makes a cycle (the new code uses one that uses it) saves the other with it: they're hashed as one.
+ */
+export const testUpdateMakingACycle = () => {
+  const dir = tempDir("cycles");
+  const ok = (...args: string[]) => okIn(dir, ...args);
+  const scratch = path.join(dir, "scratch.ts");
+  ok("init");
+  fs.writeFileSync(scratch, `// tcm: namespace lib\nexport const a = (n: number): number => 0;\nexport const b = (n: number): number => a(n) + 1;\n`);
+  ok("add");
+  fs.writeFileSync(scratch, `// tcm: namespace lib\nimport { b } from "#codebase/lib";\nexport const a = (n: number): number => (n <= 0 ? 0 : b(n - 1));\n`);
+  assert.match(ok("update"), /with lib\.b: in a cycle with what changed, so saved with it[\s\S]*~ update +lib\.a[\s\S]*~ update +lib\.b/);
+  assert.equal(ok("run", "lib.b", "2").trim(), "3");
+}

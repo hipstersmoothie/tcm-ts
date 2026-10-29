@@ -96,7 +96,8 @@ Definitions that refer to each other (functions calling each other, a class and 
 hashed together, as one, so they're updated together. `tcm edit` writes only what you asked for, and says what it's
 in a cycle with. Saving a change to some of them saves the rest with them, as they are, against the new code
 (`with lib.isOdd: in a cycle with what changed, so saved with it`): none goes on using an old one. To change those
-too, edit them as well.
+too, edit them as well. The same goes for a change that makes a cycle: a definition the file imports that uses
+what the file changes is saved with it when the new code uses it in turn.
 `tcm update` refuses a file that replaces only some of them, since the others would go on using the old ones.
 
 ## Names

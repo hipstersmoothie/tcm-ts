@@ -46,6 +46,7 @@ import { scratchNamespace } from "@tcm/core";
 import { fileFormat, followMove, linkingTo, TEXT_FORMATS, fileContent, formatOf, fileDefinition, fileLeaf } from "./files.ts";
 import { exportFiles } from "./files.ts";
 import { isAsset, assetName, assetFiles } from "./mirror.ts";
+import { assetFormat } from "./mirror.ts";
 
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
@@ -1588,14 +1589,50 @@ export function withTheirCycles(cb: Codebase, file: string, into: string | undef
       }
     }
   }
+  // what the file imports that leads back to what it holds joins the cycle when it's saved (the file uses it,
+  // and it uses the file's): saved with it too, as it is
+  const holds = new Set([...[...here].flatMap((p) => cb.store.hashesAt(p)), ...missing.keys()]);
+  const leadsBack = new Set<string>();
+  for (const queue = [...holds]; queue.length; ) {
+    for (const d of cb.store.dependents(queue.pop()!)) if (!leadsBack.has(d) && !holds.has(d)) (leadsBack.add(d), queue.push(d));
+  }
+  const seen = new Set<string>();
+  // (which of the file's definitions use them it can't say before it's checked: they're checked with it, below,
+  // and kept only if they turn out in a cycle with it)
+  const imported = new Set<string>();
+  for (const stack = importedPaths(file, text).flatMap((p) => cb.store.hashesAt(p)); stack.length; ) {
+    const h = stack.pop()!;
+    if (seen.has(h) || holds.has(h) || !leadsBack.has(h)) continue;
+    seen.add(h);
+    const p = cb.store.pathsOf(h)[0];
+    if (p && !here.has(p) && !missing.has(h)) (missing.set(h, p), imported.add(h));
+    for (const d of cb.store.getDef(h)?.deps ?? []) if (d.ref.startsWith("#")) stack.push(d.ref.slice(1));
+  }
   if (!missing.size) {
     const a = analyzeScratch(cb, file, into);
     return a && { a, rows: classify(cb, a.defs, into ?? a.namespace ?? "") };
   }
+  const combined = () => {
+    const whole = withCycle(cb, file, text, [...missing.keys()]);
+    return { whole, b: "problem" in whole ? undefined : analyzeScratch(cb, file, into, whole.text) };
+  };
+  let { whole, b } = combined();
+  // what the file imports that didn't turn out in a cycle with its definitions isn't saved with them
+  if (b && imported.size) {
+    const rows = classify(cb, b.defs, into ?? b.namespace ?? "");
+    const theirs = new Set(rows.filter((r) => here.has(r.path)).map((r) => r.def.componentHash));
+    const apart = rows.filter((r) => [...imported].some((h) => missing.get(h) === r.path) && !theirs.has(r.def.componentHash));
+    if (apart.length) {
+      for (const r of apart) for (const [h, p] of missing) if (p === r.path && imported.has(h)) missing.delete(h);
+      if (!missing.size) {
+        const a = analyzeScratch(cb, file, into);
+        return a && { a, rows: classify(cb, a.defs, into ?? a.namespace ?? "") };
+      }
+      ({ whole, b } = combined());
+    }
+  }
   const names = [...missing.values()];
   const listed = `${names.slice(0, 5).join(", ")}${names.length > 5 ? `, and ${names.length - 5} more` : ""}`;
-  const whole = withCycle(cb, file, text, [...missing.keys()]);
-  const b = "problem" in whole ? undefined : analyzeScratch(cb, file, into, whole.text);
   if (!b) {
     console.log(red(`${listed}, in a cycle with what ${path.basename(file)} holds, can't be saved with it as ${names.length > 1 ? "they are" : "it is"}${"problem" in whole ? `: ${whole.problem}` : " (above)"}; \`tcm edit\` ${names.length > 1 ? "them" : "it"} too`));
     return undefined;
@@ -1691,7 +1728,7 @@ export function importAssets(cb: Codebase, root: string, dir: string, mode: "add
   let failed = false;
   for (const f of files) {
     const name = assetName(root, into, f);
-    const { def, problems, warnings } = fileDefinition(cb, name, fileFormat(f)!, fs.readFileSync(f), names);
+    const { def, problems, warnings } = fileDefinition(cb, name, assetFormat(f), fs.readFileSync(f), names);
     for (const p of problems) console.log(red(`${path.relative(root, f)}: ${p}`));
     failed ||= problems.length > 0;
     planned.push({ def, path: name, warnings });
@@ -1699,7 +1736,7 @@ export function importAssets(cb: Codebase, root: string, dir: string, mode: "add
   if (failed) return undefined;
   const held = new Map(planned.map((p) => [p.path, p.def.hash]));
   const was = new Map<string, string>();
-  if (following) for (const [rel, f] of Object.entries(following.files)) if (isAsset(rel)) for (const [leaf, h] of Object.entries(f.names)) was.set(joinName(f.ns, leaf), h);
+  if (following) for (const [rel, f] of Object.entries(following.files)) if (isAsset(rel, root)) for (const [leaf, h] of Object.entries(f.names)) was.set(joinName(f.ns, leaf), h);
   const changed = planned.filter((p) => was.get(p.path) !== p.def.hash);
   // what's wrong with the files that changed (the others said so when they did)
   for (const p of changed) for (const w of p.warnings) console.log(yellow(`warning: ${w}`));
@@ -1710,4 +1747,20 @@ export function importAssets(cb: Codebase, root: string, dir: string, mode: "add
     console.log(`${red("  - removed  ")} ${bold(p)} ${dim("(gone from the files)")}`);
   }
   return held;
+}
+
+/**
+ * The codebase paths a scratch file imports (from `#codebase/a/b`: `a.b.<name>`).
+ */
+export function importedPaths(file: string, text: string): string[] {
+  const out: string[] = [];
+  for (const st of parse_1(file, text).statements) {
+    if (!ts_isImportDeclaration(st) || !st.importClause || !ts_isStringLiteral(st.moduleSpecifier)) continue;
+    const m = /^#codebase(?:\/(.+))?$/.exec(st.moduleSpecifier.text);
+    const b = st.importClause.namedBindings;
+    if (!m || !b || ts_isNamespaceImport(b)) continue;
+    const ns = (m[1] ?? "").split("/").filter(Boolean).join(".");
+    for (const e of b.elements) out.push(joinName(ns, (e.propertyName ?? e.name).text));
+  }
+  return out;
 }
