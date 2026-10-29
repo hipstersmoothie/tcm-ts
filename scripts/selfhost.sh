@@ -5,7 +5,8 @@
 #   3. fixed point: the self-hosted tcm imports packages/ and assigns exactly the same hashes
 #   4. the self-hosted tcm works far from this repository
 #   5. the package packed from the codebase installs, and the whole test suite passes against it: the one run of
-#      the suites a commit needs (it covers the source, the codebase and the packaging at once)
+#      the suites a commit needs (it covers the source, the codebase and the packaging at once). It's installed in
+#      dist/candidate, which `pnpm verify` keeps as the known-good tcm when everything passes.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 sh "$REPO/scripts/build.sh"
@@ -33,10 +34,12 @@ FAR="$(mktemp -d)"
 (cd "$FAR" && node "$REPO/selfhost/tcm.ts" init > /dev/null && printf 'export const platform = () => process.platform;\n' > scratch.ts && node "$REPO/selfhost/tcm.ts" add > "$FAR/add.log" 2>&1) || { cat "$FAR/add.log"; exit 1; }
 echo "far away: the self-hosted tcm makes a codebase in $FAR and checks code against @types/node there"
 
-PACK="$(mktemp -d)"
+PACK="$REPO/dist/candidate"
+rm -rf "$PACK"
+mkdir -p "$PACK"
 (cd "$REPO/dist/package" && npm pack --silent --pack-destination "$PACK" > /dev/null)
 (cd "$PACK" && npm init -y > /dev/null && npm install ./tcm-ts-*.tgz --no-audit --no-fund --loglevel=error > /dev/null)
-echo "installed $(ls "$PACK"/tcm-ts-*.tgz | xargs basename), packed from the codebase, into $PACK"
+echo "installed $(basename "$PACK"/tcm-ts-*.tgz), packed from the codebase, into $PACK"
 
 cd "$REPO"
 # the suites' totals and the names of failing tests; fails if a test did

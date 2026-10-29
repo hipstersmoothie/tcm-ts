@@ -9,7 +9,8 @@ tcm-ts is Unison's content-addressed codebase model for plain TypeScript, plus a
 tcm is developed in its own codebase, which mirrors `packages/` ([developing](docs/developing.md#working-on-tcm-in-tcm)).
 With the tcm MCP server (this repository's `.mcp.json`), use its tools: tcm_find and tcm_view to read,
 tcm_edit then tcm_update to change, tcm_todo, tcm_test. Without it, `pnpm tcm <command>` is the CLI. Changes made
-through tcm are written to `packages/`, which is what's committed.
+through tcm are written to `packages/`, which is what's committed. The tcm doing this is the last build `pnpm verify`
+passed, not the code being changed: tcm_test tests the change, `TCM_LIVE=1 pnpm tcm …` runs it.
 
 ## Keep the docs current
 

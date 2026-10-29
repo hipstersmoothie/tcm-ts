@@ -35,7 +35,7 @@ written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything i
 
 | Command | |
 |---|---|
-| `pnpm verify` | everything a commit needs: typecheck, then `pnpm selfhost`; prints each stage's result and time and names failing tests |
+| `pnpm verify` | everything a commit needs: typecheck, then `pnpm selfhost`; prints each stage's result and time and names failing tests. When all pass, the package tested becomes the [known-good tcm](#the-known-good-tcm) |
 | `pnpm test` | all suites from source, the quick run while working (a commit's run is selfhost's, against the package): hashing invariants, frozen golden hashes, and end-to-end CLI scenarios (sync, merge, web apps in real Chrome, production, jobs, data, import) |
 | `pnpm typecheck` | typecheck the repo (TypeScript 7's `tsc`) |
 | `pnpm selfhost` | the self-hosting check below |
@@ -71,8 +71,19 @@ Agents work on tcm the same way: the repository's `.mcp.json` runs [`tcm mcp`](a
 (`pnpm tcm mcp`), so an MCP client opened in the repository gets tcm's tools and instructions.
 
 Editing `packages/` directly still works, and so do git's changes to it (a pull, a checkout): the next
-`pnpm tcm` command imports what changed first. tcm runs from `packages/` itself, so a checkout changes the tcm
-that's running too. Delete `codebase/` to start over from `packages/`.
+`pnpm tcm` command imports what changed first. Delete `codebase/` to start over from `packages/` (and if a newer
+known-good tcm can't open it).
+
+### The known-good tcm
+
+The tcm doing the work isn't the one being changed. `pnpm tcm` (and so the MCP server) runs the build the last
+passing `pnpm verify` tested, kept in `dist/known-good` (`VERIFIED` there says what it was made from). A change
+that breaks tcm, even its mirror, can't break the tcm writing it to `packages/`, and a git checkout doesn't change
+the tcm that's running. `pnpm verify` replaces it when everything passes.
+
+The code being changed is what runs everywhere else: `tcm test tcmts` runs the codebase's own test definitions,
+and `TCM_LIVE=1 pnpm tcm <command>` runs `packages/` as it is, to try a change before verifying it. Before
+the first `pnpm verify`, there's no known-good build, and `pnpm tcm` says so and runs `packages/`.
 
 ## Self-hosting
 
