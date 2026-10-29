@@ -4,8 +4,7 @@
 // the side of the code that uses them: every use that typechecked against the old version must still.
 import fs from "node:fs";
 import path from "node:path";
-import ts from "typescript";
-import { exportId, type DefRecord } from "@tcm/core";
+import { createProgram, exportId, ts, type DefRecord } from "@tcm/core";
 import { materialize, moduleFile } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 
@@ -101,11 +100,10 @@ export function checkPairs(cb: Codebase, pairs: Pair[]): Finding[] {
       return `import ${rec.kind === "type" ? "type " : ""}{ ${exportId(rec.hash)} as ${side === "old" ? "O" : "N"}${i} } from "./${moduleFile(rec.componentHash, src)}";`;
     }),
   );
+  // a file in the cache importing both versions of each (never written: the compiler reads it from memory)
   const file = path.join(cb.lay.cacheDir, `_semver_${process.pid}.ts`);
-  fs.writeFileSync(file, imports.join("\n") + "\nexport {};\n");
-  try {
-    const program = ts.createProgram([file], { ...cb.recheckOptions(undefined), noEmit: true });
-    const checker = program.getTypeChecker();
+  {
+    const { program, checker } = createProgram([file], { ...cb.recheckOptions(undefined), noEmit: true }, new Map([[file, imports.join("\n") + "\nexport {};\n"]]));
     const sf = program.getSourceFile(file)!;
     const symbols = new Map<string, ts.Symbol>();
     for (const st of sf.statements) {
@@ -120,8 +118,6 @@ export function checkPairs(cb: Codebase, pairs: Pair[]): Finding[] {
       if (!o || !n) return [{ lint: "type_changed", path: p.path, detail: "couldn't be compared" } satisfies Finding];
       return compare(checker, p, o, n);
     });
-  } finally {
-    fs.rmSync(file, { force: true });
   }
 }
 
@@ -167,9 +163,9 @@ function callable(checker: ts.TypeChecker, ot: ts.Type, nt: ts.Type, kind: ts.Si
   const str = (t: ts.Type) => checker.typeToString(t, undefined, FLAGS);
   if (os.length === 1 && ns.length === 1) {
     const [a, b] = [os[0]!, ns[0]!];
-    if ((a.typeParameters?.length ?? 0) !== (b.typeParameters?.length ?? 0)) return add(ctor ? "constructor_incompatible" : "function_type_parameter_count_changed");
+    if (a.getTypeParameters().length !== b.getTypeParameters().length) return add(ctor ? "constructor_incompatible" : "function_type_parameter_count_changed");
     // generic signatures' parameters mention their own type parameters: compare them whole
-    if (a.typeParameters?.length) return fits(checker, b, a) ? undefined : add(ctor ? "constructor_incompatible" : "function_signature_incompatible", `${sig(checker, a)} → ${sig(checker, b)}`);
+    if (a.getTypeParameters().length) return fits(checker, b, a) ? undefined : add(ctor ? "constructor_incompatible" : "function_signature_incompatible", `${sig(checker, a)} → ${sig(checker, b)}`);
     const before = params(checker, a);
     const after = params(checker, b);
     const lint = (l: LintId, d?: string) => add(ctor && LINTS[l].level === "major" ? "constructor_incompatible" : l, d);
@@ -206,18 +202,25 @@ interface Param {
 }
 
 function params(checker: ts.TypeChecker, s: ts.Signature): Param[] {
-  return s.parameters.map((p) => {
-    const decl = p.valueDeclaration as ts.ParameterDeclaration | undefined;
+  const ps = s.getParameters();
+  return ps.map((p, i) => {
+    const decl = ts.declarationOf(p) as ts.ParameterDeclaration | undefined;
     return {
       name: p.name,
       type: checker.getTypeOfSymbol(p),
-      optional: !!decl && (!!decl.questionToken || !!decl.initializer),
-      rest: !!decl?.dotDotDotToken,
+      optional: !!decl && ts.isParameter(decl) && (!!decl.questionToken || !!decl.initializer),
+      rest: s.hasRestParameter && i === ps.length - 1,
     };
   });
 }
 
-const sig = (checker: ts.TypeChecker, s: ts.Signature) => checker.signatureToString(s, undefined, ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.WriteArrowStyleSignature);
+/** A signature as it reads: `(xs: number[], n?: number) => string` (type parameters by name, as declared). */
+function sig(checker: ts.TypeChecker, s: ts.Signature): string {
+  const str = (t: ts.Type) => checker.typeToString(t, undefined, FLAGS);
+  const tps = s.getTypeParameters().map(str);
+  const ps = params(checker, s).map((p) => `${p.rest ? "..." : ""}${p.name}${p.optional ? "?" : ""}: ${str(p.type)}`);
+  return `${tps.length ? `<${tps.join(", ")}>` : ""}(${ps.join(", ")}) => ${str(checker.getReturnTypeOfSignature(s))}`;
+}
 
 /** Whether every call that fits `old` fits `next` too: arguments it takes, a result old callers can use. */
 function fits(checker: ts.TypeChecker, next: ts.Signature, old: ts.Signature): boolean {
@@ -233,10 +236,7 @@ function fits(checker: ts.TypeChecker, next: ts.Signature, old: ts.Signature): b
 function properties(checker: ts.TypeChecker, ot: ts.Type, nt: ts.Type, add: (l: LintId, d?: string) => void) {
   const str = (t: ts.Type) => checker.typeToString(t, undefined, FLAGS);
   const optional = (s: ts.Symbol) => !!(s.flags & ts.SymbolFlags.Optional);
-  const readonly = (s: ts.Symbol) => {
-    const d = s.valueDeclaration ?? s.declarations?.[0];
-    return !!d && !!(ts.getCombinedModifierFlags(d as ts.Declaration) & ts.ModifierFlags.Readonly);
-  };
+  const readonly = (s: ts.Symbol) => checker.isReadonlySymbol(s);
   const before = new Map(checker.getPropertiesOfType(ot).map((s) => [s.name, s]));
   const after = new Map(checker.getPropertiesOfType(nt).map((s) => [s.name, s]));
   for (const [name, s] of before) {
@@ -259,15 +259,16 @@ function properties(checker: ts.TypeChecker, ot: ts.Type, nt: ts.Type, add: (l: 
 function typeChanges(checker: ts.TypeChecker, ot: ts.Type, nt: ts.Type, o: ts.Symbol, n: ts.Symbol, add: (l: LintId, d?: string) => void) {
   const str = (t: ts.Type) => checker.typeToString(t, undefined, FLAGS);
   const params = (s: ts.Symbol) => {
-    const d = s.declarations?.find((x) => ts.isTypeAliasDeclaration(x) || ts.isInterfaceDeclaration(x) || ts.isClassDeclaration(x)) as ts.TypeAliasDeclaration | ts.InterfaceDeclaration | ts.ClassDeclaration | undefined;
+    const kinds = [ts.SyntaxKind.TypeAliasDeclaration, ts.SyntaxKind.InterfaceDeclaration, ts.SyntaxKind.ClassDeclaration];
+    const d = s.declarations?.find((x) => kinds.includes(x.kind))?.resolve() as ts.TypeAliasDeclaration | ts.InterfaceDeclaration | ts.ClassDeclaration | undefined;
     return d?.typeParameters?.length ?? 0;
   };
   if (params(o) !== params(n)) return add("type_type_parameter_count_changed", `${params(o)} → ${params(n)}`);
   // a generic type mentions its own type parameters: compare it as written
   if (params(o)) return str(ot) === str(nt) ? undefined : add("type_changed", change("", str(ot), str(nt)));
   // cases and properties first: an added optional property, say, leaves the two types mutually assignable
-  if (ot.isUnion() && nt.isUnion()) {
-    const cases = (t: ts.UnionType) => new Map(t.types.map((x) => [str(x), x]));
+  if (ot.flags & ts.TypeFlags.Union && nt.flags & ts.TypeFlags.Union) {
+    const cases = (t: ts.Type) => new Map(((t as ts.UnionOrIntersectionType).getTypes() ?? []).map((x) => [str(x), x]));
     const [a, b] = [cases(ot), cases(nt)];
     const added = [...b.keys()].filter((k) => !a.has(k));
     const removed = [...a.keys()].filter((k) => !b.has(k));
@@ -275,7 +276,7 @@ function typeChanges(checker: ts.TypeChecker, ot: ts.Type, nt: ts.Type, o: ts.Sy
     if (removed.length) add("type_union_member_removed", removed.join(" | "));
     if (added.length || removed.length) return;
   }
-  const isObject = (t: ts.Type) => !!(t.flags & ts.TypeFlags.Object) || t.isIntersection();
+  const isObject = (t: ts.Type) => !!(t.flags & (ts.TypeFlags.Object | ts.TypeFlags.Intersection));
   if (isObject(ot) && isObject(nt)) {
     let found = 0;
     properties(checker, ot, nt, (l, d) => (found++, add(l, d)));

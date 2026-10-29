@@ -6,7 +6,7 @@
 // (.tcm/cache) stays TypeScript; it lives in the user's project, not under node_modules.
 import fs from "node:fs";
 import path from "node:path";
-import ts from "typescript";
+import * as ts from "../packages/core/src/ts.ts";
 
 const repo = path.resolve(import.meta.dirname, "..");
 const out = path.join(repo, "dist", "package");
@@ -32,7 +32,7 @@ for (const pkg of ["core", "store", "loader", "cli"]) {
   const srcDir = path.join(repo, "packages", pkg, "src");
   for (const name of fs.readdirSync(srcDir).filter((f) => f.endsWith(".ts"))) {
     const source = fs.readFileSync(path.join(srcDir, name), "utf8");
-    const { outputText, diagnostics } = ts.transpileModule(source, {
+    const { outputText, diagnostics } = ts.compiler().transpileModule(source, {
       fileName: name,
       reportDiagnostics: true,
       compilerOptions: {
@@ -40,9 +40,9 @@ for (const pkg of ["core", "store", "loader", "cli"]) {
         target: ts.ScriptTarget.ES2022,
         verbatimModuleSyntax: true,
         rewriteRelativeImportExtensions: true,
-      },
+      } as never,
     });
-    if (diagnostics?.length) throw new Error(`${pkg}/${name}: ${ts.flattenDiagnosticMessageText(diagnostics[0]!.messageText, " ")}`);
+    if (diagnostics?.length) throw new Error(`${pkg}/${name}: ${diagnostics[0]!.text}`);
     const fromDir = path.join(out, pkg);
     const js = outputText.replace(/(from\s+|import\s*\(\s*)"(@tcm\/[a-z]+)"/g, (_m, lead: string, spec: string) => {
       const target = ENTRIES[spec];
@@ -51,7 +51,7 @@ for (const pkg of ["core", "store", "loader", "cli"]) {
       return `${lead}"${rel.startsWith(".") ? rel : "./" + rel}"`;
     });
     // only real module specifiers matter; the loader generates `.ts` imports in strings on purpose
-    const parsed = ts.createSourceFile(name, js, ts.ScriptTarget.ES2022, false, ts.ScriptKind.JS);
+    const parsed = ts.parse(name.replace(/\.ts$/, ".js"), js);
     for (const st of parsed.statements) {
       const spec = (ts.isImportDeclaration(st) || ts.isExportDeclaration(st)) && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier) ? st.moduleSpecifier.text : "";
       if (spec.endsWith(".ts")) throw new Error(`${pkg}/${name}: import of ${spec} survived the build`);

@@ -1,5 +1,5 @@
-// Print `<file>:<name> <hash>` for every definition under a directory, using the analyzer at TCM_CORE.
-// Used by compare-ts-versions.sh to check that hashes do not depend on the TypeScript version.
+// Print `<file>:<name> <hash>` for every definition under a directory, using the analyzer at TCM_CORE (default:
+// this repo's). Used by compare-compilers.sh to check that hashes do not depend on the compiler.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

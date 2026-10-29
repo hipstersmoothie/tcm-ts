@@ -15,7 +15,10 @@ What isn't done yet, or is deliberately out of scope:
   `import x = require()`, decorators and top-level statements.
 - **Adding the same code at two paths creates two definitions** (lineage salts, see
   [hashing](hashing.md#identity)). To share one definition under two names, use `tcm alias`.
-- **TypeScript 7** (the Go compiler) has a different API and isn't supported; tcm uses `typescript@6`.
+- **TypeScript 7.1 is a beta.** tcm checks code with `typescript@7.1.0-beta` ([the compiler](compiler-options.md#the-compiler)).
+- **Re-exporting a package** works through `export * from "pkg"` and `export { x } from "pkg"`: a definition
+  using `ns.x` or `import { x }` through such a module hashes as if it imported `x` from `pkg`. `export * as ns
+  from "pkg"` isn't followed.
 - **Transitive npm dependencies** aren't part of a hash; only the direct package's compatible range is. Within
   a range, tcm trusts semver: moving the lock to a newer version re-checks types, not behaviour.
 - **Server-only npm packages are found by a heuristic:** no browser build, and an entry that imports Node

@@ -144,3 +144,15 @@ export function main() {
   tcm("add");
   assert.match(tcm("run", "app.main"), /9 square 43 true 1 p/);
 });
+
+test("a project's own @types are found from the project, wherever tcm runs", () => {
+  // `types: ["node"]` with @types/node installed in the project (here, linked to the one tcm's tests use)
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "tcm import types "));
+  fs.writeFileSync(path.join(project, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, types: ["node"] } }));
+  const types = path.dirname(fileURLToPath(import.meta.resolve("@types/node/package.json")));
+  fs.mkdirSync(path.join(project, "node_modules", "@types"), { recursive: true });
+  fs.symlinkSync(types, path.join(project, "node_modules", "@types", "node"), "dir");
+  fs.writeFileSync(path.join(project, "platform.ts"), `export const platform = (): string => process.platform;\n`);
+  if (!fs.existsSync(path.join(dir, ".tcm"))) tcm("init");
+  assert.match(tcm("import", project, "--into", "host"), /\+ new/);
+});

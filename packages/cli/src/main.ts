@@ -8,7 +8,6 @@ import { inspect } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { render, run, sendRunnerOutputToStderr } from "@tcm/loader";
 import { Codebase, IDENT_PATH } from "./codebase.ts";
-import { migrate } from "./migrate.ts";
 import { serveLsp } from "./lsp.ts";
 import { searchByType } from "./search.ts";
 import { checkDocExamples, renderDoc } from "./docs.ts";
@@ -731,11 +730,6 @@ square(12);
     success(`initialized codebase in ${cb.lay.tcmDir}`);
     outro(`next: run \`tcm\` and edit scratch.ts${interactive() ? dim(" · `source <(tcm complete zsh)` completes commands and names") : ""}`);
     return 0;
-  }
-  // migrate opens codebases the version guard would refuse
-  if (cmd === "migrate") {
-    execute(cmd, parse(commands.migrate, { argv: rest }));
-    return migrate(Codebase.findRoot(cwd)) ? 0 : 1;
   }
   // the editor says where the workspace is (initialize), so the codebase is found then
   if (cmd === "lsp") {

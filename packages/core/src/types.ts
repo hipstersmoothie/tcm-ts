@@ -1,11 +1,8 @@
 import type { ParamsSchema, TableSchema } from "./schema.ts";
 import type { TypeShape } from "./shape.ts";
 
-/**
- * The module id `#tcm/server` imports get in the IR (`["Ext", "ucm:server", …]`). Frozen: it's part of the hash of
- * every definition that uses the server API, and dates from when tcm was called ucm-ts.
- */
-export const SERVER_API_MODULE = "ucm:server";
+/** The module id `#tcm/server` imports get in the IR (`["Ext", "tcm:server", …]`): unversioned, like a Node builtin. */
+export const SERVER_API_MODULE = "tcm:server";
 
 export type DefKind = "term" | "type" | "class";
 export type InitKind = "hoisted" | "strict";

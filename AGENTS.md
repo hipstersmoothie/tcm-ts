@@ -36,8 +36,10 @@ New behaviour gets a test in `packages/cli/test/` (end-to-end, through the CLI) 
 
 ## Rules
 
-- **Hashes are frozen.** The IR format (v6) is pinned by `packages/core/test/golden.test.ts`. Never change what
-  a definition hashes to without a format bump and `tcm migrate` support.
+- **Hashes are pinned.** The hash format (v1, `IR_VERSION` in `packages/core/src/hash.ts`) is pinned by
+  `packages/core/test/golden.test.ts`; `packages/core/src/slots.ts` (the order the IR visits children in) is part
+  of it. Change hashes only on purpose: bump `IR_VERSION` and re-pin. tcm is v0 with no codebases to keep, so
+  there's no migration code: don't add compatibility for old codebases or formats.
   History hashes (namespaces and causals, which codebases compare when they sync) are pinned the same way by
   `packages/store/test/history.test.ts`.
 - **`packages/cli/src/server-api.ts`'s `createServerApi` must stay self-contained:** its source is written to

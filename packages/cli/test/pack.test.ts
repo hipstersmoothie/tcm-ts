@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
+import { createRequire } from "node:module";
 
 // tcm pack: a codebase's definitions as an npm package (JavaScript with declarations, entry points by name,
 // bins, dependencies from the lock), installed and used the way npm users would. Uses the npm registry.
@@ -90,16 +90,12 @@ export function main(...names: string[]): number {
   fs.writeFileSync(path.join(user, "use.ts"), `import { greet, finder, type Greeting } from "greeter";\nimport { Badge } from "greeter/ui";\nconst g: Greeting = greet("x");\nconsole.log(finder(g).test("hello, x"), typeof Badge);\n`);
   assert.deepEqual(spawn(process.execPath, ["use.ts"], user), { status: 0, out: "true function\n" });
   fs.writeFileSync(path.join(user, "bad.ts"), `import { greet } from "greeter";\ngreet(1);\n`);
-  const program = ts.createProgram([path.join(user, "use.ts"), path.join(user, "bad.ts")], {
-    module: ts.ModuleKind.NodeNext,
-    strict: true,
-    noEmit: true,
-    allowImportingTsExtensions: true,
-    skipLibCheck: true,
-    types: [],
-  });
-  const errors = ts.getPreEmitDiagnostics(program).map((d) => `${path.basename(d.file?.fileName ?? "")}: ${ts.flattenDiagnosticMessageText(d.messageText, " ")}`);
-  assert.deepEqual(errors, ["bad.ts: Argument of type 'number' is not assignable to parameter of type 'string'."]);
+  // checked the way a user's project would check it: tsc
+  const compilerOptions = { module: "nodenext", strict: true, noEmit: true, allowImportingTsExtensions: true, skipLibCheck: true, types: [] };
+  fs.writeFileSync(path.join(user, "tsconfig.json"), JSON.stringify({ compilerOptions, files: ["use.ts", "bad.ts"] }));
+  const tsc = path.join(path.dirname(createRequire(import.meta.url).resolve("typescript/package.json")), "bin", "tsc");
+  const errors = spawn(process.execPath, [tsc, "-p", ".", "--pretty", "false"], user).out.trim().split("\n");
+  assert.deepEqual(errors, ["bad.ts(2,7): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'."]);
 });
 
 test("a package pinned at two ranges keeps both, side by side", () => {

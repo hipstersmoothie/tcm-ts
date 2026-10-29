@@ -1,6 +1,7 @@
-// Golden corpus for IR v5. Hashes of these definitions are pinned in golden.test.ts: if they change,
-// the hash format changed, and every stored codebase would need migrating. Don't edit this file.
+// Golden corpus: definitions covering most syntax, whose hashes golden.test.ts pins. Changing this file means
+// re-pinning them.
 import { readFileSync } from "node:fs";
+import type * as fs from "node:fs";
 
 export type Pair<A, B = A> = readonly [first: A, second?: B];
 export type Keys<T> = { [K in keyof T as `get${Capitalize<string & K>}`]-?: () => T[K] };
@@ -47,3 +48,25 @@ export class Counter<T extends number = number> implements Pick<Shape, "kind"> {
 
 export function isEven(n: number): boolean { return n === 0 || isOdd(n - 1); }
 export function isOdd(n: number): boolean { return n !== 0 && isEven(n - 1); }
+
+// `?` and `!` on members, interface `extends` and class `implements` (qualified too), holes in array patterns, and
+// strings starting with a byte order mark (TypeScript 7's API used to drop it when decoding)
+export interface Opt {
+  a?: number;
+  b: { c?: string };
+  m?(): void;
+}
+export interface Both extends Opt, fs.ObjectEncodingOptions {}
+export class Holder implements Opt, fs.ObjectEncodingOptions, Partial<fs.StatsBase<bigint>> {
+  a?: number;
+  b!: { c?: string };
+  declare d?: string;
+  m?(): void {}
+  encoding?: null;
+  dev?: bigint;
+}
+export const holes = (xs: readonly number[]) => {
+  const [, second, , ...rest] = xs;
+  return [second, rest, [, 1]];
+};
+export const bom = ["\uFEFF", "\uFEFFx", "x"] as const;

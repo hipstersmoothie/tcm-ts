@@ -154,8 +154,6 @@ function linkModules(dir: string, cache: string, plain: Record<string, string>) 
     fs.mkdirSync(path.dirname(at), { recursive: true });
     fs.symlinkSync(target, at, "dir");
   };
-  // from before it was a directory of links
-  if (fs.lstatSync(dir, { throwIfNoEntry: false })?.isSymbolicLink()) fs.rmSync(dir);
   fs.mkdirSync(dir, { recursive: true });
   for (const name of fs.existsSync(cache) ? fs.readdirSync(cache) : []) if (name !== ".bin") link(path.join(cache, name), path.join(dir, name));
   for (const [name, target] of Object.entries(plain)) link(fs.realpathSync(target), path.join(dir, name));

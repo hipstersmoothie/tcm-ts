@@ -2,8 +2,7 @@
 // and range, with its README and its API as its type definitions declare it (exports, signatures, JSDoc).
 import fs from "node:fs";
 import path from "node:path";
-import ts from "typescript";
-import { compareVersions } from "@tcm/core";
+import { compareVersions, createProgram, ts } from "@tcm/core";
 import { ensureExternals, npmAlias } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 import { usersOf } from "./upgrade.ts";
@@ -98,36 +97,34 @@ const clip = (text: string) => {
 
 /** The package's exports as its types declare them: the API a definition using it is checked against. */
 function apiOf(cb: Codebase, alias: string): ApiEntry[] {
-  const options: ts.CompilerOptions = { ...cb.compilerOptions(), noEmit: true, skipLibCheck: true };
-  const from = path.join(cb.lay.cacheDir, "index.ts");
-  const file = ts.resolveModuleName(alias, from, options, ts.sys, undefined, undefined, ts.ModuleKind.ESNext).resolvedModule?.resolvedFileName;
-  if (!file) return [];
-  const program = ts.createProgram([file], options);
-  const checker = program.getTypeChecker();
-  const sf = program.getSourceFile(file);
-  const mod = sf && checker.getSymbolAtLocation(sf);
+  // a file in the cache importing the package, never written: the package's types are what it resolves to
+  const from = path.join(cb.lay.cacheDir, "__tcm_api__.ts");
+  const { program, checker } = createProgram([from], { ...cb.compilerOptions(), noEmit: true, skipLibCheck: true }, new Map([[from, `import ${JSON.stringify(alias)};\n`]]));
+  const file = program.getResolvedModule(from, alias, ts.ModuleKind.ESNext)?.resolvedFileName;
+  const mod = file && checker.getSymbolOfSourceFile(file);
   if (!mod) return [];
   const flags = ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope | ts.TypeFormatFlags.WriteArrowStyleSignature;
   const entry = (name: string, sym: ts.Symbol): ApiEntry => {
     const s = sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym;
     const kind = kindOf(s);
-    const decl = s.declarations?.[0];
     let signature = "";
     try {
       // a type reads best as declared (its name alone says nothing)
-      if (kind === "interface" || kind === "type" || kind === "enum") signature = decl ? clip(decl.getText()) : "";
-      else if (kind !== "namespace" && decl) signature = checker.typeToString(checker.getTypeOfSymbolAtLocation(s, decl), undefined, flags);
+      if (kind === "interface" || kind === "type" || kind === "enum") {
+        const decl = ts.declarationOf(s);
+        signature = decl ? clip(decl.getText()) : "";
+      } else if (kind !== "namespace") signature = checker.typeToString(checker.getTypeOfSymbol(s), undefined, flags);
     } catch {
       signature = "";
     }
-    return { name, kind, signature, doc: ts.displayPartsToString(s.getDocumentationComment(checker)) };
+    return { name, kind, signature, doc: s.getDocumentationComment(checker) };
   };
   const out = checker
     .getExportsOfModule(mod)
     .filter((s) => !s.name.startsWith("__"))
     .map((s) => entry(s.name, s));
   // `export = fn` (CommonJS style): the module itself is the API
-  const exportEquals = mod.exports?.get("export=" as ts.__String);
+  const exportEquals = mod.getExports().get("export=" as never);
   if (exportEquals && !out.some((e) => e.kind === "function" || e.kind === "class")) out.unshift(entry("default", exportEquals));
   return out.sort((a, b) => (a.name === "default" ? -1 : b.name === "default" ? 1 : a.name < b.name ? -1 : 1)).slice(0, 500);
 }

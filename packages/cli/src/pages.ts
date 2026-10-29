@@ -1,7 +1,7 @@
 // Definition pages, as in Unison's codebase UI: a definition with its rendered doc (links, embeds, evaluated
 // examples), its source highlighted with every reference a link, where it runs, what it uses and what uses it.
 // Plus the search behind the editor's finder. The language server sends these to the editor as data.
-import ts from "typescript";
+import { ts } from "@tcm/core";
 import { SERVER_API_MODULE, shortHash, type DefRecord } from "@tcm/core";
 import { render } from "@tcm/loader";
 import { testRunKey } from "./vitest.ts";
@@ -22,7 +22,7 @@ const CONTROL = new Set(["if", "else", "for", "while", "do", "switch", "case", "
  * scanner, re-scanning where it needs context: a `}` that resumes a template literal, a `/` that starts a regex.
  */
 export function highlight(text: string, refs: { start: number; end: number; hash: string }[], typeHashes: Set<string>): string {
-  const scanner = ts.createScanner(ts.ScriptTarget.ESNext, false, ts.LanguageVariant.Standard, text);
+  const scanner = ts.createScanner(false, ts.LanguageVariant.Standard, text);
   const at = new Map(refs.map((r) => [r.start, r]));
   // open braces since each template substitution started (`${`): the `}` closing one resumes the template
   const templates: number[] = [];
@@ -31,7 +31,7 @@ export function highlight(text: string, refs: { start: number; end: number; hash
     k === ts.SyntaxKind.Identifier || k === ts.SyntaxKind.CloseParenToken || k === ts.SyntaxKind.CloseBracketToken || k === ts.SyntaxKind.CloseBraceToken ||
     k === ts.SyntaxKind.NumericLiteral || k === ts.SyntaxKind.StringLiteral || k === ts.SyntaxKind.ThisKeyword || k === ts.SyntaxKind.NoSubstitutionTemplateLiteral || k === ts.SyntaxKind.TemplateTail;
   let out = "";
-  for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
+  for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFile; kind = scanner.scan()) {
     if (kind === ts.SyntaxKind.OpenBraceToken && templates.length) templates[templates.length - 1]!++;
     if (kind === ts.SyntaxKind.CloseBraceToken && templates.length) {
       if (templates.at(-1) === 0) {

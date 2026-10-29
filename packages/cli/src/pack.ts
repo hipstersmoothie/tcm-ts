@@ -8,8 +8,7 @@
 // (`npm__lodash__3`), which npm installs side by side.
 import fs from "node:fs";
 import path from "node:path";
-import ts from "typescript";
-import { exportId, type DefKind } from "@tcm/core";
+import { createProgram, exportId, ts, type DefKind } from "@tcm/core";
 import { externalsOf, npmAlias, parseModule, render, type DefSource } from "@tcm/loader";
 import type { NameRow } from "@tcm/store";
 import type { Codebase } from "./codebase.ts";
@@ -239,7 +238,7 @@ export function pack(cb: Codebase, opts: PackOptions): { dir: string; modules: n
     if (server) {
       for (const f of ["tcm-server.js", "tcm-server.d.ts"]) fs.copyFileSync(path.join(cb.lay.cacheDir, f), path.join(work, f));
     }
-    const program = ts.createProgram(files, {
+    const { program } = createProgram(files, {
       ...cb.recheckOptions(undefined),
       noEmit: false,
       declaration: true,
@@ -254,15 +253,16 @@ export function pack(cb: Codebase, opts: PackOptions): { dir: string; modules: n
       target: ts.ScriptTarget.ES2022,
       skipLibCheck: true,
     });
-    const emitted = program.emit(undefined, (file, text) => {
+    const emitted = program.emitToString();
+    for (const [file, { text }] of emitted.outputFiles) {
       // what another package provides is imported from it, not shipped again
-      if (!kept.has(path.basename(file).replace(/\.(d\.ts|js)$/, ""))) return;
+      if (!kept.has(path.basename(file).replace(/\.(d\.ts|js)$/, ""))) continue;
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, fromSiblings(forPackage(text, aliases), kept, provided));
-    });
+    }
     const missing = files.filter((f) => kept.has(path.basename(f).replace(/\.tsx?$/, ""))).filter((f) => !fs.existsSync(path.join(outModules, path.basename(f).replace(/\.tsx?$/, ".js"))));
     if (missing.length) {
-      const why = emitted.diagnostics.map((d) => ts.flattenDiagnosticMessageText(d.messageText, " ")).slice(0, 3).join("\n");
+      const why = emitted.diagnostics.map((d) => d.text).slice(0, 3).join("\n");
       throw new Error(`couldn't compile ${missing.length} module(s)${why ? `:\n${why}` : ""}`);
     }
     if (server) for (const f of ["tcm-server.js", "tcm-server.d.ts"]) fs.copyFileSync(path.join(work, f), path.join(outModules, f));

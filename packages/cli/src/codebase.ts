@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { registerHooks } from "node:module";
-import ts from "typescript";
 import {
   compareVersions,
   analyzeFile,
   incrementalCompiler,
+  type CompilerOptions,
   analyzeProject,
   IR_VERSION,
   TS_VERSION,
@@ -79,30 +79,6 @@ import { serverApiFiles } from "./server-api.ts";
 /** A dotted codebase name: `lib.util.sort`. */
 export const IDENT_PATH = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
 
-/**
- * tcm was called ucm-ts. A codebase made then lives in `.ucm/`: move it to `.tcm/`, point package.json's imports
- * at it, and drop what's generated (it's rebuilt, under the new names). The codebase, app data and secrets move
- * as they are; hashes don't change.
- */
-function upgradeFromUcm(root: string) {
-  const dir = path.join(root, ".tcm");
-  fs.renameSync(path.join(root, ".ucm"), dir);
-  for (const generated of ["cache", "codebase", "web", "build", "apps", "examples"]) fs.rmSync(path.join(dir, generated), { recursive: true, force: true });
-  const ignore = path.join(dir, ".gitignore");
-  if (fs.existsSync(ignore)) fs.writeFileSync(ignore, fs.readFileSync(ignore, "utf8").replaceAll("ucm", "tcm"));
-  const pkgFile = path.join(root, "package.json");
-  if (fs.existsSync(pkgFile)) {
-    const pkg = JSON.parse(fs.readFileSync(pkgFile, "utf8")) as { imports?: Record<string, string> };
-    const imports: Record<string, string> = {};
-    for (const [k, v] of Object.entries(pkg.imports ?? {})) {
-      imports[k === "#ucm/server" ? "#tcm/server" : k] = v.replace("./.ucm/", "./.tcm/").replace("ucm-server.js", "tcm-server.js");
-    }
-    pkg.imports = imports;
-    fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + "\n");
-  }
-  process.stderr.write(`moved this codebase from .ucm/ to .tcm/ (ucm-ts is now tcm); import the server API as "#tcm/server"\n`);
-}
-
 export class Codebase {
   readonly lay: Layout;
   readonly store: Store;
@@ -128,13 +104,11 @@ export class Codebase {
     // the compilation (with its source maps) is tcm's own, loaded from where tcm runs
     if (typescriptUrl()) writeIfChanged(path.join(this.lay.cacheDir, "tcm-transform.js"), transformHookSource(transpileModule()));
     registerTransformHook();
+    // hashes in another format aren't comparable with this tcm's: refuse rather than mix them
     const versions = this.store.irVersions().filter((v) => v !== IR_VERSION);
     if (versions.length) {
       this.store.close();
-      throw new Error(
-        `${root} was written with hash format v${versions.join(", v")}; this tcm uses v${IR_VERSION}. ` +
-          `Run \`tcm migrate\` to rebuild it (the old codebase is kept as a backup).`,
-      );
+      throw new Error(`${root} was written with hash format v${versions.join(", v")}; this tcm uses v${IR_VERSION} and can't open it`);
     }
   }
 
@@ -146,10 +120,6 @@ export class Codebase {
   static findRoot(cwd: string): string {
     for (let dir = cwd; ; dir = path.dirname(dir)) {
       if (fs.existsSync(path.join(dir, ".tcm", "codebase.sqlite"))) return dir;
-      if (fs.existsSync(path.join(dir, ".ucm", "codebase.sqlite")) && !fs.existsSync(path.join(dir, ".tcm"))) {
-        upgradeFromUcm(dir);
-        return dir;
-      }
       if (path.dirname(dir) === dir) throw new Error("no tcm codebase here; run `tcm init` first");
     }
   }
@@ -224,11 +194,11 @@ export class Codebase {
     this.store.setSetting("shim_stamp", stamp);
   }
 
-  private optionsCache = new Map<string, ts.CompilerOptions>();
+  private optionsCache = new Map<string, CompilerOptions>();
   private warned = new Set<string>();
 
   /** Compiler options from the tsconfig.json nearest `dir` (the project root's by default). */
-  compilerOptions(dir = this.lay.root, mode: "scratch" | "import" = "scratch"): ts.CompilerOptions {
+  compilerOptions(dir = this.lay.root, mode: "scratch" | "import" = "scratch"): CompilerOptions {
     let tsconfig: string | undefined;
     for (let d = path.resolve(dir); ; d = path.dirname(d)) {
       if (fs.existsSync(path.join(d, "tsconfig.json"))) {
@@ -246,11 +216,10 @@ export class Codebase {
     return this.optionsCache.get(key)!;
   }
 
-  private host(ignoreDiagnostics: number[], saltFor: SaltFor | undefined, oldProgram?: ts.Program, compilerOptions = this.compilerOptions()): AnalyzeHost {
+  private host(ignoreDiagnostics: number[], saltFor: SaltFor | undefined, compilerOptions = this.compilerOptions()): AnalyzeHost {
     return {
       cacheDir: this.lay.cacheDir,
       ignoreDiagnostics,
-      oldProgram,
       saltFor,
       compilerOptions,
       resolveName: (name, meaning) => {
@@ -276,7 +245,7 @@ export class Codebase {
       packageDir: (name) => provided.dirs.get(name),
       skipDiagnostic: (d) => {
         if (d.code !== 7016) return false;
-        const m = /module '([^']+)'/.exec(ts.flattenDiagnosticMessageText(d.messageText, " "));
+        const m = /module '([^']+)'/.exec(d.text);
         if (!m || !provided.dirs.has(m[1]!)) return false;
         untyped.add(m[1]!);
         return true;
@@ -286,8 +255,8 @@ export class Codebase {
     return a;
   }
 
-  analyzeProject(files: string[], saltFor: SaltFor | undefined, ignoreDiagnostics: number[] = [], compilerOptions?: ts.CompilerOptions): ProjectAnalysis {
-    return analyzeProject(files, this.host(ignoreDiagnostics, saltFor, undefined, compilerOptions));
+  analyzeProject(files: string[], saltFor: SaltFor | undefined, ignoreDiagnostics: number[] = [], compilerOptions?: CompilerOptions): ProjectAnalysis {
+    return analyzeProject(files, this.host(ignoreDiagnostics, saltFor, compilerOptions));
   }
 
   /**
@@ -315,8 +284,8 @@ export class Codebase {
    * Options for re-checking definitions: import-mode resolution (rendered modules import by hash, and may use syntax
    * only imported code can) plus the type-checking profile the definitions were first checked under.
    */
-  recheckOptions(profile: Record<string, unknown> | undefined): ts.CompilerOptions {
-    return { ...this.compilerOptions(this.lay.root, "import"), ...(profile ?? {}) } as ts.CompilerOptions;
+  recheckOptions(profile: Record<string, unknown> | undefined): CompilerOptions {
+    return { ...this.compilerOptions(this.lay.root, "import"), ...(profile ?? {}) } as CompilerOptions;
   }
 
   /** Salts for re-analyzing rendered definitions: each keeps the salt it was stored with. */
@@ -379,27 +348,6 @@ export class Codebase {
       // TCM_KEEP_VERIFY=1 leaves the rendered files in .tcm/cache, to debug a failing re-check
       if (!process.env.TCM_KEEP_VERIFY) for (const f of expected.keys()) fs.rmSync(f, { force: true });
     }
-  }
-
-  /**
-   * Make sure these definitions have parameter schemas (definitions stored before schemas existed get them by
-   * re-analysis, which also re-checks that their source still hashes to them).
-   */
-  ensureParams(hashes: Iterable<string>) {
-    const src = this.source();
-    const missing = [...hashes].filter((h) => !src.get(h)?.params && src.get(h)?.kind === "term");
-    if (!missing.length) return;
-    const r = this.rehash(src, new Set(missing.map((h) => src.get(h)!.componentHash)));
-    for (const [h, d] of r.defs) if (d.params && d.hash === h) this.store.setMetadata(h, "params", JSON.stringify(d.params));
-  }
-
-  /** Make sure these terms have type shapes, for `find` by type (older definitions get them by re-analysis). */
-  ensureShapes(hashes: Iterable<string>) {
-    const src = this.source();
-    const missing = [...hashes].filter((h) => src.get(h)?.kind === "term" && !src.get(h)?.shape);
-    if (!missing.length) return;
-    const r = this.rehash(src, new Set(missing.map((h) => src.get(h)!.componentHash)));
-    for (const [h, d] of r.defs) if (d.shape && d.hash === h) this.store.setMetadata(h, "shape", JSON.stringify(d.shape));
   }
 
   /** Components needed to run or name `hashes`: their own plus everything they reference. */

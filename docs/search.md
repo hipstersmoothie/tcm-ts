@@ -49,8 +49,7 @@ Overloads are searched one by one; a function matches through its closest overlo
 When a term is added, tcm records its type as a *shape* (metadata, not part of the hash): functions,
 parameters, arrays, tuples, unions, object types and literals. Type parameters become numbered variables.
 Codebase types are referenced **by hash**, so renaming a type (`tcm mv lib.User lib.Person`) doesn't lose any
-matches; library types (`Promise`, `Map`, a package's types) by name. Definitions stored before shapes existed
-get theirs on the first search.
+matches; library types (`Promise`, `Map`, a package's types) by name.
 
 The query is typechecked against the `#codebase` shim, turned into the same kind of shape, and unified with
 each term's: query variables can stand for parts of a definition's type (more specific) and the definition's

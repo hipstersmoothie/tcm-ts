@@ -1,12 +1,12 @@
-import ts from "typescript";
+import * as ts from "./ts.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { isBuiltin } from "node:module";
 import { hashFromExportId, hashIR, serializeIR, type IR } from "./hash.ts";
 import { extract, TcmError, type DefSite, type ExtractMode, type Piece } from "./extract.ts";
-import { canonicalizeSite, type CanonContext, type Resolved, type SiteResult } from "./canonicalize.ts";
+import { canonicalizeSite, declKey, type CanonContext, type Resolved, type SiteResult, type SymbolLookup } from "./canonicalize.ts";
 import { compareVersions, compatRange } from "./semver.ts";
-import { checkProfile, compilerOptions, createProgram, fileDiagnostics, type Compile, type Diagnostic } from "./program.ts";
+import { checkProfile, compilerOptions, createProgram, fileDiagnostics, type Compile, type CompilerOptions, type Diagnostic } from "./program.ts";
 import { depRef, SERVER_API_MODULE, type DefRecord, type Dep, type DocRef, type ExtRef, type Span } from "./types.ts";
 import { paramsSchema, typeSchema, type ParamsSchema, type TableSchema } from "./schema.ts";
 import { createHash } from "node:crypto";
@@ -22,11 +22,10 @@ export interface AnalyzeHost {
    */
   resolveName(name: string, meaning: "type" | "value"): string;
   ignoreDiagnostics?: number[];
-  oldProgram?: ts.Program;
   /** builds the program instead of a fresh `createProgram` (the watcher's incremental compiler) */
   compile?: Compile;
   /** the project's compiler options (see projectCompilerOptions); tcm's defaults otherwise */
-  compilerOptions?: ts.CompilerOptions;
+  compilerOptions?: CompilerOptions;
   /**
    * Lineage salt for a term or class declared as `name` in `file`. JavaScript gives every declaration its own
    * identity (`new Map()` twice is two maps; two identical classes fail each other's `instanceof`), so without
@@ -46,6 +45,7 @@ export interface WatchRecord extends DefRecord {
 
 export interface Analysis {
   program: ts.Program;
+  checker: ts.TypeChecker;
   diagnostics: Diagnostic[];
   errors: string[];
   warnings: string[];
@@ -66,6 +66,7 @@ export interface ProjectDef extends DefRecord {
 
 export interface ProjectAnalysis {
   program: ts.Program;
+  checker: ts.TypeChecker;
   diagnostics: Diagnostic[];
   errors: string[];
   warnings: string[];
@@ -78,8 +79,7 @@ export interface ProjectAnalysis {
   packages: Record<string, string>;
 }
 
-// `// ucm:` is the spelling from before the rename to tcm
-const NAMESPACE_PRAGMA = /^\s*\/\/\s*[tu]cm:\s*namespace\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*$/m;
+const NAMESPACE_PRAGMA = /^\s*\/\/\s*tcm:\s*namespace\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*$/m;
 
 /** Analyze one scratch file: bare expressions are watch expressions. */
 export function analyzeFile(file: string, host: AnalyzeHost): Analysis {
@@ -115,13 +115,13 @@ export function analyzeProject(files: string[], host: AnalyzeHost, mode: Extract
 let observed: Map<string, string> | undefined;
 
 function analyzeWith(files: string[], host: AnalyzeHost, mode: ExtractMode): Omit<ProjectAnalysis, "packages"> {
-  const program = host.compile ? host.compile(files, host.compilerOptions ?? compilerOptions()) : createProgram(files, host.oldProgram, host.compilerOptions);
+  const { program, checker, options } = (host.compile ?? ((f, o) => createProgram(f, o)))(files, host.compilerOptions ?? compilerOptions());
   const sfs = files.map((f) => {
     const sf = program.getSourceFile(f);
     if (!sf) throw new Error(`cannot read ${f}`);
     return sf;
   });
-  const base = { program, defs: [], watches: [], warnings: [] as string[] };
+  const base = { program, checker, defs: [], watches: [], warnings: [] as string[] };
 
   const diagnostics = sfs.flatMap((sf, i) => fileDiagnostics(program, sf, host.ignoreDiagnostics, i === 0, host.skipDiagnostic));
   const errors: string[] = [];
@@ -137,12 +137,12 @@ function analyzeWith(files: string[], host: AnalyzeHost, mode: ExtractMode): Omi
     }
     return { ...base, diagnostics, errors };
   }
-  const result = analyzeSources(sfs, program.getTypeChecker(), host, mode, program.getCompilerOptions());
+  const result = analyzeSources(sfs, checker, host, mode, options);
   if (result.errors.length) return { ...base, diagnostics: [], errors: result.errors, warnings: result.warnings };
   // each definition remembers the options it typechecked under, so later re-checks use the same ones
-  const checked = checkProfile(program.getCompilerOptions());
+  const checked = checkProfile(options);
   for (const d of [...result.defs, ...result.watches]) d.checked = checked;
-  return { ...result, program, diagnostics: [] };
+  return { ...result, program, checker, diagnostics: [] };
 }
 
 function readPackage(dir: string): { name: string; version: string } | undefined {
@@ -174,7 +174,7 @@ function importClassifier(file: string, host: AnalyzeHost) {
     const hit = cache.get(key);
     if (hit) return hit;
     const decl = ts.isImportSpecifier(d) ? d.parent.parent.parent : ts.isImportClause(d) ? d.parent : d.parent.parent;
-    const spec = (decl.moduleSpecifier as ts.StringLiteral).text;
+    const spec = ((decl as ts.ImportDeclaration).moduleSpecifier as ts.StringLiteral).text;
     const exportName = ts.isImportSpecifier(d) ? (d.propertyName ?? d.name).text : ts.isImportClause(d) ? "default" : "*";
     let r: Resolved;
     if (spec === SERVER_API || isServerApiFile(spec, file, host)) {
@@ -228,6 +228,39 @@ function externalModule(spec: string, file: string, at: ts.Node, exportName: str
   const seen = observed?.get(module);
   if (!seen || compareVersions(pkg.version, seen) > 0) observed?.set(module, pkg.version);
   return { module, subpath, export: exportName };
+}
+
+/**
+ * What a project module re-exports from a package under a name: `export { x as name } from "pkg"`, or a name of
+ * `pkg`'s in `export * from "pkg"`. Using it through the module is using the package's export.
+ */
+function reexportClassifier(checker: ts.TypeChecker, host: AnalyzeHost) {
+  const cache = new Map<string, ExtRef | undefined>();
+  const exportsOf = new Map<string, Set<string>>();
+  return (sf: ts.SourceFile, name: string, at: ts.Node): ExtRef | undefined => {
+    const key = `${sf.path}\0${name}`;
+    if (cache.has(key)) return cache.get(key);
+    let r: ExtRef | undefined;
+    for (const st of sf.statements) {
+      if (!ts.isExportDeclaration(st) || !st.moduleSpecifier || !ts.isStringLiteral(st.moduleSpecifier)) continue;
+      const spec = st.moduleSpecifier.text;
+      if (spec.startsWith(".") || spec.startsWith("/") || spec.startsWith("#")) continue;
+      if (st.exportClause) {
+        const el = ts.isNamedExports(st.exportClause) ? st.exportClause.elements.find((e) => e.name.text === name) : undefined;
+        if (el) r = externalModule(spec, sf.fileName, at, (el.propertyName ?? el.name).text, host);
+      } else {
+        const k = `${sf.path}\0${spec}`;
+        if (!exportsOf.has(k)) {
+          const mod = checker.getSymbolAtLocation(st.moduleSpecifier);
+          exportsOf.set(k, new Set(mod ? checker.getExportsOfModule(mod).map((e) => e.name) : []));
+        }
+        if (exportsOf.get(k)!.has(name)) r = externalModule(spec, sf.fileName, at, name, host);
+      }
+      if (r) break;
+    }
+    cache.set(key, r);
+    return r;
+  };
 }
 
 /** `import("pkg")` loads a package lazily; it's as content-addressable as a static import of the same package. */
@@ -318,9 +351,10 @@ function tableOf(site: DefSite, checker: ts.TypeChecker): TableSchema | undefine
   let init = (site.nodes[0] as ts.VariableDeclaration).initializer;
   while (init && (ts.isParenthesizedExpression(init) || ts.isAsExpression(init) || ts.isSatisfiesExpression(init))) init = init.expression;
   if (!init || !ts.isCallExpression(init) || !init.typeArguments?.length || !ts.isIdentifier(init.expression)) return undefined;
-  const d = checker.getSymbolAtLocation(init.expression)?.declarations?.[0];
-  if (!d || !ts.isImportSpecifier(d) || (d.propertyName ?? d.name).text !== "table") return undefined;
-  const spec = (d.parent.parent.parent.moduleSpecifier as ts.StringLiteral).text;
+  const handle = checker.getSymbolAtLocation(init.expression)?.declarations?.[0];
+  const d = handle?.kind === ts.SyntaxKind.ImportSpecifier && handle.path === site.sf.path ? (nodeIndex(site.sf).get(handle.index) as ts.ImportSpecifier | undefined) : undefined;
+  if (!d || ((d.propertyName ?? d.name) as ts.Identifier).text !== "table") return undefined;
+  const spec = ((d.parent.parent.parent as ts.ImportDeclaration).moduleSpecifier as ts.StringLiteral).text;
   if (spec !== "#tcm/server" && !spec.endsWith("/tcm-server.js")) return undefined;
   const { s, defs } = typeSchema(checker, checker.getTypeFromTypeNode(init.typeArguments[0]!));
   const arg = init.arguments[0];
@@ -340,7 +374,7 @@ function tableOptions(opts: ts.Expression | undefined, checker: ts.TypeChecker):
       // each step's parameter type: what a row must look like for that step to take it
       const fns = ts.isArrayLiteralExpression(v) ? [...v.elements] : [v];
       out.steps = fns.map((f) => {
-        const param = checker.getTypeAtLocation(f).getCallSignatures()[0]?.parameters[0];
+        const param = checker.getTypeAtLocation(f).getCallSignatures()[0]?.getParameters()[0];
         return param ? typeSchema(checker, checker.getTypeOfSymbolAtLocation(param, f)) : { s: { t: "any" }, defs: [] };
       });
     } else if (p.name.text === "unique" || p.name.text === "index") out[p.name.text] = strings(v);
@@ -358,7 +392,57 @@ function signatureOf(site: DefSite, checker: ts.TypeChecker): string {
   return checker.typeToString(checker.getTypeOfSymbolAtLocation(sym, site.nameNode!), undefined, flags);
 }
 
-function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: AnalyzeHost, mode: ExtractMode, options: ts.CompilerOptions) {
+/** A file's nodes by their index, for turning a checker's NodeHandle into the node it denotes. */
+const indexes = new WeakMap<ts.SourceFile, Map<number, ts.Node>>();
+function nodeIndex(sf: ts.SourceFile): Map<number, ts.Node> {
+  let m = indexes.get(sf);
+  if (!m) {
+    const out = new Map<number, ts.Node>();
+    const walk = (n: ts.Node) => {
+      out.set((n as unknown as { index: number }).index, n);
+      n.forEachChild(walk, (arr) => void arr.forEach(walk));
+    };
+    walk(sf);
+    indexes.set(sf, (m = out));
+  }
+  return m;
+}
+
+/**
+ * The checker's answers canonicalization needs, asked in batches: every identifier's symbol (and every shorthand
+ * property's value) in a few round trips to the compiler process, then every alias's target. Anything not asked
+ * ahead is asked when needed.
+ */
+function prefetched(checker: ts.TypeChecker, roots: ts.Node[]): SymbolLookup {
+  const ids: ts.Node[] = [];
+  const shorthands: ts.Node[] = [];
+  const walk = (n: ts.Node) => {
+    if (n.kind === ts.SyntaxKind.Identifier) ids.push(n);
+    else if (n.kind === ts.SyntaxKind.ShorthandPropertyAssignment) shorthands.push(n);
+    n.forEachChild(walk, (arr) => void arr.forEach(walk));
+  };
+  roots.forEach(walk);
+  const api = ts.compiler();
+  const chunks = <T>(xs: T[], n = 4000) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+  const symbols = new Map<ts.Node, ts.Symbol | undefined>();
+  for (const c of chunks(ids)) api.batch(...c.map((id) => checker.getSymbolAtLocation.gen(id))).forEach((s, i) => symbols.set(c[i]!, s as ts.Symbol | undefined));
+  const values = new Map<ts.Node, ts.Symbol | undefined>();
+  for (const c of chunks(shorthands)) api.batch(...c.map((n) => checker.getShorthandAssignmentValueSymbol.gen(n))).forEach((s, i) => values.set(c[i]!, s as ts.Symbol | undefined));
+  const aliased = new Map<ts.Symbol, ts.Symbol>();
+  const aliases = [...new Set([...symbols.values(), ...values.values()].filter((s): s is ts.Symbol => !!s && !!(s.flags & ts.SymbolFlags.Alias)))];
+  for (const c of chunks(aliases)) api.batch(...c.map((s) => checker.getAliasedSymbol.gen(s))).forEach((t, i) => aliased.set(c[i]!, t as ts.Symbol));
+  return {
+    getSymbolAtLocation: (node) => (symbols.has(node) ? symbols.get(node) : checker.getSymbolAtLocation(node)),
+    getShorthandAssignmentValueSymbol: (node) => (values.has(node) ? values.get(node) : checker.getShorthandAssignmentValueSymbol(node)),
+    getAliasedSymbol: (sym) => {
+      let t = aliased.get(sym);
+      if (!t) aliased.set(sym, (t = checker.getAliasedSymbol(sym)));
+      return t;
+    },
+  };
+}
+
+function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: AnalyzeHost, mode: ExtractMode, options: CompilerOptions) {
   const errors: string[] = [];
   const warnings: string[] = [];
   const sites: DefSite[] = [];
@@ -374,22 +458,29 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
       errors.push(e.message);
     }
   }
-  const declToDef = new Map<ts.Node, number>();
-  for (const s of sites) for (const d of s.declarations) declToDef.set(d, s.id);
+  const declToDef = new Map<string, number>();
+  for (const s of sites) for (const d of s.declarations) declToDef.set(declKey(d), s.id);
+  const byPath = new Map(sfs.map((sf) => [sf.path as string, sf]));
   // an ambient `declare const x: unique symbol` is a type-only definition, but each one is a distinct symbol
   for (const s of sites) if (s.kind !== "type" || s.tag === "Declare") s.salt = host.saltFor?.(s.sf.fileName, s.name, s.targetPath);
   const classifiers = new Map(sfs.map((sf) => [sf, importClassifier(sf.fileName, host)]));
   const ctx: CanonContext = {
-    checker,
+    checker: prefetched(checker, [...sites, ...watchSites].flatMap((s) => s.nodes)),
     declToDef,
-    projectFiles: new Set(sfs),
+    projectFiles: new Set(byPath.keys()),
+    fileName: (p) => byPath.get(p)?.fileName ?? p,
+    nodeOf: (h) => {
+      const sf = byPath.get(h.path);
+      return sf && nodeIndex(sf).get(h.index);
+    },
     allowTransformed: mode === "import",
     classifyImport: (d, meaning) => classifiers.get(d.getSourceFile())!(d, meaning),
     classifyDynamicImport: (spec, at) => dynamicImportClassifier(at.getSourceFile().fileName, host)(spec, at),
+    classifyReexport: reexportClassifier(checker, host),
     jsxRuntime: (at) => {
       const sf = at.getSourceFile();
       // generated modules name their (aliased) runtime in a pragma; scratch files use the project's setting
-      const source = /@jsxImportSource\s+(\S+)/.exec(sf.text.slice(0, 2000))?.[1] ?? options.jsxImportSource ?? "react";
+      const source = /@jsxImportSource\s+(\S+)/.exec(sf.text.slice(0, 2000))?.[1] ?? (options.jsxImportSource as string | undefined) ?? "react";
       return externalModule(`${source}/jsx-runtime`, sf.fileName, at, "*", host);
     },
     kindOf: (def) => sites[def]!.kind,
@@ -500,7 +591,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
   const cacheRef = cacheRefOf(checker);
   const shapes = shapeBuilder(checker, (sym) => {
     const d = sym.declarations?.[0];
-    const id = d && declToDef.get(d);
+    const id = d && declToDef.get(declKey(d));
     return id !== undefined ? hashOf.get(id) : cacheRef(sym);
   });
   const shapeOf = (site: DefSite): TypeShape | undefined => {
@@ -513,7 +604,7 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
   const symbolHash = (sym: ts.Symbol): string | undefined => {
     const s = sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym;
     const d = s.declarations?.[0];
-    const id = d && declToDef.get(d);
+    const id = d && declToDef.get(declKey(d));
     return id !== undefined ? hashOf.get(id) : cacheRef(s);
   };
   const docRefsOf = (site: DefSite): DocRef[] | undefined => {
@@ -555,7 +646,8 @@ function analyzeSources(sfs: ts.SourceFile[], checker: ts.TypeChecker, host: Ana
         const at = { start: ex.start + n.start, end: ex.start + n.end };
         if (h) refs.push({ ...at, hash: h });
         else {
-          const decl = sym?.flags && sym.flags & ts.SymbolFlags.Alias ? sym.declarations?.[0] : undefined;
+          const handle = sym?.flags && sym.flags & ts.SymbolFlags.Alias ? sym.declarations?.[0] : undefined;
+          const decl = handle && ctx.nodeOf(handle);
           if (decl && (ts.isImportSpecifier(decl) || ts.isImportClause(decl) || ts.isNamespaceImport(decl))) {
             const r = ctx.classifyImport(decl, n.type ? "type" : "value");
             if (r.kind === "ext") refs.push({ ...at, ext: r.ext });

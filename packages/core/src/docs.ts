@@ -2,7 +2,7 @@
 // ({@source square}, {@signature square}) and give examples (```ts blocks) that are typechecked and evaluated.
 // The names in all of these are resolved to hashes when the definition is added, so docs follow renames and
 // updates instead of going stale. This file finds those parts in a doc's text.
-import ts from "typescript";
+import * as ts from "./ts.ts";
 
 /** A tag naming a definition: `{@link lib.square}`, `{@link square | the square}`, `{@source square}`. */
 export interface DocTag {
@@ -60,11 +60,11 @@ export function docExamples(doc: string): DocExample[] {
  * names the example declares. Each may be a definition in scope where the doc is.
  */
 export function exampleNames(code: string): { start: number; end: number; name: string; type: boolean }[] {
-  const sf = ts.createSourceFile("example.ts", code, ts.ScriptTarget.ESNext, true);
+  const sf = ts.parse("example.ts", code);
   const declared = new Set<string>();
   const declare = (n: ts.BindingName) => {
     if (ts.isIdentifier(n)) declared.add(n.text);
-    else for (const e of n.elements) if (!ts.isOmittedExpression(e)) declare(e.name);
+    else for (const e of n.elements) if (!ts.isOmitted(e)) declare(e.name!);
   };
   const collect = (n: ts.Node) => {
     if ((ts.isVariableDeclaration(n) || ts.isParameter(n) || ts.isBindingElement(n)) && n.name) declare(n.name);
@@ -94,6 +94,6 @@ export function exampleNames(code: string): { start: number; end: number; name: 
 
 /** Where each top-level statement of some code starts, after the comments above it (to put `export` there). */
 export function statementStarts(code: string): number[] {
-  const sf = ts.createSourceFile("code.ts", code, ts.ScriptTarget.ESNext, false);
+  const sf = ts.parse("code.ts", code);
   return sf.statements.map((s) => s.getStart(sf));
 }

@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
 
 // History as Unison keeps it: each change is a causal (a namespace state and the causals it came from), hashed
 // the same in every codebase. Codebases share it by sending what the other lacks, merges start from the best
@@ -116,23 +115,4 @@ test("entries by hash or by distance; reset adds an entry rather than rewriting"
   assert.equal(a.entries().length, 3, "the reset is an entry of its own");
   assert.match(a.tcm("history", "1"), /reset #\w{8}/);
   assert.throws(() => a.tcm("reset", "9"), /isn't 9 entries long/);
-});
-
-test("a codebase from before causal history gets its history rebuilt from the name log", () => {
-  const a = codebase("f");
-  a.tcm("init");
-  a.write(`export const one = 1;\n`);
-  a.tcm("add");
-  a.tcm("branch", "side");
-  a.write(`export const two = 2;\n`);
-  a.tcm("add");
-  const before = { main: a.entries(), side: (a.tcm("switch", "side"), a.entries()) };
-  a.tcm("switch", "main");
-
-  const db = new DatabaseSync(path.join(a.dir, ".tcm", "codebase.sqlite"));
-  db.exec("DELETE FROM causals; DELETE FROM causal_parents; DELETE FROM namespaces; ALTER TABLE branches DROP COLUMN head;");
-  db.close();
-  assert.deepEqual(a.entries(), before.main, "rebuilt with the same hashes");
-  a.tcm("switch", "side");
-  assert.deepEqual(a.entries(), before.side, "a fork descends from where it was made");
 });

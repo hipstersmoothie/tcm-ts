@@ -221,8 +221,6 @@ export function ensureExternals(lay: Layout, exts: Iterable<ExtRef>): void {
     const { name, version } = parseModule(e.module);
     const range = compatRange(version);
     wanted.set(npmAlias(e.module), { name, range });
-    // a definition from before ranges were pinned names the exact version it was checked against
-    if (isExactVersion(version) && range !== version) lockAtLeast(lay, name, range, version);
   }
   if (!wanted.size) return;
   const unlocked = [...wanted.values()].filter((w) => !lock.get(w.name, w.range));

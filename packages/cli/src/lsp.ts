@@ -10,7 +10,7 @@ import path from "node:path";
 import { format, inspect } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import ts from "typescript";
+import { ts } from "@tcm/core";
 import { cacheRefOf, schemaText, SERVER_API_MODULE, shortHash, type Analysis, type DefRecord, type ProjectDef } from "@tcm/core";
 import { nodeArgs, writeRunner } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
@@ -332,7 +332,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     const sf = a.program.getSourceFile(doc.file);
     const id = identifierAt(doc, offset);
     if (!sf || !id) return null;
-    const checker = a.program.getTypeChecker();
+    const checker = a.checker;
     let sym = checker.getSymbolAtLocation(id);
     if (sym && sym.flags & ts.SymbolFlags.Alias) sym = checker.getAliasedSymbol(sym);
     const hash = sym && cacheRefOf(checker)(sym);
@@ -543,7 +543,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     const a = fresh(doc).analysis;
     const id = identifierAt(doc, offset);
     if (!id || !a) return undefined;
-    const checker = a.program.getTypeChecker();
+    const checker = a.checker;
     let sym = checker.getSymbolAtLocation(id);
     if (sym && sym.flags & ts.SymbolFlags.Alias) sym = checker.getAliasedSymbol(sym);
     return (sym && cacheRefOf(checker)(sym)) || undefined;

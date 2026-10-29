@@ -5,8 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { causalHash, EMPTY_NAMESPACE, ROOT_CAUSAL, Store } from "../src/index.ts";
 
-// History hashes are shared between codebases (sync compares them), so like definition hashes they're frozen:
-// changing how a namespace or causal is hashed needs a format bump and a migration.
+// History hashes are shared between codebases (sync compares them), so like definition hashes they're pinned:
+// change how a namespace or causal is hashed only on purpose.
 
 const open = () => new Store(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tcm store ")), "codebase.sqlite"));
 const a = "a".repeat(52);

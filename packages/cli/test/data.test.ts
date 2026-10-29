@@ -229,11 +229,10 @@ export const testAtomicUpdate = async () => {
     ["notes", "r2", { text: "second", tags: ["x"], pinned: false, at: 0 }],
   ]);
   // the declared fields are indexed, and find's queries use them
-  // index names are stored in the data file, so they keep the prefix from before ucm-ts became tcm
-  const indexes = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'ucm_%' ORDER BY name").all() as { name: string }[]).map((r) => r.name);
-  assert.deepEqual(indexes, ["ucm_index_notes__pinned", `ucm_unique_notes__text`]);
+  const indexes = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'tcm_%' ORDER BY name").all() as { name: string }[]).map((r) => r.name);
+  assert.deepEqual(indexes, ["tcm_index_notes__pinned", `tcm_unique_notes__text`]);
   const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT id FROM rows WHERE tbl = 'notes' AND schema_hash = ? AND json_extract(data, '$."pinned"') = ?`).all("h", 1) as { detail: string }[];
-  assert.match(plan.map((p) => p.detail).join("\n"), /USING INDEX ucm_index_notes__pinned/);
+  assert.match(plan.map((p) => p.detail).join("\n"), /USING INDEX tcm_index_notes__pinned/);
   db.close();
 
   const second = ok("data", "migrate", "notes");

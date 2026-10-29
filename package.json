@@ -9,7 +9,7 @@
     "test": "node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json",
     "selfhost": "scripts/selfhost.sh",
-    "compare-ts": "scripts/compare-ts-versions.sh",
+    "compare-compilers": "scripts/compare-compilers.sh",
     "build": "node scripts/build.ts",
     "test:package": "scripts/test-package.sh",
     "docs:site": "node scripts/docs-site.ts",
@@ -19,7 +19,8 @@
     "@types/node": "^24.0.0",
     "marked": "^18.1.2",
     "shiki": "^4.5.0",
-    "typescript": "^6.0.3"
+    "typescript": "7.1.0-beta",
+    "typescript6": "npm:typescript@^6.0.3"
   },
   "bin": {
     "tcm": "packages/cli/bin/tcm.js"

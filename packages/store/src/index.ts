@@ -24,10 +24,10 @@ CREATE TABLE IF NOT EXISTS deps (
   PRIMARY KEY (from_hash, to_ref, ref_kind)
 );
 CREATE INDEX IF NOT EXISTS deps_by_target ON deps(to_ref);
-CREATE TABLE IF NOT EXISTS externals (ref TEXT PRIMARY KEY, module TEXT NOT NULL, subpath TEXT NOT NULL, export_name TEXT NOT NULL, integrity TEXT);
-CREATE TABLE IF NOT EXISTS signatures (hash TEXT PRIMARY KEY, display TEXT NOT NULL, sig_ir TEXT, ts_version TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS externals (ref TEXT PRIMARY KEY, module TEXT NOT NULL, subpath TEXT NOT NULL, export_name TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS signatures (hash TEXT PRIMARY KEY, display TEXT NOT NULL, ts_version TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS metadata (hash TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (hash, key));
-CREATE TABLE IF NOT EXISTS branches (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, forked_from_log_id INTEGER, head TEXT);
+CREATE TABLE IF NOT EXISTS branches (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, head TEXT NOT NULL);
 -- history, as Unison keeps it: a namespace is a tree of nodes hashed from their names and children, and a causal
 -- is a namespace state with the causals it came from; a branch is a pointer to its head causal. Hashes don't
 -- depend on which codebase made them, so two codebases share history by sending what the other lacks.
@@ -208,19 +208,8 @@ export class Store {
     this.db = new DatabaseSync(file);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
     this.db.exec(SCHEMA);
-    // codebases from before integrity was recorded
-    if (!(this.db.prepare("PRAGMA table_info(packages)").all() as { name: string }[]).some((c) => c.name === "integrity")) {
-      this.db.exec("ALTER TABLE packages ADD COLUMN integrity TEXT");
-    }
-    const cols = this.db.prepare("PRAGMA table_info(name_log)").all() as { name: string }[];
-    if (!cols.some((c) => c.name === "batch")) this.db.exec("ALTER TABLE name_log ADD COLUMN batch INTEGER NOT NULL DEFAULT 0");
     this.db.prepare("INSERT OR IGNORE INTO namespaces (hash, body) VALUES (?, ?)").run(EMPTY_NAMESPACE, EMPTY_BODY);
     this.db.prepare("INSERT OR IGNORE INTO causals (hash, namespace, ts, command) VALUES (?, ?, 0, 'init')").run(ROOT_CAUSAL, EMPTY_NAMESPACE);
-    // codebases from before causal history: rebuilt from the name log
-    if (!(this.db.prepare("PRAGMA table_info(branches)").all() as { name: string }[]).some((c) => c.name === "head")) {
-      this.db.exec("ALTER TABLE branches ADD COLUMN head TEXT");
-      this.transaction(() => this.historyFromLog());
-    }
     this.db.prepare("INSERT OR IGNORE INTO branches (name, head) VALUES ('main', ?)").run(ROOT_CAUSAL);
     this.db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('branch', 'main')").run();
   }
@@ -408,8 +397,7 @@ export class Store {
   createBranch(name: string) {
     const from = this.branch();
     this.transaction(() => {
-      const head = this.logHead();
-      const { lastInsertRowid } = this.db.prepare("INSERT INTO branches (name, forked_from_log_id, head) VALUES (?, ?, ?)").run(name, head, this.head(from.name));
+      const { lastInsertRowid } = this.db.prepare("INSERT INTO branches (name, head) VALUES (?, ?)").run(name, this.head(from.name));
       this.db.prepare("INSERT INTO names (branch_id, path, hash, kind) SELECT ?, path, hash, kind FROM names WHERE branch_id = ?").run(lastInsertRowid, from.id);
       this.db.prepare("INSERT INTO patches (branch_id, old_hash, new_hash, ts) SELECT ?, old_hash, new_hash, ts FROM patches WHERE branch_id = ?").run(lastInsertRowid, from.id);
     });
@@ -527,7 +515,7 @@ export class Store {
   /** A branch's head causal (default: the current branch's). */
   head(branch?: string): string {
     const id = branch === undefined ? this.branch().id : this.branchId(branch);
-    return ((this.db.prepare("SELECT head FROM branches WHERE id = ?").get(id) as { head: string | null }).head ?? ROOT_CAUSAL) as string;
+    return (this.db.prepare("SELECT head FROM branches WHERE id = ?").get(id) as { head: string }).head;
   }
 
   causal(hash: string): Causal | undefined {
@@ -806,60 +794,6 @@ export class Store {
       added++;
     }
     return { added, removed };
-  }
-
-  /**
-   * History for a codebase from before causals, rebuilt from its name log: each batch on a branch is a causal
-   * whose parent is the one before. A branch's first batch descends from the causal its starting names match
-   * (the branch it was forked from, at that point), or from the empty one.
-   */
-  private historyFromLog() {
-    const branches = this.db.prepare("SELECT id, name FROM branches").all() as { id: number; name: string }[];
-    const byNamespace = new Map<string, string>([[EMPTY_NAMESPACE, ROOT_CAUSAL]]);
-    type Step = { branch: number; first: number; ts: number; command: string; state: Map<string, NameRow> };
-    const steps: Step[] = [];
-    const key = (r: { path: string; hash: string }) => `${r.path} ${r.hash}`;
-    const starts = new Map<number, Map<string, NameRow>>();
-    for (const b of branches) {
-      const now = new Map((this.db.prepare("SELECT path, hash, kind FROM names WHERE branch_id = ?").all(b.id) as unknown as NameRow[]).map((r) => [key(r), r]));
-      const entries = this.db.prepare("SELECT * FROM name_log WHERE branch_id = ? ORDER BY id").all(b.id) as Row[];
-      // rewind to before the first entry, then replay batch by batch
-      const state = new Map(now);
-      for (const e of [...entries].reverse()) {
-        if (e.new_hash) state.delete(`${e.path} ${e.new_hash}`);
-        if (e.old_hash) state.set(`${e.path} ${e.old_hash}`, { path: e.path as string, hash: e.old_hash as string, kind: e.kind as DefKind });
-      }
-      starts.set(b.id, new Map(state));
-      let batch: number | undefined;
-      for (const e of entries) {
-        if (e.batch !== batch || batch === 0) {
-          batch = e.batch as number;
-          steps.push({ branch: b.id, first: e.id as number, ts: e.ts as number, command: e.command as string, state: new Map() });
-        }
-        if (e.old_hash) state.delete(`${e.path} ${e.old_hash}`);
-        if (e.new_hash) state.set(`${e.path} ${e.new_hash}`, { path: e.path as string, hash: e.new_hash as string, kind: e.kind as DefKind });
-        steps.at(-1)!.state = new Map(state);
-      }
-    }
-    const heads = new Map<number, string>();
-    const start = (id: number) => {
-      const ns = this.namespaceOf([...starts.get(id)!.values()]);
-      return byNamespace.get(ns) ?? this.putCausal(ns, [ROOT_CAUSAL], 0, "history before this codebase kept it");
-    };
-    for (const s of steps.sort((a, b) => a.first - b.first)) {
-      const parent = heads.get(s.branch) ?? start(s.branch);
-      const ns = this.namespaceOf([...s.state.values()]);
-      const c = this.causal(parent)!.namespace === ns ? parent : this.putCausal(ns, [parent], s.ts, s.command);
-      heads.set(s.branch, c);
-      if (!byNamespace.has(ns)) byNamespace.set(ns, c);
-    }
-    for (const b of branches) {
-      const ns = this.namespaceOf(this.names(b.name));
-      let head = heads.get(b.id) ?? start(b.id);
-      // names changed without the log knowing (shouldn't happen): their state, on top
-      if (this.causal(head)!.namespace !== ns) head = this.putCausal(ns, [head], Date.now(), "names as found");
-      this.db.prepare("UPDATE branches SET head = ? WHERE id = ?").run(head, b.id);
-    }
   }
 
   // ---- releases ------------------------------------------------------------

@@ -101,7 +101,6 @@ export const commands = {
   lint: command(name("lint"), description("lint definitions with oxlint (configure with a `lint.config` definition)"), namespace("only definitions under this namespace"), fresh),
   fmt: command(name("fmt"), description("reformat stored definitions with oxfmt; no hashes change"), namespace("only definitions under this namespace")),
   verify: command(name("verify"), description("re-render and re-hash every live definition; must be the identity")),
-  migrate: command(name("migrate"), description("rebuild a codebase written with an older hash format (keeps a backup)")),
   packages: command(name("packages"), description("the npm packages the codebase runs: range, locked version, what uses them")),
   upgrade: command(
     name("upgrade"),
@@ -237,7 +236,7 @@ export const commands = {
 /** Sections of `tcm help`, in order; every command is in one. */
 export const SECTIONS: [string, string[]][] = [
   ["Codebase", ["init", "watch", "check", "add", "update", "import", "edit", "view", "ls", "find", "deps", "dependents", "docs", "run", "mv", "alias", "rm", "todo", "resolve"]],
-  ["Tools", ["test", "lint", "fmt", "verify", "migrate", "lsp", "complete"]],
+  ["Tools", ["test", "lint", "fmt", "verify", "lsp", "complete"]],
   ["Packages and releases", ["packages", "upgrade", "release", "releases", "changelog", "pack"]],
   ["History and branches", ["diff", "history", "reset", "branch", "switch", "merge"]],
   ["Apps, data and jobs", ["dev", "build", "start", "apps", "data", "jobs"]],

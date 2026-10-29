@@ -155,7 +155,6 @@ export function planApp(cb: Codebase, appName: string): AppState {
   materialize([hash], cb.source(), cb.lay); // the whole closure, server side included, with npm packages
   const placement = new Placement(cb);
   const plan = placement.planApp(hash);
-  cb.ensureParams(plan.endpoints);
   const jsx = cb.store.getDef(hash)?.jsx;
   if (!placement.isComponent(hash) || !jsx?.startsWith("npm:react@")) return { hash, plan };
   // React and React DOM are released together: the same version renders it

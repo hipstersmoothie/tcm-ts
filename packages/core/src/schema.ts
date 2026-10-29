@@ -1,7 +1,7 @@
 // Runtime schemas for function parameters, derived from their TypeScript types. A server function the browser
 // can call is a public endpoint, and TypeScript types are gone at runtime, so tcm checks arguments against these
 // before calling it. Schemas describe plain data, the only thing that crosses the network (see the CLI's codec).
-import ts from "typescript";
+import * as ts from "./ts.ts";
 
 export type Schema =
   | { t: "any" }
@@ -80,8 +80,8 @@ function schemaBuilder(checker: ts.TypeChecker) {
       const c = checker.getBaseConstraintOfType(t);
       return c && c !== t ? of(c, depth + 1) : { t: "any" };
     }
-    if (t.isUnion()) return { t: "union", of: t.types.map((u) => of(u, depth + 1)) };
-    if (!(f & ts.TypeFlags.Object) && !t.isIntersection()) return { t: "any" };
+    if (f & ts.TypeFlags.Union) return { t: "union", of: (t as ts.UnionOrIntersectionType).getTypes().map((u) => of(u, depth + 1)) };
+    if (!(f & ts.TypeFlags.Object) && !(f & ts.TypeFlags.Intersection)) return { t: "any" };
 
     // object types can be recursive: meeting one again while describing it reserves a shared definition
     if (active.has(t)) {
@@ -101,10 +101,11 @@ function schemaBuilder(checker: ts.TypeChecker) {
   };
 
   const objectSchema = (t: ts.Type, depth: number): Schema => {
-    const name = t.getSymbol()?.getName();
-    const args = checker.getTypeArguments(t as ts.TypeReference);
+    const name = t.getSymbol()?.name;
+    const reference = !!(t.flags & ts.TypeFlags.Object) && !!((t as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference);
+    const args = reference ? checker.getTypeArguments(t as ts.TypeReference) : [];
     if (checker.isTupleType(t)) {
-      const target = (t as ts.TypeReference).target as ts.TupleType;
+      const target = (t as ts.TypeReference).getTarget() as unknown as { elementFlags: readonly number[] };
       const elems = args.map((a) => of(a, depth + 1));
       const flags = target.elementFlags;
       const restAt = flags.findIndex((x) => x & ts.ElementFlags.Variable);
@@ -119,26 +120,19 @@ function schemaBuilder(checker: ts.TypeChecker) {
     }
     if (t.getCallSignatures().length || t.getConstructSignatures().length) return { t: "unsendable", what: "a function" };
     if (t.getSymbol()?.flags && t.getSymbol()!.flags & ts.SymbolFlags.Class) return { t: "unsendable", what: `a ${name} instance` };
-    // the platform's own object types (DOM nodes, Response, Buffer, ...) are host objects, not plain data; walking
-    // them would describe the whole DOM
+    // Node's own object types (Buffer, streams, ...) are host objects, not plain data
     if (name && isHostType(t)) return { t: "unsendable", what: `a ${name}` };
     const props: Record<string, { s: Schema; optional: boolean }> = {};
     for (const p of checker.getPropertiesOfType(t)) {
-      const decl = p.valueDeclaration ?? p.declarations?.[0];
-      const pt = decl ? checker.getTypeOfSymbolAtLocation(p, decl) : checker.getTypeOfSymbol(p);
-      props[p.getName()] = { s: of(pt, depth + 1), optional: (p.flags & ts.SymbolFlags.Optional) !== 0 };
+      props[p.name] = { s: of(checker.getTypeOfSymbol(p), depth + 1), optional: (p.flags & ts.SymbolFlags.Optional) !== 0 };
     }
     const index = checker.getIndexInfoOfType(t, ts.IndexKind.String);
-    return { t: "object", props, ...(index ? { index: of(index.type, depth + 1) } : {}) };
+    return { t: "object", props, ...(index ? { index: of(index.valueType, depth + 1) } : {}) };
   };
 
-  const isGlobal = (t: ts.Type) => (t.getSymbol()?.declarations ?? []).some((d) => d.getSourceFile().isDeclarationFile);
-  /** Declared by TypeScript's standard library (lib.dom.d.ts, ...) or @types/node, rather than by code or a package. */
-  const isHostType = (t: ts.Type) =>
-    (t.getSymbol()?.declarations ?? []).some((d) => {
-      const sf = d.getSourceFile();
-      return sf.hasNoDefaultLib || /[\\/]node_modules[\\/]@types[\\/]node[\\/]/.test(sf.fileName);
-    });
+  const isGlobal = (t: ts.Type) => (t.getSymbol()?.declarations ?? []).some((d) => /\.d\.[cm]?ts$/.test(d.path));
+  /** Declared by @types/node (Buffer, streams, ...), rather than by code or a package. */
+  const isHostType = (t: ts.Type) => (t.getSymbol()?.declarations ?? []).some((d) => /[\\/]node_modules[\\/]@types[\\/]node[\\/]/.test(d.path));
   return { of, defs };
 }
 
@@ -153,12 +147,12 @@ export function paramsSchema(checker: ts.TypeChecker, type: ts.Type): ParamsSche
   if (!sig) return undefined;
   const { of, defs } = schemaBuilder(checker);
   const params = sig.getParameters().map((p) => {
-    const decl = p.valueDeclaration as ts.ParameterDeclaration | undefined;
+    const decl = ts.declarationOf(p) as ts.ParameterDeclaration | undefined;
     const rest = !!decl?.dotDotDotToken;
-    let pt = decl ? checker.getTypeOfSymbolAtLocation(p, decl) : checker.getTypeOfSymbol(p);
+    let pt = checker.getTypeOfSymbol(p);
     if (rest && checker.isArrayType(pt)) pt = checker.getTypeArguments(pt as ts.TypeReference)[0]!;
-    const optional = !!decl && (!!decl.questionToken || !!decl.initializer);
-    return { name: p.getName(), s: of(pt, 0), optional, rest };
+    const optional = !!decl && ts.isParameter(decl) && (!!decl.questionToken || !!decl.initializer);
+    return { name: p.name, s: of(pt, 0), optional, rest };
   });
   return { params, defs };
 }

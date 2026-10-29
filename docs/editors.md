@@ -223,7 +223,7 @@ language-servers = ["typescript-language-server", "tcm"]
 
 - Scratch files and `tcm:` documents get tcm's features. Files elsewhere (an imported project's sources) are
   ignored.
-- The server analyzes with the same incremental TypeScript LanguageService as the watcher, so updates take
-  tens of milliseconds.
+- The server analyzes with the same TypeScript 7 compiler process as the watcher: each open file keeps its own
+  snapshot, so updates take tens of milliseconds.
 - Its stdout is the protocol channel. Output from watch expressions and tests goes to its stderr, which editors
   show in the server's log.

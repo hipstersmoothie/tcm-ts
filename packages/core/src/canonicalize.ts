@@ -1,4 +1,5 @@
-import ts from "typescript";
+import * as ts from "./ts.ts";
+import { SLOTS } from "./slots.ts";
 import type { IR } from "./hash.ts";
 import { isAnonymousFunction, TcmError, type DefSite } from "./extract.ts";
 import type { DefKind, ExtRef, RefPos } from "./types.ts";
@@ -15,19 +16,22 @@ const kindName: string[] = (() => {
   return names;
 })();
 
-/** Node properties that point at other nodes without being syntactic children. */
-const NON_SLOT_KEYS = new Set(["parent", "original", "emitNode", "nextContainer", "flowNode", "endFlowNode", "returnFlowNode", "jsDoc", "symbol", "localSymbol", "locals"]);
-
-/**
- * The property of `node` holding `child` (`name`, `body`, `typeArguments`, ...). Children are labelled by slot so
- * that a missing optional child can never make two different nodes serialize alike.
- */
-function slotOf(node: ts.Node, child: ts.Node | ts.NodeArray<ts.Node>): string {
-  for (const key of Object.keys(node)) {
-    if (!NON_SLOT_KEYS.has(key) && (node as unknown as Record<string, unknown>)[key] === child) return key;
+/** A node's children as the IR labels them: slot name, and the node or list there (see slots.ts). */
+function slots(node: ts.Node): [string, ts.Node | ts.NodeArray<ts.Node>][] {
+  const out: [string, ts.Node | ts.NodeArray<ts.Node>][] = [];
+  const fields = node as unknown as Record<string, ts.Node | ts.NodeArray<ts.Node> | undefined>;
+  for (const slot of SLOTS[kindName[node.kind]!] ?? []) {
+    const v = fields[slot];
+    if (v !== undefined && v !== null) out.push([slot, v]);
   }
-  throw new TcmError(`internal: cannot find the slot of a ${kindName[node.kind]} child`, node);
+  return out;
 }
+
+const isList = (x: ts.Node | ts.NodeArray<ts.Node>): x is ts.NodeArray<ts.Node> => !("kind" in x) || Array.isArray(x);
+
+/** A declaration, by file and node index: what a checker's NodeHandle and a parsed node have in common. */
+export const declKey = (x: ts.Node | ts.NodeHandle): string =>
+  "path" in x && typeof (x as ts.NodeHandle).path === "string" && !("parent" in x) ? `${(x as ts.NodeHandle).path}#${x.index}` : `${(x as ts.Node).getSourceFile().path}#${(x as { index: number }).index}`;
 
 const REJECTED: Partial<Record<ts.SyntaxKind, string>> = {
   [ts.SyntaxKind.EnumDeclaration]: "enums are not erasable; use an `as const` object",
@@ -95,19 +99,33 @@ function isAssignmentTarget(node: ts.Node): boolean {
   return false;
 }
 
+/** The checker questions canonicalization asks; analyze.ts answers them from a prefetched cache. */
+export interface SymbolLookup {
+  getSymbolAtLocation(node: ts.Node): ts.Symbol | undefined;
+  getAliasedSymbol(symbol: ts.Symbol): ts.Symbol;
+  getShorthandAssignmentValueSymbol(node: ts.Node): ts.Symbol | undefined;
+}
+
 export interface CanonContext {
-  checker: ts.TypeChecker;
+  checker: SymbolLookup;
   /** import mode: enums, namespaces and parameter properties are allowed (compiled when run) */
   allowTransformed: boolean;
   kindOf(def: number): DefKind;
   /** whether a definition is a top-level `let` (imported code only) */
   isLet(def: number): boolean;
-  /** files being analyzed together; references between them resolve to definitions */
-  projectFiles: Set<ts.SourceFile>;
+  /** files being analyzed together (by path); references between them resolve to definitions */
+  projectFiles: Set<string>;
+  /** a file's name, by path */
+  fileName(path: string): string;
+  /** a declaration in a project file, as a node */
+  nodeOf(handle: ts.NodeHandle): ts.Node | undefined;
   warn(message: string, node: ts.Node): void;
-  declToDef: Map<ts.Node, number>;
+  /** definitions by declaration (see declKey) */
+  declToDef: Map<string, number>;
   classifyImport(decl: ts.ImportSpecifier | ts.ImportClause | ts.NamespaceImport, meaning: Meaning): Resolved;
   classifyDynamicImport(spec: string, at: ts.Node): ExtRef;
+  /** what a project module re-exports from a package as `name` (`export * from "pkg"`, `export { x } from "pkg"`) */
+  classifyReexport(file: ts.SourceFile, name: string, at: ts.Node): ExtRef | undefined;
   /** the package JSX compiles to calls of (`<jsxImportSource>/jsx-runtime`), as resolved from `at` */
   jsxRuntime(at: ts.Node): ExtRef;
 }
@@ -253,23 +271,34 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
   const globals = new Set<string>();
   const ACCESSIBILITY = new Set([ts.SyntaxKind.PublicKeyword, ts.SyntaxKind.PrivateKeyword, ts.SyntaxKind.ProtectedKeyword, ts.SyntaxKind.ReadonlyKeyword, ts.SyntaxKind.OverrideKeyword]);
 
-  /** If `left` is a namespace import of a project module, the definition `left.right` names. */
-  const namespaceMember = (left: ts.Identifier, right: ts.Identifier): number | undefined => {
+  /**
+   * If `left` is a namespace import of a project module, what `left.right` names: one of its definitions, or what
+   * it re-exports from a package.
+   */
+  const namespaceMember = (left: ts.Identifier, right: ts.Identifier): Resolved | undefined => {
     const sym = checker.getSymbolAtLocation(left);
     if (!sym || !(sym.flags & ts.SymbolFlags.Alias)) return undefined;
     const target = checker.getAliasedSymbol(sym);
     const decl = target.declarations?.[0];
-    if (!decl || !ts.isSourceFile(decl) || !ctx.projectFiles.has(decl)) return undefined;
+    if (!decl || decl.kind !== ts.SyntaxKind.SourceFile || !ctx.projectFiles.has(decl.path)) return undefined;
     let m = checker.getSymbolAtLocation(right);
     if (m && m.flags & ts.SymbolFlags.Alias) m = checker.getAliasedSymbol(m);
     const d = m?.declarations?.length ? pickDef(m.declarations, right) : undefined;
-    if (d === undefined) throw new TcmError(`'${left.text}.${right.text}' is not a top-level definition of ${decl.fileName}`, right);
-    return d;
+    if (d !== undefined) return { kind: "def", def: d };
+    const ext = reexport(decl, right.text, right);
+    if (ext) return { kind: "ext", ext };
+    throw new TcmError(`'${left.text}.${right.text}' is not a top-level definition of ${ctx.fileName(decl.path)}`, right);
+  };
+
+  /** What project module `file` (a source file's declaration) re-exports from a package as `name`. */
+  const reexport = (file: ts.NodeHandle, name: string, at: ts.Node): ExtRef | undefined => {
+    const sf = ctx.nodeOf(file);
+    return sf && ts.isSourceFile(sf) ? ctx.classifyReexport(sf, name, at) : undefined;
   };
 
   /** The definition a symbol denotes here. A type and a value sharing a name are one merged symbol. */
-  const pickDef = (decls: readonly ts.Declaration[], at: ts.Node): number | undefined => {
-    const defs = [...new Set(decls.map((d) => ctx.declToDef.get(d)).filter((d) => d !== undefined))];
+  const pickDef = (decls: readonly ts.NodeHandle[], at: ts.Node): number | undefined => {
+    const defs = [...new Set(decls.map((d) => ctx.declToDef.get(declKey(d))).filter((d) => d !== undefined))];
     if (defs.length <= 1) return defs[0];
     const wantType = meaningAt(at) === "type";
     return defs.find((d) => (ctx.kindOf(d) === "type") === wantType) ?? defs[0];
@@ -280,32 +309,42 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
     const decls = sym.declarations ?? [];
     const d0 = decls[0];
     if (!d0) return { kind: "global", name: text };
-    const dsf = d0.getSourceFile();
-    if (ts.isImportSpecifier(d0) || ts.isImportClause(d0) || ts.isNamespaceImport(d0)) {
+    if (d0.kind === ts.SyntaxKind.ImportSpecifier || d0.kind === ts.SyntaxKind.ImportClause || d0.kind === ts.SyntaxKind.NamespaceImport) {
       // imports between project files (directly or through re-exports) name a definition in the graph
       const target = checker.getAliasedSymbol(sym);
       const td = target.declarations?.[0];
-      if (td && ctx.projectFiles.has(td.getSourceFile())) {
+      if (td && ctx.projectFiles.has(td.path)) {
         const def = pickDef(target.declarations!, at);
         if (def !== undefined) return { kind: "def", def };
         throw new TcmError(
-          ts.isSourceFile(td)
+          td.kind === ts.SyntaxKind.SourceFile
             ? `'${text}' is a namespace import of a project module; import the definitions you use by name`
-            : `'${text}' is not a top-level definition of ${td.getSourceFile().fileName}`,
+            : `'${text}' is not a top-level definition of ${ctx.fileName(td.path)}`,
           at,
         );
       }
-      return ctx.classifyImport(d0, meaningAt(at));
+      const imp = ctx.nodeOf(d0) as ts.ImportSpecifier | ts.ImportClause | ts.NamespaceImport;
+      // a package's export, imported through a project module that re-exports it
+      if (!ts.isNamespaceImport(imp)) {
+        const decl = (ts.isImportSpecifier(imp) ? imp.parent.parent.parent : imp.parent) as ts.ImportDeclaration;
+        const mod = checker.getSymbolAtLocation(decl.moduleSpecifier)?.declarations?.[0];
+        if (mod?.kind === ts.SyntaxKind.SourceFile && ctx.projectFiles.has(mod.path)) {
+          const ext = reexport(mod, ts.isImportSpecifier(imp) ? (imp.propertyName ?? imp.name).text : "default", at);
+          if (ext) return { kind: "ext", ext };
+        }
+      }
+      return ctx.classifyImport(imp, meaningAt(at));
     }
-    if (ctx.projectFiles.has(dsf)) {
+    if (ctx.projectFiles.has(d0.path)) {
       const def = pickDef(decls, at);
       if (def !== undefined) return { kind: "def", def };
-      if (dsf === sf && site.nodes.some((n) => d0.pos >= n.pos && d0.end <= n.end)) return { kind: "local", symbol: sym };
+      const node = d0.path === sf.path ? ctx.nodeOf(d0) : undefined;
+      if (node && site.nodes.some((n) => node.pos >= n.pos && node.end <= n.end)) return { kind: "local", symbol: sym };
       throw new TcmError(`cannot resolve '${text}'`, at);
     }
-    if (dsf.isDeclarationFile) return { kind: "global", name: text };
+    if (/\.d\.[cm]?ts$/.test(d0.path)) return { kind: "global", name: text };
     throw new TcmError(
-      `'${text}' refers to a declaration in ${dsf.fileName}; import codebase definitions from '#codebase/...' instead of local files`,
+      `'${text}' refers to a declaration in ${d0.path}; import codebase definitions from '#codebase/...' instead of local files`,
       at,
     );
   };
@@ -350,20 +389,18 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
 
   const atRoot = (node: ts.Node) => site.nodes.includes(node);
   const children = (node: ts.Node, out: IR[]) => {
-    ts.forEachChild(
-      node,
-      (c) => {
-        if (!(atRoot(node) && isSkippedModifier(c))) out.push([slotOf(node, c), visit(c)]);
-      },
-      (arr) => {
-        // only the definition's own `export` is dropped: inside a namespace, `export` changes what the code means
-        // and indentation between JSX tags, which React drops: `<a><b /></a>` hashes like its multi-line layout
-        const kids = arr.filter((c) => !(atRoot(node) && isSkippedModifier(c)) && !(ts.isJsxText(c) && jsxText(c.text) === ""));
-        // `export function f` and `function f` must hash the same: drop a modifier list emptied by stripping
-        if (kids.length === 0 && ts.canHaveModifiers(node) && node.modifiers === arr) return;
-        out.push([slotOf(node, arr), ["[", ...kids.map(visit)]]);
-      },
-    );
+    for (const [slot, c] of slots(node)) {
+      if (!isList(c)) {
+        if (!(atRoot(node) && isSkippedModifier(c))) out.push([slot, visit(c)]);
+        continue;
+      }
+      // only the definition's own `export` is dropped: inside a namespace, `export` changes what the code means
+      // and indentation between JSX tags, which React drops: `<a><b /></a>` hashes like its multi-line layout
+      const kids = [...c].filter((k) => !(atRoot(node) && isSkippedModifier(k)) && !(ts.isJsxText(k) && jsxText(k.text) === ""));
+      // `export function f` and `function f` must hash the same: drop a modifier list emptied by stripping
+      if (kids.length === 0 && slot === "modifiers") continue;
+      out.push([slot, ["[", ...kids.map(visit)]]);
+    }
   };
 
   const visit = (node: ts.Node): IR => {
@@ -424,18 +461,20 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
         // `{ x }` hashes exactly like `{ x: x }` (and `{ x = d }` like `{ x: x = d }`): renaming what `x` refers to
         // expands the shorthand, and the expanded text must hash the same
         const s = node as ts.ShorthandPropertyAssignment;
+        // a shorthand's name is always an identifier
+        const name = s.name as ts.Identifier;
         const sym = checker.getShorthandAssignmentValueSymbol(s);
-        const ref = refIR(classifySymbol(sym, s.name, s.name.text), s.name, s.name.text, s.name.text);
+        const ref = refIR(classifySymbol(sym, name, name.text), name, name.text, name.text);
         const init = s.objectAssignmentInitializer;
         const value: IR = init
-          ? ["BinaryExpression", ["left", isAnonymousFunction(init) ? ["Named", s.name.text, ref] : ref], ["operatorToken", ["EqualsToken"]], ["right", visit(init)]]
+          ? ["BinaryExpression", ["left", isAnonymousFunction(init) ? ["Named", name.text, ref] : ref], ["operatorToken", ["EqualsToken"]], ["right", visit(init)]]
           : ref;
-        return ["PropertyAssignment", ["name", ["N", s.name.text]], ["initializer", value]];
+        return ["PropertyAssignment", ["name", ["N", name.text]], ["initializer", value]];
       }
       case ts.SyntaxKind.BindingElement: {
         const b = node as ts.BindingElement;
         // `const { a } = o` binds a local *and* reads property `a`: keep the property name structural
-        if (ts.isObjectBindingPattern(b.parent) && !b.propertyName && !b.dotDotDotToken && ts.isIdentifier(b.name)) {
+        if (ts.isObjectBindingPattern(b.parent) && !b.propertyName && !b.dotDotDotToken && b.name && ts.isIdentifier(b.name)) {
           // `{ a }` hashes exactly like `{ a: a }`; a top-level binding can be renamed, and the span remembers the
           // property so the splice writes `{ a: renamed }`
           const ref = refIR(classifySymbol(checker.getSymbolAtLocation(b.name), b.name, b.name.text), b.name, b.name.text, b.name.text);
@@ -464,7 +503,7 @@ export function canonicalizeSite(site: DefSite, ctx: CanonContext): SiteResult {
         const left = ts.isPropertyAccessExpression(node) ? node.expression : (node as ts.QualifiedName).left;
         const right = ts.isPropertyAccessExpression(node) ? node.name : (node as ts.QualifiedName).right;
         const member = ts.isIdentifier(left) && ts.isIdentifier(right) ? namespaceMember(left, right) : undefined;
-        if (member !== undefined) return refIR({ kind: "def", def: member }, node, right.text);
+        if (member) return refIR(member, node, right.text);
         break;
       }
       case ts.SyntaxKind.CallExpression: {

@@ -1,8 +1,9 @@
 // Type shapes: a term's type as structure, for searching by type (`tcm find ':(xs: T[]) => T'`), the way Unison
 // searches by type. References to codebase types are hashes, so a rename doesn't change a shape; type
 // parameters are variables, so `<A>(xs: A[]) => A` and `<T>(xs: T[]) => T` are the same shape.
-import ts from "typescript";
+import * as ts from "./ts.ts";
 import { hashFromExportId } from "./hash.ts";
+import { createProgram, type CompilerOptions } from "./program.ts";
 
 export type Shape =
   | { k: "prim"; name: string }
@@ -30,29 +31,28 @@ const key = (s: Shape) => JSON.stringify(s);
 
 /** The hash of a codebase type a symbol denotes, when it's declared in a generated cache module. */
 export function cacheRefOf(checker: ts.TypeChecker): (sym: ts.Symbol) => string | undefined {
-  const exports = new Map<ts.SourceFile, Map<ts.Symbol, string>>();
+  const exports = new Map<string, Map<number, string>>();
   return (sym) => {
-    const decl = sym.declarations?.[0];
-    const sf = decl?.getSourceFile();
-    if (!sf || !/[\\/]\.tcm[\\/]cache[\\/][a-z2-7]{52}\.tsx?$/.test(sf.fileName)) return undefined;
-    let byLocal = exports.get(sf);
+    const file = sym.declarations?.[0]?.path;
+    if (!file || !/[\\/]\.tcm[\\/]cache[\\/][a-z2-7]{52}\.tsx?$/.test(file)) return undefined;
+    let byLocal = exports.get(file);
     if (!byLocal) {
       byLocal = new Map();
-      const mod = checker.getSymbolAtLocation(sf);
+      const mod = checker.getSymbolOfSourceFile(file);
       for (const e of mod ? checker.getExportsOfModule(mod) : []) {
         const hash = hashFromExportId(e.name);
         const local = e.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(e) : e;
-        if (hash) byLocal.set(local, hash);
+        if (hash) byLocal.set(local.id, hash);
       }
-      exports.set(sf, byLocal);
+      exports.set(file, byLocal);
     }
-    return byLocal.get(sym);
+    return byLocal.get(sym.id);
   };
 }
 
 /** Shapes from checker types. `refOf` says which symbols are codebase types (by hash). */
 export function shapeBuilder(checker: ts.TypeChecker, refOf: (sym: ts.Symbol) => string | undefined) {
-  const vars = new Map<ts.Type, number>();
+  const vars = new Map<number, number>();
   const named = (sym: ts.Symbol, args: readonly ts.Type[], depth: number): Shape => {
     const s = sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym;
     const hash = refOf(s);
@@ -63,10 +63,11 @@ export function shapeBuilder(checker: ts.TypeChecker, refOf: (sym: ts.Symbol) =>
   const fn = (sig: ts.Signature, depth: number): Shape => {
     const params: Shape[] = [];
     let rest: Shape | undefined;
-    for (const p of sig.parameters) {
-      const decl = p.valueDeclaration;
+    const rests = sig.hasRestParameter;
+    const ps = sig.getParameters();
+    for (const [i, p] of ps.entries()) {
       const t = checker.getTypeOfSymbol(p);
-      if (decl && ts.isParameter(decl) && decl.dotDotDotToken) {
+      if (rests && i === ps.length - 1) {
         rest = checker.isArrayType(t) ? of(checker.getTypeArguments(t as ts.TypeReference)[0]!, depth + 1) : of(t, depth + 1);
       } else params.push(of(t, depth + 1));
     }
@@ -76,8 +77,8 @@ export function shapeBuilder(checker: ts.TypeChecker, refOf: (sym: ts.Symbol) =>
     if (depth > MAX_DEPTH) return { k: "opaque" };
     const f = t.flags;
     if (f & ts.TypeFlags.TypeParameter) {
-      let i = vars.get(t);
-      if (i === undefined) vars.set(t, (i = vars.size));
+      let i = vars.get(t.id);
+      if (i === undefined) vars.set(t.id, (i = vars.size));
       return { k: "var", i };
     }
     if (f & ts.TypeFlags.Any) return { k: "prim", name: "any" };
@@ -96,25 +97,27 @@ export function shapeBuilder(checker: ts.TypeChecker, refOf: (sym: ts.Symbol) =>
     if (f & ts.TypeFlags.ESSymbolLike) return { k: "prim", name: "symbol" };
     if (f & ts.TypeFlags.NonPrimitive) return { k: "prim", name: "object" };
     // a library alias like Partial<User> or Record<string, number> keeps its name; a codebase alias its hash
-    if (t.aliasSymbol && (refOf(t.aliasSymbol) || t.aliasSymbol.declarations?.[0]?.getSourceFile().isDeclarationFile)) {
-      return named(t.aliasSymbol, t.aliasTypeArguments ?? [], depth);
-    }
-    if (t.isUnion()) {
+    const alias = t.getAliasSymbol();
+    if (alias && (refOf(alias) || /\.d\.[cm]?ts$/.test(alias.declarations?.[0]?.path ?? ""))) return named(alias, t.getAliasTypeArguments(), depth);
+    if (f & ts.TypeFlags.Union) {
       // `boolean` inside a union is true | false: put it back together
-      const members = t.types.filter((m) => !(m.flags & ts.TypeFlags.BooleanLiteral));
+      const types = (t as ts.UnionOrIntersectionType).getTypes();
+      const members = types.filter((m) => !(m.flags & ts.TypeFlags.BooleanLiteral));
       const shapes = members.map((m) => of(m, depth + 1));
-      if (members.length < t.types.length) shapes.push({ k: "prim", name: "boolean" });
+      if (members.length < types.length) shapes.push({ k: "prim", name: "boolean" });
       return shapes.length === 1 ? shapes[0]! : { k: "union", of: sorted(shapes) };
     }
-    if (t.isIntersection()) return { k: "inter", of: sorted(t.types.map((m) => of(m, depth + 1))) };
+    if (f & ts.TypeFlags.Intersection) return { k: "inter", of: sorted((t as ts.UnionOrIntersectionType).getTypes().map((m) => of(m, depth + 1))) };
     if (checker.isArrayType(t)) return { k: "array", of: of(checker.getTypeArguments(t as ts.TypeReference)[0]!, depth + 1) };
     if (checker.isTupleType(t)) return { k: "tuple", of: checker.getTypeArguments(t as ts.TypeReference).map((x) => of(x, depth + 1)) };
-    if (t.aliasSymbol) return named(t.aliasSymbol, t.aliasTypeArguments ?? [], depth);
+    if (alias) return named(alias, t.getAliasTypeArguments(), depth);
     const obj = t as ts.ObjectType;
+    const sym = t.getSymbol();
     if (f & ts.TypeFlags.Object && obj.objectFlags & ts.ObjectFlags.Reference) {
-      return named((t as ts.TypeReference).target.symbol, checker.getTypeArguments(t as ts.TypeReference), depth);
+      const target = (t as ts.TypeReference).getTarget().getSymbol();
+      if (target) return named(target, checker.getTypeArguments(t as ts.TypeReference), depth);
     }
-    if (f & ts.TypeFlags.Object && obj.objectFlags & (ts.ObjectFlags.Interface | ts.ObjectFlags.Class) && t.symbol) return named(t.symbol, [], depth);
+    if (f & ts.TypeFlags.Object && obj.objectFlags & (ts.ObjectFlags.Interface | ts.ObjectFlags.Class) && sym) return named(sym, [], depth);
     if (f & ts.TypeFlags.Object) {
       const props = checker.getPropertiesOfType(t);
       const calls = t.getCallSignatures();
@@ -274,17 +277,17 @@ export interface QueryImport {
  * The shape of a type written as a query, e.g. `(xs: T[]) => T` or `(u: lib.User) => Promise<string>`.
  * `resolve` maps names written in the query (`User`, `lib.User`) to codebase types; names that are neither those
  * nor globals become type variables, as in Unison (`(xs: a[]) => a`). The query is checked as a file at `file`
- * (it must sit where `#codebase` resolves), which is removed afterwards.
+ * (it must sit where `#codebase` resolves); it's never written to disk.
  */
 export function queryShape(
   text: string,
   file: string,
-  options: ts.CompilerOptions,
+  options: CompilerOptions,
   resolve: (name: string) => QueryImport | undefined,
 ): { shape: TypeShape; variables: string[] } {
-  const parsed = ts.createSourceFile("query.ts", `type __Q = ${text};`, ts.ScriptTarget.ESNext, true);
+  const parsed = ts.parse("query.ts", `type __Q = ${text};`);
   const alias = parsed.statements[0];
-  if (parsed.statements.length !== 1 || !alias || !ts.isTypeAliasDeclaration(alias) || (parsed as unknown as { parseDiagnostics: unknown[] }).parseDiagnostics.length) {
+  if (parsed.statements.length !== 1 || !alias || !ts.isTypeAliasDeclaration(alias) || alias.type.end !== parsed.text.length - 1) {
     throw new Error(`'${text}' isn't a TypeScript type`);
   }
   // codebase names become imports under fresh local names, replacing their text in the query
@@ -309,22 +312,17 @@ export function queryShape(
 
   const check = (variables: string[]) => {
     const params = variables.length ? `<${variables.join(", ")}>` : "";
-    ts.sys.writeFile(file, `${imports.join("\n")}\ntype __Q${params} = ${body};\nexport {};\n`);
-    const program = ts.createProgram({ rootNames: [file], options });
+    const { program, checker } = createProgram([file], options, new Map([[file, `${imports.join("\n")}\ntype __Q${params} = ${body};\nexport {};\n`]]));
     const sf = program.getSourceFile(file)!;
-    const diags = [...program.getSyntacticDiagnostics(sf), ...program.getSemanticDiagnostics(sf)];
-    return { program, sf, diags };
+    const diags = [...program.getSyntacticDiagnostics(file), ...program.getSemanticDiagnostics(file)];
+    return { checker, sf, diags };
   };
-  try {
-    // names TypeScript can't find are the query's type variables
-    let r = check([]);
-    const unknown = [...new Set(r.diags.filter((d) => d.code === 2304).map((d) => /'([^']+)'/.exec(ts.flattenDiagnosticMessageText(d.messageText, " "))?.[1]).filter((n): n is string => !!n))];
-    if (unknown.length) r = check(unknown);
-    if (r.diags.length) throw new Error(`'${text}': ${ts.flattenDiagnosticMessageText(r.diags[0]!.messageText, " ")}`);
-    const checker = r.program.getTypeChecker();
-    const decl = r.sf.statements.find((s): s is ts.TypeAliasDeclaration => ts.isTypeAliasDeclaration(s) && s.name.text === "__Q")!;
-    return { shape: shapeBuilder(checker, cacheRefOf(checker)).typeShape(checker.getTypeFromTypeNode(decl.type)), variables: unknown };
-  } finally {
-    ts.sys.deleteFile?.(file);
-  }
+  // names TypeScript can't find are the query's type variables
+  let r = check([]);
+  const unknown = [...new Set(r.diags.filter((d) => d.code === 2304).map((d) => /'([^']+)'/.exec(d.text)?.[1]).filter((n): n is string => !!n))];
+  if (unknown.length) r = check(unknown);
+  if (r.diags.length) throw new Error(`'${text}': ${r.diags[0]!.text}`);
+  const { checker } = r;
+  const decl = r.sf.statements.find((s): s is ts.TypeAliasDeclaration => ts.isTypeAliasDeclaration(s) && s.name.text === "__Q")!;
+  return { shape: shapeBuilder(checker, cacheRefOf(checker)).typeShape(checker.getTypeFromTypeNode(decl.type)), variables: unknown };
 }

@@ -3,11 +3,9 @@ import { createHash } from "node:crypto";
 /** An IR node: a tag-first S-expression. Arrays and strings only, so serialization is canonical. */
 export type IR = string | IR[];
 
-// v6: npm packages are pinned by compatible range (`npm:ms@2`), not exact version; see semver.ts
-export const IR_VERSION = 6;
-// Frozen: every hash depends on it. (tcm was called ucm-ts when the format was fixed; renaming the domain would
-// change every hash, which needs a format bump and `tcm migrate`.)
-const DOMAIN = `ucm-ir-v${IR_VERSION}\0`;
+/** The hash format. Every hash depends on it (through DOMAIN). */
+export const IR_VERSION = 1;
+const DOMAIN = `tcm-ir-v${IR_VERSION}\0`;
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
 
 export function base32(bytes: Uint8Array): string {

@@ -1,9 +1,10 @@
-import ts from "typescript";
+// The compiler tcm checks code with: TypeScript 7 (see ts.ts), driven through its API. A program is a snapshot of
+// files (scratch files' unsaved text layered over the disk) compiled by the long-lived compiler process.
 import fs from "node:fs";
-import { createHash } from "node:crypto";
 import { builtinModules, createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import * as ts from "./ts.ts";
 import { exportId } from "./hash.ts";
 
 const require = createRequire(import.meta.url);
@@ -13,7 +14,20 @@ export const tcmTypeRoots = [path.dirname(path.dirname(require.resolve("@types/n
 
 export const TS_VERSION = ts.version;
 
-export function compilerOptions(): ts.CompilerOptions {
+/** Compiler options, as TypeScript 7 takes them (enums as numbers, `lib` by name). */
+export type CompilerOptions = Record<string, unknown> & {
+  module?: number;
+  moduleResolution?: number;
+  target?: number;
+  jsx?: number;
+  lib?: string[];
+  types?: string[];
+  typeRoots?: string[];
+  paths?: Record<string, string[]>;
+  jsxImportSource?: string;
+};
+
+export function compilerOptions(): CompilerOptions {
   return {
     module: ts.ModuleKind.NodeNext,
     moduleResolution: ts.ModuleResolutionKind.NodeNext,
@@ -35,7 +49,7 @@ export function compilerOptions(): ts.CompilerOptions {
  * Options tcm's model depends on: NodeNext resolution (import classification and `#codebase` go through it),
  * the syntax Node's type stripping can run, and no emit.
  */
-const REQUIRED: ts.CompilerOptions = {
+const REQUIRED: CompilerOptions = {
   module: ts.ModuleKind.NodeNext,
   moduleResolution: ts.ModuleResolutionKind.NodeNext,
   noEmit: true,
@@ -45,15 +59,11 @@ const REQUIRED: ts.CompilerOptions = {
 };
 
 /**
- * Compiler options for a project: its `tsconfig.json` if there is one (lib, strictness, types, ... are the
- * project's choice), with the options tcm requires forced on top. Warnings name the settings that were overridden.
- */
-/**
  * For importing existing code: tcm renders its own imports (by hash, with `import type` decided by tcm), so the
  * project's resolution style doesn't matter, and most projects are written for bundler resolution: every file is
  * ESM and relative imports can omit extensions. Only what Node's type stripping needs to run the code is forced.
  */
-const REQUIRED_FOR_IMPORT: ts.CompilerOptions = {
+const REQUIRED_FOR_IMPORT: CompilerOptions = {
   module: ts.ModuleKind.ESNext,
   moduleResolution: ts.ModuleResolutionKind.Bundler,
   noEmit: true,
@@ -63,23 +73,45 @@ const REQUIRED_FOR_IMPORT: ts.CompilerOptions = {
   verbatimModuleSyntax: false,
 };
 
-export function projectCompilerOptions(tsconfig: string | undefined, mode: "scratch" | "import" = "scratch"): { options: ts.CompilerOptions; warnings: string[] } {
+const ENUM_NAMES: Record<string, Record<number, string>> = { module: ts.ModuleKind, moduleResolution: ts.ModuleResolutionKind } as never;
+
+/**
+ * Compiler options for a project: its `tsconfig.json` if there is one (lib, strictness, types, ... are the
+ * project's choice), with the options tcm requires forced on top. Warnings name the settings that were overridden.
+ */
+export function projectCompilerOptions(tsconfig: string | undefined, mode: "scratch" | "import" = "scratch"): { options: CompilerOptions; warnings: string[] } {
   const required = mode === "import" ? REQUIRED_FOR_IMPORT : REQUIRED;
-  if (!tsconfig || !ts.sys.fileExists(tsconfig)) return { options: { ...compilerOptions(), ...(mode === "import" ? required : {}) }, warnings: [] };
+  if (!tsconfig || !fs.existsSync(tsconfig)) return { options: { ...compilerOptions(), ...(mode === "import" ? required : {}) }, warnings: [] };
   const warnings: string[] = [];
-  const read = ts.readConfigFile(tsconfig, ts.sys.readFile);
-  if (read.error) return { options: compilerOptions(), warnings: [`${tsconfig}: ${ts.flattenDiagnosticMessageText(read.error.messageText, " ")}; using tcm's defaults`] };
-  const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, path.dirname(tsconfig), undefined, tsconfig);
-  for (const e of parsed.errors.filter((e) => e.code !== 18003)) warnings.push(`${tsconfig}: ${ts.flattenDiagnosticMessageText(e.messageText, " ")}`);
-  // deprecations TypeScript 6 turned into errors (baseUrl, node10 resolution, ...) aren't the code's problem
-  const options: ts.CompilerOptions = { skipLibCheck: true, ignoreDeprecations: "6.0", ...parsed.options };
+  let parsed: { options: CompilerOptions; errors?: readonly ts.Diagnostic[] };
+  try {
+    parsed = ts.compiler().parseConfigFile(tsconfig) as unknown as typeof parsed;
+  } catch (e) {
+    return { options: compilerOptions(), warnings: [`${tsconfig}: ${(e as Error).message.split("\n")[0]}; using tcm's defaults`] };
+  }
+  // "no inputs were found" is about the project's own build, not tcm's
+  for (const e of (parsed.errors ?? []).filter((e) => e.code !== 18003)) warnings.push(`${tsconfig}: ${e.text}`);
+  const options: CompilerOptions = { skipLibCheck: true, ...parsed.options };
+  delete options.configFilePath;
+  // without the config file, the compiler would look for @types from its working directory: look from the
+  // project's, as TypeScript does (node_modules/@types in it and each directory above)
+  if (options.typeRoots === undefined) {
+    const roots: string[] = [];
+    for (let d = path.dirname(path.resolve(tsconfig)); ; d = path.dirname(d)) {
+      roots.push(path.join(d, "node_modules", "@types"));
+      if (path.dirname(d) === d) break;
+    }
+    options.typeRoots = roots;
+  }
   // without its own `types`, a project gets tcm's @types/node, so scratch files typecheck without installing it
   if (options.types === undefined) Object.assign(options, { typeRoots: tcmTypeRoots, types: ["node"] });
-  for (const [k, v] of Object.entries(required) as [keyof ts.CompilerOptions, unknown][]) {
+  for (const [k, v] of Object.entries(required)) {
     // in import mode, resolution settings are tcm's business (it renders imports itself): no need to mention them
-    const quiet = mode === "import" && ["module", "moduleResolution", "verbatimModuleSyntax", "erasableSyntaxOnly"].includes(k as string);
-    if (!quiet && parsed.options[k] !== undefined && parsed.options[k] !== v) warnings.push(`${path.basename(tsconfig)}: tcm requires \`${k}\` = ${k === "module" || k === "moduleResolution" ? "NodeNext" : String(v)}, ignoring the project's setting`);
-    (options as Record<string, unknown>)[k] = v;
+    const quiet = mode === "import" && ["module", "moduleResolution", "verbatimModuleSyntax", "erasableSyntaxOnly"].includes(k);
+    if (!quiet && parsed.options[k] !== undefined && parsed.options[k] !== v) {
+      warnings.push(`${path.basename(tsconfig)}: tcm requires \`${k}\` = ${ENUM_NAMES[k] ? ENUM_NAMES[k][v as number] : String(v)}, ignoring the project's setting`);
+    }
+    options[k] = v;
   }
   // JSX compiles to the automatic runtime (`react/jsx-runtime`, or the project's jsxImportSource), which generated
   // modules import by pinned version
@@ -104,7 +136,7 @@ const PROFILE_KEYS = [
 
 export type CheckProfile = Partial<Record<(typeof PROFILE_KEYS)[number], unknown>>;
 
-export function checkProfile(options: ts.CompilerOptions): CheckProfile {
+export function checkProfile(options: CompilerOptions): CheckProfile {
   const out: CheckProfile = {};
   for (const k of PROFILE_KEYS) if (options[k] !== undefined) out[k] = options[k];
   return out;
@@ -174,12 +206,12 @@ const INLINE_MAP = /\n?\/\/# sourceMappingURL=data:application\/json;(?:charset=
  */
 export function transpileForNode(source: string, fileName: string): string {
   const input = INLINE_MAP.exec(source);
-  const out = ts.transpileModule(input ? source.slice(0, input.index) : source, {
+  const out = ts.compiler().transpileModule(input ? source.slice(0, input.index) : source, {
     fileName,
     compilerOptions: {
       module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, preserveConstEnums: true, isolatedModules: true, verbatimModuleSyntax: false, jsx: ts.JsxEmit.ReactJSX,
       sourceMap: true,
-    },
+    } as never,
   });
   const code = out.outputText.replace(/\n?\/\/# sourceMappingURL=.*$/, "");
   if (!input || !out.sourceMapText) return code;
@@ -207,7 +239,7 @@ export function transpileModule(): { url: string; export: string; transpile: typ
   return { url: import.meta.url, export: hash ? exportId(hash) : "transpileModule", transpile: transpileForNode };
 }
 
-/** Where that TypeScript lives, for processes that compile on their own (runners spawned by tcm). */
+/** Where TypeScript lives, for processes that compile on their own (runners spawned by tcm). */
 export function typescriptUrl(): string | undefined {
   try {
     return pathToFileURL(require.resolve("typescript")).href;
@@ -216,22 +248,25 @@ export function typescriptUrl(): string | undefined {
   }
 }
 
-export function createProgram(rootFiles: string[], oldProgram?: ts.Program, options: ts.CompilerOptions = compilerOptions()): ts.Program {
-  return ts.createProgram({ rootNames: rootFiles, options, oldProgram });
-}
-
 /**
- * Where a bare package import in a scratch file resolves when tcm provides the package: the specifier to resolve
- * instead (`npm__react__19`, the cache's alias for the version chosen for that file) and the file to resolve it
- * from. Undefined leaves the import to ordinary resolution (the project's own node_modules).
+ * Where a bare package import in a scratch file resolves when tcm provides the package: the cache's directory for
+ * the version chosen for that file. Undefined leaves the import to ordinary resolution (the project's own
+ * node_modules).
  */
 export type PackageResolver = ((name: string, containingFile: string) => { specifier: string; from: string } | undefined) & {
   /** identifies the mapping: a compiler keeps resolutions per key, so a changed mapping resolves afresh */
   key?: string;
 };
 
+/** A compiled program, and the checker that answers questions about it. */
+export interface Checked {
+  program: ts.Program;
+  checker: ts.TypeChecker;
+  options: CompilerOptions;
+}
+
 /** `overlay`: files' unsaved text (an editor's open buffers), read instead of the disk; `packages`: see PackageResolver */
-export type Compile = (rootFiles: string[], options: ts.CompilerOptions, overlay?: ReadonlyMap<string, string>, packages?: PackageResolver) => ts.Program;
+export type Compile = (rootFiles: string[], options: CompilerOptions, overlay?: ReadonlyMap<string, string>, packages?: PackageResolver) => Checked;
 
 /** The package an import names: `react/jsx-runtime` → `react`, `@scope/pkg/sub` → `@scope/pkg`. */
 export function packageNameOf(specifier: string): string | undefined {
@@ -240,76 +275,92 @@ export function packageNameOf(specifier: string): string | undefined {
   return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
 }
 
-/** `resolveModuleNameLiterals` for a host: provided packages through `packages`, everything else as usual. */
-function resolvingThrough(packages: () => PackageResolver | undefined, options: () => ts.CompilerOptions, host: ts.ModuleResolutionHost) {
-  return (literals: readonly ts.StringLiteralLike[], containingFile: string, redirected: ts.ResolvedProjectReference | undefined, _o: ts.CompilerOptions, sf: ts.SourceFile): ts.ResolvedModuleWithFailedLookupLocations[] =>
-    literals.map((lit) => {
-      const o = options();
-      const mode = ts.getModeForUsageLocation(sf, lit, o);
-      const name = packageNameOf(lit.text);
-      const provided = name ? packages()?.(name, containingFile) : undefined;
-      if (provided) return ts.resolveModuleName(provided.specifier + lit.text.slice(name!.length), provided.from, o, host, undefined, redirected, mode);
-      return ts.resolveModuleName(lit.text, containingFile, o, host, undefined, redirected, mode);
-    });
+/**
+ * Provided packages as `paths`: each import of one in the root files (and a .tsx file's JSX runtime) mapped to the
+ * file it resolves to as the package's cache alias (`react/jsx-runtime` → `npm__react__19/jsx-runtime`, resolved
+ * from the cache, where its DefinitelyTyped types are found as usual).
+ */
+function providedPaths(
+  rootFiles: string[],
+  options: CompilerOptions,
+  overlay: ReadonlyMap<string, string> | undefined,
+  packages: PackageResolver | undefined,
+  resolver: () => ts.ModuleResolver,
+): Record<string, string[]> | undefined {
+  if (!packages) return undefined;
+  const paths: Record<string, string[]> = {};
+  for (const file of rootFiles) {
+    let text = overlay?.get(file);
+    if (text === undefined) {
+      try {
+        text = fs.readFileSync(file, "utf8");
+      } catch {
+        continue;
+      }
+    }
+    const specs = ts.parse(file, text).imports.map((n) => (n as ts.StringLiteral).text);
+    if (/\.[cm]?tsx$/.test(file)) specs.push(`${(options.jsxImportSource as string | undefined) ?? "react"}/jsx-runtime`);
+    for (const spec of specs) {
+      const name = packageNameOf(spec);
+      const target = name && !paths[spec] ? packages(name, file) : undefined;
+      if (!name || !target) continue;
+      const resolved = resolver().resolveModuleName(target.specifier + spec.slice(name.length), path.dirname(target.from), ts.ModuleKind.ESNext);
+      if (resolved.resolvedModule) paths[spec] = [resolved.resolvedModule.resolvedFileName];
+    }
+  }
+  return Object.keys(paths).length ? paths : undefined;
 }
 
 /**
- * A long-lived compiler for checking the same files again and again (the watcher). A plain program re-reads
- * and re-parses every file each time, the standard library and @types/node included; this one is a
- * LanguageService over a document registry, so only files whose version (mtime and size) changed are parsed
- * again.
+ * Compile files: a snapshot of them (overlay text over the disk) in the compiler process. Snapshots read the disk
+ * afresh, and the compiler keeps what it parsed (the standard library, @types/node) between them, so a new one is
+ * quick. A compilation stays usable until the same files are compiled again (an editor's open files each keep
+ * theirs), or until it's one of more than `keep` others since.
  */
-export function incrementalCompiler(): Compile {
-  const registry = ts.createDocumentRegistry();
-  const services = new Map<string, { roots: string[]; service: ts.LanguageService }>();
-  // nanosecond mtimes: two quick writes of the same size within a millisecond still differ
-  const version = (file: string) => {
-    const st = fs.statSync(file, { bigint: true, throwIfNoEntry: false });
-    return st ? `${st.mtimeNs}:${st.size}` : "0";
-  };
-  let overlay: ReadonlyMap<string, string> = new Map();
-  let packages: PackageResolver | undefined;
-  const overlaid = new Map<string, string>();
-  const textVersion = (text: string) => createHash("sha1").update(text).digest("hex");
-  return (rootFiles, options, current = new Map(), provided) => {
-    overlay = current;
-    packages = provided;
-    const key = JSON.stringify(options) + (provided?.key ?? "");
-    let s = services.get(key);
-    if (!s) {
-      const entry = { roots: rootFiles } as { roots: string[]; service: ts.LanguageService };
-      const host: ts.LanguageServiceHost = {
-        getScriptFileNames: () => entry.roots,
-        getScriptVersion: (f) => {
-          const text = overlay.get(f);
-          if (text === undefined) return version(f);
-          let v = overlaid.get(text);
-          if (!v) overlaid.set(text, (v = `buffer:${textVersion(text)}`));
-          if (overlaid.size > 200) overlaid.clear();
-          return v;
-        },
-        getScriptSnapshot: (f) => {
-          const text = overlay.get(f) ?? ts.sys.readFile(f);
-          return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text);
-        },
-        getCompilationSettings: () => options,
-        getCurrentDirectory: () => ts.sys.getCurrentDirectory(),
-        getDefaultLibFileName: (o) => ts.getDefaultLibFilePath(o),
-        useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
-        fileExists: (f) => overlay.has(f) || ts.sys.fileExists(f),
-        readFile: (f) => overlay.get(f) ?? ts.sys.readFile(f),
-        readDirectory: ts.sys.readDirectory,
-        directoryExists: ts.sys.directoryExists,
-        getDirectories: ts.sys.getDirectories,
-        realpath: ts.sys.realpath,
-      };
-      host.resolveModuleNameLiterals = resolvingThrough(() => packages, () => options, host);
-      entry.service = ts.createLanguageService(host, registry);
-      services.set(key, (s = entry));
+export function incrementalCompiler(keep = 8): Compile {
+  const live = new Map<string, ts.Snapshot>();
+  // resolving provided packages: one resolver per mapping and options, made again when either changes
+  let resolver: { key: string; resolver: ts.ModuleResolver } | undefined;
+  const release = (s: ts.Snapshot | undefined) => {
+    try {
+      s?.dispose();
+    } catch {
+      // the compiler has already let it go
     }
-    s.roots = rootFiles;
-    return s.service.getProgram()!;
   };
+  return (rootFiles, options, overlay, packages) => {
+    const resolverKey = `${packages?.key ?? ""}\0${JSON.stringify(options)}`;
+    const paths = providedPaths(rootFiles, options, overlay, packages, () => {
+      if (resolver?.key !== resolverKey) {
+        resolver?.resolver.dispose();
+        resolver = { key: resolverKey, resolver: ts.compiler().createModuleResolver(options as never) };
+      }
+      return resolver.resolver;
+    });
+    const compilerOptions = paths ? { ...options, paths: { ...(options.paths ?? {}), ...paths } } : options;
+    const files: Record<string, string> = {};
+    for (const [f, text] of overlay ?? []) files[f] = text;
+    const snapshot = ts.compiler().createSnapshot({
+      ...(overlay?.size ? { fileSystem: { kind: "layer", files } } : {}),
+      createPrograms: [{ rootFiles, compilerOptions: compilerOptions as never }],
+    } as never) as unknown as ts.Snapshot;
+    const project = snapshot.getProjects()[0]!;
+    const key = rootFiles.join("\0");
+    release(live.get(key));
+    live.delete(key);
+    live.set(key, snapshot);
+    for (const [k, s] of live) {
+      if (live.size <= keep) break;
+      release(s);
+      live.delete(k);
+    }
+    return { program: project.program, checker: project.checker, options: compilerOptions };
+  };
+}
+
+/** A one-off compilation (`overlay`: files' text, read instead of the disk). */
+export function createProgram(rootFiles: string[], options: CompilerOptions = compilerOptions(), overlay?: ReadonlyMap<string, string>, packages?: PackageResolver): Checked {
+  return incrementalCompiler()(rootFiles, options, overlay, packages);
 }
 
 export interface Diagnostic {
@@ -318,21 +369,22 @@ export interface Diagnostic {
   formatted: string;
 }
 
-const formatHost: ts.FormatDiagnosticsHost = {
-  getCanonicalFileName: (f) => f,
+const formatHost = {
+  getCanonicalFileName: (f: string) => f,
   getCurrentDirectory: () => process.cwd(),
   getNewLine: () => "\n",
 };
 
 export function fileDiagnostics(program: ts.Program, sf: ts.SourceFile, ignore: number[] = [], includeGlobal = true, skip?: (d: ts.Diagnostic) => boolean): Diagnostic[] {
+  const file = sf.fileName;
   const all = [
-    ...(includeGlobal ? [...program.getOptionsDiagnostics(), ...program.getGlobalDiagnostics()] : []),
-    ...program.getSyntacticDiagnostics(sf),
-    ...program.getSemanticDiagnostics(sf),
+    ...(includeGlobal ? [...program.getProgramDiagnostics(), ...program.getGlobalDiagnostics()] : []),
+    ...program.getSyntacticDiagnostics(file),
+    ...program.getSemanticDiagnostics(file),
   ].filter((d) => !ignore.includes(d.code) && !skip?.(d));
   return all.map((d) => ({
     code: d.code,
-    message: ts.flattenDiagnosticMessageText(d.messageText, "\n"),
-    formatted: ts.formatDiagnosticsWithColorAndContext([d], formatHost),
+    message: d.text,
+    formatted: ts.formatDiagnosticsWithColorAndContext([d], formatHost as never),
   }));
 }

@@ -11,7 +11,7 @@ packages/
             #tcm/server runtime, the wire codec
 editors/    vscode/: the VS Code extension (a thin client for `tcm lsp`; not part of the npm package)
 examples/   polls/: an example app, built and run in a browser by packages/cli/test/examples.test.ts
-scripts/    build.ts (npm package), docs-site.ts, docs-dev.ts, selfhost.sh, test-package.sh, compare-ts-versions.sh
+scripts/    build.ts (npm package), docs-site.ts, docs-dev.ts, selfhost.sh, test-package.sh, compare-compilers.sh
 docs/       user documentation, one page per feature area
 ```
 
@@ -19,6 +19,13 @@ The command line is declared once, in `packages/cli/src/commands.ts`: each comma
 [@bomb.sh/router](https://bomb.sh) route tree, parsed into a typed model per command. `tcm help`, `--help`,
 usage errors and shell completion ([@bomb.sh/tab](https://bomb.sh)) are all read from those definitions, and
 prompts at a terminal use [@clack/prompts](https://bomb.sh) (`ui.ts`).
+
+TypeScript is TypeScript 7, through `packages/core/src/ts.ts`: its syntax trees (`typescript/ast`), its compiler
+process (`typescript/sync`), and the few helpers TypeScript 6 had that tcm uses. Code imports it as a namespace
+(`import * as ts from "./ts.ts"`, or `ts` from `@tcm/core`). Checker answers cross a process boundary, so
+canonicalization asks for symbols in batches (`prefetched` in `analyze.ts`). `typescript6` (an alias of
+`typescript@6`) is a dev dependency only for the VS Code TypeScript plugin's test: the plugin runs inside the
+editor's TypeScript, which is still the JavaScript one.
 
 The `#tcm/server` runtime (`packages/cli/src/server-api.ts`) is one factory function whose own source is
 written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything it uses comes in through its
@@ -29,12 +36,12 @@ written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything i
 | Command | |
 |---|---|
 | `pnpm test` | all suites: hashing invariants, frozen golden hashes, and end-to-end CLI scenarios (sync, merge, web apps in real Chrome, production, jobs, data, import) |
-| `pnpm typecheck` | typecheck the repo |
+| `pnpm typecheck` | typecheck the repo (TypeScript 7's `tsc`) |
 | `pnpm selfhost` | the self-hosting check below |
 | `pnpm test:package` | pack and install the npm package, then run every suite against the installed copy |
 | `pnpm docs:dev` | serve the docs site locally (port 4321, or the next free one), rebuilding and reloading open pages when `docs/` or `examples/` change |
 | `pnpm docs:site` | build the docs site (`docs/*.md` and the examples page) into `dist/site`; it fails on any broken link or anchor. A GitHub Actions workflow (`.github/workflows/docs.yml`) builds and deploys it to GitHub Pages on pushes to `main` |
-| `pnpm compare-ts 5.8` | re-hash the repo and the golden corpus on another TypeScript version; hashes must match |
+| `pnpm compare-compilers` | hash the repo and the golden corpus with TypeScript 7 and with [tsrs](compiler-options.md#the-compiler); hashes must match |
 
 All three of `pnpm test`, `pnpm selfhost` and `pnpm test:package` should pass before a commit.
 

@@ -36,7 +36,6 @@ export function searchByType(cb: Codebase, text: string): { variables: string[];
   cb.refreshShim();
   const q = queryShape(text, path.join(cb.lay.tcmDir, "query.ts"), cb.compilerOptions(), resolve);
   const terms = names.filter((n) => n.kind === "term");
-  cb.ensureShapes(terms.map((n) => n.hash));
   const hits = terms
     .map((n) => {
       const def = cb.store.getDef(n.hash)!;

@@ -1,4 +1,4 @@
-import ts from "typescript";
+import * as ts from "./ts.ts";
 import type { DefKind, InitKind } from "./types.ts";
 
 export class TcmError extends Error {
@@ -46,8 +46,7 @@ export interface DefSite {
   group?: number;
 }
 
-// `// ucm:` is the spelling from before the rename to tcm
-const PATH_PRAGMA = /^\/\/\s*[tu]cm:\s*path\s+(\S+)\s*$/;
+const PATH_PRAGMA = /^\/\/\s*tcm:\s*path\s+(\S+)\s*$/;
 const DOTTED = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
 
 function pathPragma(node: ts.Node, sf: ts.SourceFile): string | undefined {
@@ -144,7 +143,7 @@ function isInstantiated(ns: ts.ModuleDeclaration): boolean {
     (s) =>
       !ts.isTypeAliasDeclaration(s) &&
       !ts.isInterfaceDeclaration(s) &&
-      !(ts.isImportDeclaration(s) && s.importClause?.isTypeOnly) &&
+      !(ts.isImportDeclaration(s) && ts.isTypeOnlyImport(s.importClause)) &&
       !(ts.isModuleDeclaration(s) && !isInstantiated(s)),
   );
 }
@@ -285,9 +284,9 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
           const bind = (pattern: ts.BindingName) => {
             if (ts.isIdentifier(pattern)) return;
             for (const el of pattern.elements) {
-              if (ts.isOmittedExpression(el)) continue;
-              if (!ts.isIdentifier(el.name)) {
-                bind(el.name);
+              if (ts.isOmitted(el)) continue;
+              if (!ts.isIdentifier(el.name!)) {
+                bind(el.name!);
                 continue;
               }
               push({

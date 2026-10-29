@@ -35,6 +35,8 @@ a scratch file:
   `// tcm: transform` and are compiled by a module hook when loaded. They hash like any other syntax.
 - **Namespace imports of project modules.** `import * as ns from "./mod"` with `ns.member` is a reference to
   `member`, hashed exactly as if it had been imported by name. Using `ns` itself as a value is still refused.
+- **Modules that re-export a package.** When `./mod` has `export * from "pkg"` or `export { x } from "pkg"`,
+  `ns.x` (or `import { x } from "./mod"`) is a reference to `pkg`'s `x`, hashed as an import of it.
 - **`declare const x: unique symbol`**, the usual brand pattern, is a type-only definition. It's salted like a
   term, so two identical declarations are still two distinct symbols.
 - **Top-level `let`** is module state (a lazy cache, a config cell). It's salted, so each declaration is its

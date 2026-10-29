@@ -2,6 +2,20 @@
 
 Options never affect hashes, only what typechecks.
 
+## The compiler
+
+tcm checks code with TypeScript 7 (`typescript@7.1`, the Go compiler), through its API: one compiler process
+per tcm process, which keeps what it has parsed (the standard library, `@types/node`) from one check to the next.
+
+`TCM_TYPESCRIPT` picks another compiler that speaks the same API:
+
+- `TCM_TYPESCRIPT=tsrs` uses [tsrs](https://github.com/oxc-project/tsrs), TypeScript 7 ported to Rust. Install
+  it in the project (`npm install --save-dev tsrs`) or next to tcm.
+- `TCM_TYPESCRIPT=/path/to/binary` uses that binary (a local build of either).
+
+The compiler doesn't affect hashes: `pnpm compare-compilers` re-hashes tcm's own source with tsrs and gets the same
+hashes ([hashing](hashing.md#the-hash-format)).
+
 ## Scratch files
 
 Options come from the project's `tsconfig.json`: `lib`, strictness, `types` and so on are the project's
@@ -23,7 +37,7 @@ Without its own `types`, a project gets tcm's `@types/node`, so scratch files ty
 - no stripping requirements (`verbatimModuleSyntax`, `erasableSyntaxOnly` off), since tcm renders imports
   itself and compiles what Node can't strip;
 - emit options (`declaration`, `isolatedDeclarations`, `composite`, `outDir`, …) dropped;
-- TypeScript 6 deprecations (`baseUrl`, node10 resolution) ignored.
+- `module` ESNext and `moduleResolution` Bundler, whatever the project sets (no warning: tcm renders the imports).
 
 ## Check profiles
 

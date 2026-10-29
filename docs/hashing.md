@@ -53,15 +53,15 @@ never skipped, so two different programs can't collide.
   {}`, `(cb = () => {}) =>`). Generated code keeps these names, so `tcm mv` changes the codebase path but not
   `.name`. All other locals and parameters stay alpha-renamable.
 
-## A frozen format
+## The hash format
 
-- **The IR format is frozen at v6.** `packages/core/test/golden.test.ts` pins the hashes of a corpus that
-  covers most syntax. (v6 pins npm packages by compatible range rather than exact version; see
-  [packages](packages.md).)
-- **Hashes don't depend on the TypeScript version.** `pnpm compare-ts 5.8` re-hashes the repo and the corpus
-  on another TypeScript version: 5.8.3, 5.9.3 and 6.0.3 produce identical hashes.
-- **`tcm migrate`** rebuilds a codebase written with an older format: every stored definition is re-rendered
-  against its migrated dependencies and re-hashed.
+- **The format is versioned** (`tcm --version` says which: v1). `packages/core/test/golden.test.ts` pins the
+  hashes of a corpus that covers most syntax, so a change to them is deliberate. A codebase written with
+  another format is refused rather than mixed with this one's hashes.
+- **Hashes don't depend on the compiler or its version.** The IR visits each node's children in an order that's
+  tcm's own (`packages/core/src/slots.ts`, generated from TypeScript 7.1's), so a TypeScript release that adds
+  or reorders children changes no hash until that table does. `pnpm compare-compilers` hashes this repo and
+  the corpus with TypeScript 7 and with [tsrs](compiler-options.md#the-compiler): the hashes are identical.
 - **`tcm verify`** re-renders every live definition from the store and re-hashes it. Rendering is supposed to
   be the inverse of hashing, so any mismatch means stored source, splicing or canonicalization lost
   information. `TCM_KEEP_VERIFY=1` leaves the rendered files in `.tcm/cache` for debugging a failing re-check.

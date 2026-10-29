@@ -556,8 +556,7 @@ export function createServerApi(deps: {
       if (this.#prepared !== db) {
         const s = this.#schema();
         db.prepare("INSERT OR IGNORE INTO schemas (tbl, hash, schema, first_seen) VALUES (?, ?, ?, ?)").run(this.name, s.hash, JSON.stringify({ s: s.s, defs: s.defs }), Date.now());
-        // stored in the data file: keeps the name it had before ucm-ts became tcm
-        const id = (f: string, kind: string) => `ucm_${kind}_${this.name.replace(/[^A-Za-z0-9]/g, (c) => `_${c.charCodeAt(0).toString(16)}_`)}__${f}`;
+        const id = (f: string, kind: string) => `tcm_${kind}_${this.name.replace(/[^A-Za-z0-9]/g, (c) => `_${c.charCodeAt(0).toString(16)}_`)}__${f}`;
         for (const f of this.#index) db.exec(`CREATE INDEX IF NOT EXISTS "${id(f, "index")}" ON rows (${fieldSql(f)}) WHERE tbl = '${this.name}'`);
         for (const f of this.#unique) {
           try {

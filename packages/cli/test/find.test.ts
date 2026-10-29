@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
 
 const BIN = process.env.TCM_BIN ? path.resolve(process.env.TCM_BIN) : fileURLToPath(new URL("../bin/tcm.js", import.meta.url));
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcm find "));
@@ -57,12 +56,6 @@ export async function loadUser(id: string): Promise<User> {
   // shapes refer to types by hash: a rename doesn't lose the match
   ok("mv", "lib.User", "lib.Person");
   assert.deepEqual(found(":(p: Person) => string"), ["lib.nameOf"]);
-
-  // definitions stored without shapes get them on the first search
-  const db = new DatabaseSync(path.join(dir, ".tcm", "codebase.sqlite"));
-  db.prepare("DELETE FROM metadata WHERE key = 'shape'").run();
-  db.close();
-  assert.deepEqual(found(":(xs: T[]) => T | undefined"), ["lib.first", "lib.head"]);
 
   // a name the query can't pin down says so
   fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace other\nexport type Person = { id: string };\n`);

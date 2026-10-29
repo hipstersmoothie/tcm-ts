@@ -14,8 +14,7 @@
 // Nothing here is part of a hash: definitions record the range their imports resolved to, as always.
 import fs from "node:fs";
 import path from "node:path";
-import ts from "typescript";
-import { compareVersions, compatRange, packageNameOf, pinnedRange, scratchNamespace, type ExtRef, type PackageResolver } from "@tcm/core";
+import { compareVersions, compatRange, packageNameOf, pinnedRange, scratchNamespace, ts, type CompilerOptions, type ExtRef, type PackageResolver } from "@tcm/core";
 import { ensureExternals, newestVersion, npmAlias } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 
@@ -93,8 +92,8 @@ function rangeFor(cb: Codebase, name: string, file: string, text: string): { ran
 }
 
 /** The packages a scratch file imports: bare specifiers, and the JSX runtime for a .tsx file. */
-function importedPackages(file: string, text: string, options: ts.CompilerOptions): string[] {
-  const specs = ts.preProcessFile(text, true, true).importedFiles.map((f) => f.fileName);
+function importedPackages(file: string, text: string, options: CompilerOptions): string[] {
+  const specs = ts.parse(file, text).imports.map((n) => (n as ts.StringLiteral).text);
   if (file.endsWith(".tsx")) specs.push(`${options.jsxImportSource ?? "react"}/jsx-runtime`);
   return [...new Set(specs.flatMap((s) => packageNameOf(s) ?? []))];
 }
@@ -105,7 +104,7 @@ const EMPTY: Provided = { resolver: Object.assign(() => undefined, { key: "" }),
  * Provide the packages scratch file `file` (with text `text`) imports that the project doesn't have installed
  * at the range chosen for it: installed into the cache, and recorded for the editor in .tcm/packages.json.
  */
-export function providePackages(cb: Codebase, file: string, text: string, options: ts.CompilerOptions): Provided {
+export function providePackages(cb: Codebase, file: string, text: string, options: CompilerOptions): Provided {
   const dirs = new Map<string, string>();
   const exts: ExtRef[] = [];
   for (const name of importedPackages(file, text, options)) {
