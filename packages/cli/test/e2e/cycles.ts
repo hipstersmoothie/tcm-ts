@@ -33,3 +33,22 @@ export const testCycleUpdatedWhole = () => {
   assert.match(ok("update"), /~ update +lib\.isEven[\s\S]*~ update +lib\.isOdd/);
   assert.equal(ok("run", "lib.isOdd", "1"), "even: 0\ntrue\n");
 };
+
+/**
+ * One member of a cycle with a class is edited alone, though alone it wouldn't check: the class has private state.
+ */
+export const testClassEditedAlone = () => {
+  const dir = tempDir("cycles");
+  const ok = (...args: string[]) => okIn(dir, ...args);
+  ok("init");
+  fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace shop\nexport class Counter {\n  #n = 0;\n  bump(): number {\n    this.#n++;\n    report(this);\n    return this.#n;\n  }\n  get count(): number {\n    return this.#n;\n  }\n}\nexport function report(c: Counter): void {\n  console.log("at", c.count);\n}\n`);
+  ok("add");
+  ok("edit", "--force", "shop.Counter");
+  const file = path.join(dir, "scratch.ts");
+  assert.doesNotMatch(fs.readFileSync(file, "utf8"), /function report/);
+  fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("this.#n++;", "this.#n += 2;"));
+  assert.match(ok("update"), /with shop\.report[\s\S]*~ update +shop\.Counter[\s\S]*~ update +shop\.report/);
+  fs.writeFileSync(file, `import { Counter } from "#codebase/shop";\nexport const main = () => new Counter().bump();\n`);
+  ok("add");
+  assert.equal(ok("run", "main"), "at 2\n2\n");
+}

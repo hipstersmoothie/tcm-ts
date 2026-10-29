@@ -40,6 +40,8 @@ import { runSuites, suitesIn } from "./suites.ts";
 import { isNamespaceImport as ts_isNamespaceImport, isImportDeclaration as ts_isImportDeclaration, isStringLiteral as ts_isStringLiteral } from "typescript/ast";
 import { parse as parse_1, isTypeOnlyImport } from "../../core/src/ts.ts";
 import { declarations } from "./mirror.ts";
+import { isTypeAliasDeclaration as ts_isTypeAliasDeclaration, isInterfaceDeclaration as ts_isInterfaceDeclaration, isClassDeclaration as ts_isClassDeclaration, isFunctionDeclaration as ts_isFunctionDeclaration, isIdentifier as ts_isIdentifier, isVariableStatement as ts_isVariableStatement } from "typescript/ast";
+import { scratchNamespace } from "@tcm/core";
 
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
@@ -102,9 +104,9 @@ function printRows(rows: Row[]) {
   }
 }
 
-function analyzeScratch(cb: Codebase, file: string, into?: string) {
+function analyzeScratch(cb: Codebase, file: string, into?: string, text?: string) {
   cb.refreshShim();
-  const a = cb.analyze(file, cb.scratchSalts(into));
+  const a = cb.analyze(file, cb.scratchSalts(into), [], text === undefined ? undefined : new Map([[file, text]]));
   for (const w of a.warnings) console.log(yellow(`warning: ${w}`));
   if (a.diagnostics.length || a.errors.length) {
     for (const d of a.diagnostics) process.stdout.write(d.formatted);
@@ -134,9 +136,7 @@ function printIssue(text: string, i: LintIssue, indent = "  ") {
 }
 
 function check(cb: Codebase, file: string, into?: string, fresh = false): boolean {
-  const scratch = analyzeScratch(cb, file, into);
-  if (!scratch) return false;
-  const whole = withTheirCycles(cb, file, into, scratch);
+  const whole = withTheirCycles(cb, file, into);
   if (!whole) return false;
   const { a, rows } = whole;
   console.log(`${bold(path.basename(file))}${a.namespace || into ? dim(` → ${into ?? a.namespace}`) : ""}`);
@@ -166,9 +166,7 @@ function check(cb: Codebase, file: string, into?: string, fresh = false): boolea
 }
 
 function save(cb: Codebase, file: string, mode: "add" | "update", into?: string): boolean {
-  const scratch = analyzeScratch(cb, file, into);
-  if (!scratch) return false;
-  const whole = withTheirCycles(cb, file, into, scratch);
+  const whole = withTheirCycles(cb, file, into);
   if (!whole) return false;
   const { a, rows } = whole;
   // lint what's being saved: warnings are shown, errors (rules set to "error" in lint.config) stop the save
@@ -1512,36 +1510,53 @@ export function withCycle(cb: Codebase, file: string, text: string, members: str
 }
 
 /**
- * A scratch file's analysis with the rest of the cycles it changes: definitions that refer to each other are hashed
- * as one, so the members it doesn't hold are saved with it, as they are, against its new code (none goes on using
- * an old one). Undefined, said why, if they can't be.
+ * A scratch file analyzed with the rest of the cycles it holds members of: definitions that refer to each other
+ * are hashed as one, so the members it doesn't hold are saved with it, as they are, against its new code (none
+ * goes on using an old one). They're found from the paths it declares, before it's checked: alone, a cycle's
+ * member may not even check (a class whose others take the stored one). Undefined, said why, if it can't be.
  */
-export function withTheirCycles(cb: Codebase, file: string, into: string | undefined, a: Analysis): { a: Analysis; rows: Row[] } | undefined {
-  const rows = classify(cb, a.defs, into ?? a.namespace ?? "");
-  const here = new Set(rows.map((r) => r.path));
+export function withTheirCycles(cb: Codebase, file: string, into: string | undefined): { a: Analysis; rows: Row[] } | undefined {
+  const text = fs.readFileSync(file, "utf8");
+  const here = new Set(pathsIn(file, text, into));
   const missing = new Map<string, string>();
-  for (const r of rows) {
-    if (r.status !== "update" && r.status !== "conflict") continue;
-    for (const old of cb.store.hashesAt(r.path, r.def.kind)) {
+  for (const p of here) {
+    for (const old of cb.store.hashesAt(p)) {
       for (const m of cb.store.componentMembers(cb.store.getDef(old)!.componentHash)) {
-        const p = cb.store.pathsOf(m.hash)[0];
-        if (m.hash !== old && p && !here.has(p)) missing.set(m.hash, p);
+        const mp = cb.store.pathsOf(m.hash)[0];
+        if (m.hash !== old && mp && !here.has(mp)) missing.set(m.hash, mp);
       }
     }
   }
-  if (!missing.size) return { a, rows };
+  if (!missing.size) {
+    const a = analyzeScratch(cb, file, into);
+    return a && { a, rows: classify(cb, a.defs, into ?? a.namespace ?? "") };
+  }
   const names = [...missing.values()];
   const listed = `${names.slice(0, 5).join(", ")}${names.length > 5 ? `, and ${names.length - 5} more` : ""}`;
-  const whole = withCycle(cb, file, fs.readFileSync(file, "utf8"), [...missing.keys()]);
-  const b = "problem" in whole ? undefined : cb.analyze(file, cb.scratchSalts(into), [], new Map([[file, whole.text]]));
-  if (!b || b.errors.length || b.diagnostics.length) {
-    if (b) for (const d of b.diagnostics) process.stdout.write(d.formatted);
-    if (b) for (const e of b.errors) console.log(red(e));
-    console.log(red(`${listed}, in a cycle with what ${path.basename(file)} changes, can't be saved with it as ${names.length > 1 ? "they are" : "it is"}${"problem" in whole ? `: ${whole.problem}` : " (above)"}; \`tcm edit\` ${names.length > 1 ? "them" : "it"} too`));
+  const whole = withCycle(cb, file, text, [...missing.keys()]);
+  const b = "problem" in whole ? undefined : analyzeScratch(cb, file, into, whole.text);
+  if (!b) {
+    console.log(red(`${listed}, in a cycle with what ${path.basename(file)} holds, can't be saved with it as ${names.length > 1 ? "they are" : "it is"}${"problem" in whole ? `: ${whole.problem}` : " (above)"}; \`tcm edit\` ${names.length > 1 ? "them" : "it"} too`));
     return undefined;
   }
-  const saved = classify(cb, b.defs, into ?? b.namespace ?? "");
-  // (a member checked without the rest hashes differently: with them, it may be as it was)
-  if (saved.some((r) => r.status !== "identical")) console.log(dim(`with ${listed}: in a cycle with what changed, so saved with it, as ${names.length > 1 ? "they are" : "it is"}`));
-  return { a: b, rows: saved };
+  const rows = classify(cb, b.defs, into ?? b.namespace ?? "");
+  if (rows.some((r) => r.status !== "identical")) console.log(dim(`with ${listed}: in a cycle with what changed, so saved with it, as ${names.length > 1 ? "they are" : "it is"}`));
+  return { a: b, rows };
+}
+
+/**
+ * The codebase paths a scratch file's declarations go to: its namespace and their names, or a `// tcm: path`.
+ */
+export function pathsIn(file: string, text: string, into: string | undefined): string[] {
+  const ns = into ?? scratchNamespace(text) ?? "";
+  const out: string[] = [];
+  for (const st of parse_1(file, text).statements) {
+    const pragma = /\/\/\s*tcm:\s*path\s+(\S+)/.exec(text.slice(st.pos, st.getStart()))?.[1];
+    const names = ts_isVariableStatement(st)
+      ? st.declarationList.declarations.flatMap((d) => (ts_isIdentifier(d.name) ? [d.name.text] : []))
+      : (ts_isFunctionDeclaration(st) || ts_isClassDeclaration(st) || ts_isInterfaceDeclaration(st) || ts_isTypeAliasDeclaration(st)) && st.name ? [st.name.text] : [];
+    if (pragma && names.length) out.push(pragma);
+    else for (const n of names) out.push(joinName(ns, n));
+  }
+  return out;
 }
