@@ -63,17 +63,37 @@ test("a mirror: edits, additions, removals and renames made in tcm are written b
   assert.doesNotMatch(read("src/math.ts"), /unused/);
   assert.match(tcm("mirror", "--check"), /the files hash to what the codebase holds/);
 
-  // a file changed by hand isn't overwritten: write-back waits until it's imported again
+  // files changed outside tcm (by hand, a git pull or checkout) are imported before the next command
   put("src/use.ts", read("src/use.ts") + "export const ten = () => 10;\n");
   fs.writeFileSync(scratch, `// tcm: namespace calc.math\nexport const half = (x: number) => x / 2;\n`);
-  assert.match(tcm("add"), /mirror: src\/use\.ts changed since tcm last saw it/);
-  assert.doesNotMatch(read("src/math.ts"), /half/);
-  tcm("import", project, "--into", "calc", "--update");
-  assert.match(tcm("ls", "calc.use"), /calc\.use\.ten/, "the hand edit is in the codebase");
+  assert.match(tcm("add"), /mirror: src\/use\.ts changed outside tcm; importing it[\s\S]*\+ new 1/);
+  assert.match(tcm("ls", "calc.use"), /calc\.use\.ten/, "the edit is in the codebase");
+  assert.match(read("src/math.ts"), /export const half/, "and the command's change is in the files");
+  // a definition gone from the files goes from the codebase
+  put("src/use.ts", read("src/use.ts").replace("export const ten = () => 10;\n", ""));
+  const gone = tcm("ls", "calc.use");
+  assert.match(gone, /- removed +calc\.use\.ten \(gone from the files\)/);
+  assert.doesNotMatch(gone, /^calc\.use\.ten/m);
+  // files that don't import yet (an edit half made) wait, and so does writing back to them; what the codebase
+  // changed meanwhile is written once they import
+  put("src/use.ts", read("src/use.ts") + "export const eleven = () => 11 +;\n");
   fs.writeFileSync(scratch, `// tcm: namespace calc.math\nexport const halve = (x: number) => x / 2;\n`);
-  tcm("add");
-  assert.match(read("src/math.ts"), /export const halve/, "and write-back resumes");
+  const waiting = tcm("add");
+  assert.match(waiting, /TS1109: Expression expected[\s\S]*nothing was imported/);
+  assert.match(waiting, /mirror: src\/use\.ts changed outside tcm and doesn't import yet/);
+  assert.doesNotMatch(read("src/math.ts"), /halve/);
+  fs.writeFileSync(scratch, `// tcm: namespace calc.use\nexport const nine = () => 9;\n`);
+  tcm("update");
+  put("src/use.ts", read("src/use.ts").replace("11 +;", "11;"));
+  assert.match(tcm("ls", "calc.use"), /calc\.use\.eleven/);
+  assert.match(read("src/math.ts"), /export const halve/, "write-back resumes");
+  assert.match(read("src/use.ts"), /export const nine = \(\) => 9;\nexport const eleven = \(\) => 11;\n$/, "with the codebase's change to a definition the files hadn't changed");
   assert.match(tcm("mirror", "--check"), /the files hash to what the codebase holds/);
+  // what importing them says goes to stderr: a command's output is its own
+  put("src/use.ts", read("src/use.ts").replace("() => 11", "() => 12"));
+  const ran = spawnSync(process.execPath, [BIN, "run", "calc.use.eleven"], { cwd: dir, encoding: "utf8", env });
+  assert.equal(ran.stdout, "12\n");
+  assert.match(ran.stderr, /mirror: src\/use\.ts changed outside tcm; importing it/);
 
   // an import a change stops using goes with it
   assert.match(read("src/math.ts"), /^import fs from "node:fs";$/m);

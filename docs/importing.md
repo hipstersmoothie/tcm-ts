@@ -44,10 +44,22 @@ and the rest of each file stays as written (comments, import style, barrels):
   so a scratch file's spellings (`import nodePath from "node:path"`) don't reach the files later.
 
 After writing, the files are analyzed again and must hash to what the codebase holds; if they don't, they're put
-back as they were and tcm says why. A file changed by hand since tcm last saw it isn't overwritten: write-back
-waits until the directory is imported again (`tcm import <dir> --into ns --update`), which takes the hand edits
-and links the mirror again. `tcm mirror --check` compares the files and the codebase; `tcm mirror --unlink` stops
-writing back.
+back as they were and tcm says why. When nothing's text changed (an update re-hashed dependents only), there's
+nothing to check.
+
+The files can change outside tcm too: edited by hand, or by git (a pull, a checkout, a stash). Each command
+imports what changed before it runs, so it sees the files as they are:
+
+- **A definition changed in the files** is updated in the codebase, as `tcm import --update` would.
+- **One gone from the files** goes from the codebase.
+- **One the files haven't changed** stays as the codebase has it, even if the codebase changed it meanwhile; that
+  change is then written to the files. A definition changed in both keeps the files' change, and tcm says so.
+- **Files that don't import yet** (an edit half made) wait: the command runs without them, and nothing's written
+  to them until they import.
+
+What importing them says goes to stderr, so a command's output (`tcm run`) is its own. `tcm import <dir> --into
+ns --update` does the same by hand. `tcm mirror --check` compares the files and the codebase; `tcm mirror
+--unlink` stops writing back.
 
 ## Verified projects
 

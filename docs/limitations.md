@@ -15,7 +15,8 @@ What isn't done yet, or is deliberately out of scope:
   `import x = require()`, decorators and top-level statements.
 - **Mirrors don't check the files near them.** A rename reaches files outside the mirror that use the name (scripts,
   an editor extension), but only the mirror's files are checked against the codebase afterwards. A definition
-  declared alongside others in one statement (`const a = 1, b = 2`) is edited by hand.
+  declared alongside others in one statement (`const a = 1, b = 2`) is edited by hand. Files changed outside tcm
+  are imported before each command, but not by `tcm watch` or the language server while they run.
 - **Adding the same code at two paths creates two definitions** (lineage salts, see
   [hashing](hashing.md#identity)). To share one definition under two names, use `tcm alias`.
 - **TypeScript 7.1 is a beta.** tcm checks code with `typescript@7.1.0-beta` ([the compiler](compiler-options.md#the-compiler)).

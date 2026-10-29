@@ -54,7 +54,7 @@ const GUIDE: Record<string, string> = {
   mirrors: `# Mirrors
 
 - A codebase can mirror a directory of source files (tcm_cli ["import", "<dir>", "--into", "<ns>", "--mirror"]): changes made in tcm are written back to those files as edits, so git and other editors see them. A new namespace gets a file; a rename reaches files near the mirror that use the name (scripts, tests). tcm_status says whether there's one.
-- With a mirror you can also edit its files directly, then import them: tcm_cli ["import", "<dir>", "--into", "<ns>", "--update"] (plus "--tests" if the codebase has the tests). A file changed by hand isn't overwritten by tcm until it's imported.
+- With a mirror you can also edit its files directly (or git can: a pull, a checkout): the next tool call imports what changed first, definitions removed from the files included. A file that doesn't import yet (an edit half made) isn't written to until it does.
 - Releases of a mirrored codebase are recorded with its files (tcm-releases.json) and need the files committed first.`,
   troubleshooting: `# When something goes wrong
 
@@ -63,7 +63,7 @@ const GUIDE: Record<string, string> = {
 - A test passes from cache but you changed something outside the codebase (a file, the network): tcm_test with fresh: true.
 - tcm_cli ["verify"] re-renders and re-hashes everything; it must report the identity.
 - tcm_cli ["help"] lists every command; tcm_cli ["<command>", "--help"] explains one.`,
-};
+}
 
 interface Tool {
   name: string;

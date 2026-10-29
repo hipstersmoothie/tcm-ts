@@ -70,8 +70,9 @@ pnpm tcm test tcmts                            # the tests the change reaches, t
 Agents work on tcm the same way: the repository's `.mcp.json` runs [`tcm mcp`](agents.md) on this codebase
 (`pnpm tcm mcp`), so an MCP client opened in the repository gets tcm's tools and instructions.
 
-Editing `packages/` directly still works: `pnpm tcm import ../packages --into tcmts --tests --update` takes the
-edits (and links the mirror again). Delete `codebase/` to start over from `packages/`.
+Editing `packages/` directly still works, and so do git's changes to it (a pull, a checkout): the next
+`pnpm tcm` command imports what changed first. tcm runs from `packages/` itself, so a checkout changes the tcm
+that's running too. Delete `codebase/` to start over from `packages/`.
 
 ## Self-hosting
 

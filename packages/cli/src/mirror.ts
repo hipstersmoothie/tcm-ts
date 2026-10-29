@@ -91,8 +91,12 @@ function namesIn(cb: Codebase, ns: string): Record<string, string> {
   return out;
 }
 
-/** Record that `into` mirrors `dir`: each file's namespace, content and definitions as they are now. */
-export function linkMirror(cb: Codebase, dir: string, into: string, tests: boolean, exclude: string[]) {
+/**
+ * Record that `into` mirrors `dir`: each file's namespace, content and definitions as they are now. Following the
+ * files, it records what they hold (`held`, by path) as of the log they were last written at, so what the codebase
+ * changed meanwhile is written to them at the next sync.
+ */
+export function linkMirror(cb: Codebase, dir: string, into: string, tests: boolean, exclude: string[], following?: { log: number; held: Map<string, string> }) {
   const root = path.resolve(dir);
   const files: Record<string, MirrorFile> = {};
   for (const f of sourceFiles(root, new Set(exclude.map((e) => path.resolve(root, e))), tests)) {
@@ -101,10 +105,10 @@ export function linkMirror(cb: Codebase, dir: string, into: string, tests: boole
     // what the file declares (the codebase may have more, made while write-back waited: written at the next sync)
     const inCodebase = namesIn(cb, ns);
     const names: Record<string, string> = {};
-    for (const leaf of declarations(f, text).keys()) if (inCodebase[leaf]) names[leaf] = inCodebase[leaf];
+    for (const leaf of declarations(f, text).keys()) if (inCodebase[leaf]) names[leaf] = following?.held.get(joinName(ns, leaf)) ?? inCodebase[leaf];
     files[path.relative(root, f)] = { ns, sha: sha(text), names };
   }
-  saveMirror(cb, { dir: root, into, tests, exclude, log: cb.store.logHead(), files });
+  saveMirror(cb, { dir: root, into, tests, exclude, log: following?.log ?? cb.store.logHead(), files });
 }
 
 // ---- writing back ---------------------------------------------------------------------------------------
@@ -331,7 +335,7 @@ export function syncMirror(cb: Codebase): boolean {
   // never overwrite a hand edit: until the file is imported again, the mirror waits
   const handEdited = Object.entries(m.files).filter(([rel, f]) => !fs.existsSync(abs(rel)) || sha(fs.readFileSync(abs(rel), "utf8")) !== f.sha);
   if (handEdited.length) {
-    console.log(yellow(`mirror: ${handEdited.map(([rel]) => rel).slice(0, 3).join(", ")}${handEdited.length > 3 ? ", …" : ""} changed since tcm last saw ${handEdited.length > 1 ? "them" : "it"}; import ${path.relative(process.cwd(), m.dir) || "."} with \`tcm import ${path.relative(process.cwd(), m.dir) || "."} --into ${m.into} --update\` to write the codebase's changes back`));
+    console.log(yellow(`mirror: ${handEdited.map(([rel]) => rel).slice(0, 3).join(", ")}${handEdited.length > 3 ? ", …" : ""} changed outside tcm and ${handEdited.length > 1 ? "don't" : "doesn't"} import yet; the codebase's changes are written to the files once they do (at the next command)`));
     return false;
   }
   const untouched = untextual(cb, m.log);
@@ -448,7 +452,9 @@ export function syncMirror(cb: Codebase): boolean {
     for (const rel of created) fs.rmSync(abs(rel), { force: true });
     for (const [file, text] of outside) fs.writeFileSync(file, text);
   };
-  if (!problems.length) {
+  // nothing written (the codebase's changes left the text alone): the files are as they were
+  const wrote = created.length > 0 || outside.size > 0 || [...before].some(([rel, text]) => fs.readFileSync(abs(rel), "utf8") !== text);
+  if (!problems.length && wrote) {
     // the files must hash to what the codebase holds; a renamed function or class doesn't until the codebase takes
     // the renamed code
     const mismatch = checkMirror(cb, m, true);
@@ -748,5 +754,18 @@ export function nearbyFiles(m: Mirror, names: string[]): string[] {
     }
   };
   walk(top);
+  return out;
+}
+
+/**
+ * The mirror's files changed since tcm last wrote or read them (by hand, or by git: a pull, a checkout), or added or removed.
+ */
+export function changedFiles(m: Mirror): string[] {
+  const out = Object.entries(m.files)
+    .filter(([rel, f]) => !fs.existsSync(path.join(m.dir, rel)) || sha(fs.readFileSync(path.join(m.dir, rel), "utf8")) !== f.sha)
+    .map(([rel]) => rel);
+  for (const f of sourceFiles(m.dir, new Set(m.exclude.map((e) => path.resolve(m.dir, e))), m.tests)) {
+    if (!(path.relative(m.dir, f) in m.files)) out.push(path.relative(m.dir, f));
+  }
   return out;
 }

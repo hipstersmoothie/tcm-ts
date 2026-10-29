@@ -33,6 +33,9 @@ import { commands, root } from "./commands.ts";
 import { helpText, suggest, usageError } from "./help.ts";
 import { complete } from "./complete.ts";
 import { ask, choose, chooseName, confirm, interactive, intro, outro, showInstallProgress, success, UsageError } from "./ui.ts";
+import { syncMirror } from "./mirror.ts";
+import type { Mirror } from "./mirror.ts";
+import { changedFiles } from "./mirror.ts";
 
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
@@ -321,10 +324,13 @@ function data(cb: Codebase, table?: string, limit = 20) {
 
 function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: string, verbose: boolean, exclude: string[], tests: boolean, mirror: boolean): boolean {
   const root = path.resolve(dir);
-  // importing the mirrored directory again (after editing its files) re-links it rather than writing back to it
+  // importing the mirrored directory again (its files changed outside tcm) follows the files, and re-links it
+  // rather than writing back to it
   const linked = loadMirror(cb);
-  const relink = mirror || linked?.dir === root;
+  const following = !mirror && linked?.dir === root ? linked : undefined;
+  const relink = mirror || !!following;
   if (relink) cb.syncsMirror = false;
+  let ok = false;
   try {
     // linking a mirror into a codebase: its releases, kept with its files in git, are made again first
     let made = 0;
@@ -332,24 +338,33 @@ function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: 
       made = replayReleases(
         cb,
         root,
-        (at, label) => importFiles(cb, at, label, "update", into, false, exclude, tests),
+        (at, label) => !!importFiles(cb, at, label, "update", into, false, exclude, tests),
         (pkg) => packagesIn(cb, cb.store.names()).find((p) => p.name === pkg)?.namespace,
       );
       if (made) console.log(dim(`made ${made} release${made > 1 ? "s" : ""} again from git`));
     }
     // after the releases, the files as they are now are an update of the last one
-    const ok = importFiles(cb, root, dir, made ? "update" : mode, into, verbose, exclude, tests);
-    if (ok && relink) {
-      linkMirror(cb, root, into, tests, exclude);
+    const held = importFiles(cb, root, dir, made ? "update" : mode, into, verbose, exclude, tests, following);
+    ok = !!held;
+    if (held && relink) {
+      linkMirror(cb, root, into, tests, exclude, following && { log: following.log, held });
       if (mirror) console.log(dim(`mirror: changes made in tcm under ${into || "the root namespace"} are written back to ${dir}`));
     }
-    return ok;
   } finally {
     cb.syncsMirror = true;
   }
+  // what the codebase changed while the files did (write-back waited for them) is written to them now
+  if (ok && following) syncMirror(cb);
+  return ok;
 }
 
-function importFiles(cb: Codebase, root: string, dir: string, mode: "add" | "update", into: string, verbose: boolean, exclude: string[], tests: boolean): boolean {
+/**
+ * Import the files under `root`: the hash of each definition's code in them, by path, or undefined if they don't
+ * import. Following a mirror's files, a definition they haven't changed since tcm last saw them stays as the
+ * codebase has it (it may have changed it while write-back waited), and one gone from the files goes from the
+ * codebase.
+ */
+function importFiles(cb: Codebase, root: string, dir: string, mode: "add" | "update", into: string, verbose: boolean, exclude: string[], tests: boolean, following?: Mirror): Map<string, string> | undefined {
   const files = sourceFiles(root, new Set(exclude.map((e) => path.resolve(root, e))), tests);
   if (!files.length) throw new UsageError(`no .ts files under ${dir}`);
   console.log(dim(`analyzing ${files.length} files under ${dir}…`));
@@ -360,12 +375,28 @@ function importFiles(cb: Codebase, root: string, dir: string, mode: "add" | "upd
     for (const d of a.diagnostics) process.stdout.write(d.formatted);
     for (const e of a.errors) console.log(red(e));
     console.log(red(`\n${a.errors.length + a.diagnostics.length} problem(s); nothing was imported.`));
-    return false;
+    return undefined;
   }
   const planned = a.defs.map((def) => ({ def, path: joinName(into, namespaceForFile(root, def.file), def.nameHint) }));
   checkDistinct(planned, (p) => `${p.path} is defined in more than one file (one of them is ${p.def.file})`);
   cb.lockPackages(a.packages);
-  return apply(cb, classifyPaths(cb, planned), mode, `import ${dir}`, !verbose);
+  const held = new Map(planned.map((p) => [p.path, p.def.hash]));
+  if (!following) return apply(cb, classifyPaths(cb, planned), mode, `import ${dir}`, !verbose) ? held : undefined;
+  const was = new Map<string, string>();
+  for (const f of Object.values(following.files)) for (const [leaf, h] of Object.entries(f.names)) was.set(joinName(f.ns, leaf), h);
+  const changed = planned.filter((p) => was.get(p.path) !== p.def.hash);
+  for (const p of changed) {
+    const w = was.get(p.path);
+    if (w && !cb.store.hashesAt(p.path, p.def.kind).includes(w)) console.log(yellow(`  ! ${p.path} changed in the files and in the codebase; the files' change is kept`));
+  }
+  const gone = [...was].filter(([p, h]) => !held.has(p) && cb.store.hashesAt(p).includes(h));
+  if (!changed.length && !gone.length) console.log(dim("nothing to do"));
+  const ok = !changed.length || apply(cb, classifyPaths(cb, changed), mode, `import ${dir}`, !verbose);
+  for (const [p, h] of gone) {
+    cb.store.removeName(p, h, `import ${dir}`);
+    console.log(`${red("  - removed  ")} ${bold(p)} ${dim("(gone from the files)")}`);
+  }
+  return ok ? held : undefined;
 }
 
 function verify(cb: Codebase): boolean {
@@ -801,6 +832,9 @@ square(12);
   execute(cmd, (parse as (definition: unknown, input: { argv: string[] }) => { ok: boolean })(commands[cmd], { argv: rest }));
   const cb = Codebase.find(cwd);
   cb.adoptMirror = (m) => importProject(cb, m.dir, "update", m.into, false, m.exclude, m.tests, false);
+  // a mirror's files changed outside tcm come in first (importing them is the command's job, and checking them
+  // against the codebase `mirror --check`'s)
+  if (cmd !== "import" && cmd !== "mirror") followMirror(cb);
   switch (cmd) {
     case "watch": {
       const { model } = execute(cmd, parse(commands.watch, { argv: rest }));
@@ -1335,5 +1369,27 @@ export async function runCli(...argv: string[]): Promise<void> {
       if (process.env.TCM_DEBUG) console.error(e.stack);
     } else throw e;
     process.exitCode = 1;
+  }
+}
+
+/**
+ * Before a command: a mirror's files changed outside tcm (by hand, a git pull or checkout) are imported first, so
+ * the command sees them. Files that don't import yet (an edit half made) wait, and so does writing back to them.
+ * What it says goes to stderr: a command's output is its own.
+ */
+export function followMirror(cb: Codebase) {
+  const m = loadMirror(cb);
+  const changed = m ? changedFiles(m) : [];
+  if (!m || !changed.length) return;
+  const log = console.log;
+  const write = process.stdout.write;
+  console.log = console.error;
+  process.stdout.write = process.stderr.write.bind(process.stderr) as typeof process.stdout.write;
+  try {
+    console.log(dim(`mirror: ${changed.slice(0, 3).join(", ")}${changed.length > 3 ? `, and ${changed.length - 3} more,` : ""} changed outside tcm; importing ${changed.length > 1 ? "them" : "it"}`));
+    importProject(cb, m.dir, "update", m.into, false, m.exclude, m.tests, false);
+  } finally {
+    console.log = log;
+    process.stdout.write = write;
   }
 }
