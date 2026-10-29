@@ -58,10 +58,6 @@ export const testGreets = () => {
   definitions executed, and the result holds until the test changes, or the code of one of those definitions
   does. A definition it didn't run can change without running it again, though everything using it is
   re-hashed: that changes no code the test ran. Values computed when a module loads count as run.
-- **While tests are kept in files,** an entry with a `/` or `*` is a glob of test files instead (relative to the
-  codebase root), each run with `node --test` and cached the same way, by its content and the code it ran. A
-  `<name>.test.ts` beside a `<name>.ts` registers that file's test definitions with another runner (below), so it
-  isn't one.
 
 tcm's own end-to-end tests are its suites (`tcmts.cli.test.e2e`): a change to the mirror's code runs the tests
 that used a mirror again, and leaves the rest cached.

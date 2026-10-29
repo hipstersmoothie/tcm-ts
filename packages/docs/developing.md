@@ -11,8 +11,8 @@ packages/
             #tcm/server runtime, the wire codec
 editors/    vscode/: the VS Code extension (a thin client for `tcm lsp`; not part of the npm package)
 examples/   polls/: an example app, built and run in a browser by packages/cli/test/e2e/examples.ts
-scripts/    codebase.sh (`pnpm tcm`), docs-site.ts, docs-dev.ts, compare-compilers.sh (verifying is a definition: packages/dev.ts)
-docs/       user documentation, one page per feature area
+scripts/    codebase.sh (`pnpm tcm`), compare-compilers.sh (verifying and the docs site are definitions: packages/dev.ts)
+packages/docs/  user documentation, one page per feature area: files of tcm's codebase (tcmts.docs)
 ```
 
 The command line is declared once, in `packages/cli/src/commands.ts`: each command's arguments and options as a
@@ -38,8 +38,8 @@ written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything i
 | `pnpm verify` | everything a commit needs, from tcm's codebase ([below](#verifying-a-change)); names failing tests. When all pass, the package tested becomes the [known-good tcm](#the-known-good-tcm) |
 | `pnpm test` | every test from source with `node:test`, through the runners beside them: hashing invariants, frozen golden hashes, and end-to-end CLI scenarios (sync, merge, web apps in real Chrome, production, jobs, data, import) |
 | `pnpm typecheck` | typecheck the repo (TypeScript 7's `tsc`) |
-| `pnpm docs:dev` | serve the docs site locally (port 4321, or the next free one), rebuilding and reloading open pages when `docs/` or `examples/` change |
-| `pnpm docs:site` | build the docs site (`docs/*.md` and the examples page) into `dist/site`; it fails on any broken link or anchor. A GitHub Actions workflow (`.github/workflows/docs.yml`) builds and deploys it to GitHub Pages on pushes to `main` |
+| `pnpm docs:dev` | serve the docs site locally (port 4321, or the next free one), building it again and reloading open pages when a page or `examples/` changes |
+| `pnpm docs:site` | build the docs site (`tcmts.docs`, from the codebase, and the examples page) into `dist/site`; it fails on any broken link or anchor. A GitHub Actions workflow (`.github/workflows/docs.yml`) builds and deploys it to GitHub Pages on pushes to `main` |
 | `pnpm compare-compilers` | hash the repo with TypeScript 7 and with [tsrs](compiler-options.md#the-compiler), and run the golden test with tsrs; hashes must match |
 
 `pnpm verify` should pass before a commit: it checks the codebase, its tests against its own tcm, and the
@@ -95,7 +95,8 @@ the codebase's own tcm, which `tcm run` gives it as `TCM_BIN`. It checks, printi
 2. **files**, while the codebase is mirrored to `packages/`: the files hash to what it holds (`tcm mirror
    --check`: the fixed point, this tcm reading its own source as the codebase it is), and typecheck (`tsc`);
 3. **tests**: `tcm test tcmts`, the test definitions and the end-to-end tests, each run against this tcm;
-4. **package**: the `tcm-ts` package packed from the codebase installs (into `dist/candidate`), works far from
+4. **docs**: the docs site builds from the codebase's pages, every link and anchor resolving;
+5. **package**: the `tcm-ts` package packed from the codebase installs (into `dist/candidate`), works far from
    the repository (it makes a codebase in a temporary directory), and passes the end-to-end tests too
    (`tcm test --bin tcm=<it>`).
 

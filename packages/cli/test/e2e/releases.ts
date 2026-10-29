@@ -130,9 +130,9 @@ export const testSemverChecks = () => {
 
 /** every semver lint is documented */
 export const testSemverLintsDocumented = () => {
-  const docs = fs.readFileSync(repoPath("docs/releases.md"), "utf8");
+  const docs = fs.readFileSync(repoPath("packages/docs/releases.md"), "utf8");
   for (const [id, l] of Object.entries(LINTS)) assert.ok(docs.includes(`| \`${id}\` | ${l.level} |`), `${id} is in docs/releases.md`);
-};
+}
 
 /** packages depend on each other through their releases */
 export const testPackagesDependThroughReleases = () => {

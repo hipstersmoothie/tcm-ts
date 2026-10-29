@@ -12,8 +12,8 @@
     "verify": "sh scripts/codebase.sh run tcmts.dev.verify",
     "compare-compilers": "scripts/compare-compilers.sh",
     "build": "sh scripts/codebase.sh pack tcm-ts --out ../dist/package",
-    "docs:site": "node scripts/docs-site.ts",
-    "docs:dev": "node scripts/docs-dev.ts"
+    "docs:site": "sh scripts/codebase.sh run tcmts.dev.site",
+    "docs:dev": "sh scripts/codebase.sh run tcmts.dev.siteDev"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -55,4 +55,4 @@ file. `square` itself is now in the codebase, and any other file can use it with
 - [Install](getting-started.md) tcm-ts and set up a codebase.
 - Follow the tutorial, [your first codebase](tutorial-codebase.md), about fifteen minutes.
 - Or build [a small web app](tutorial-app.md) and see the server and browser parts fit together.
-- Look at the [polls example](../examples/README.md), a complete app that uses most of tcm's features.
+- Look at the [polls example](../../examples/README.md), a complete app that uses most of tcm's features.

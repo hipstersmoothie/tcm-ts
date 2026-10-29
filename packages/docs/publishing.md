@@ -62,7 +62,7 @@ package along. A `manifest` at the root makes the whole codebase one package.
 | `exports` | subpath (`"."`, `"./ui"`) → names under the namespace whose definitions it exports (`""` is all of it). Default `{ ".": "" }` |
 | `bin` | command → the definition it runs |
 | `with` | packages the code needs but doesn't import, like `@types/node@^24` |
-| `files` | files to copy in, relative to the codebase root (a README, a licence) |
+| `files` | files to copy in: paths relative to the codebase root (a README, a licence), or namespaces of the codebase's [files](pages.md), relative to the package's, written out under their last name (`docs` is `docs/`) |
 | `suites` | command → namespaces of test definitions that run it, relative to the package's: `tcm test` runs them as programs ([suites](testing.md#suites-testing-a-command-as-a-program)). Not packed |
 | `description` | defaults to the first paragraph of the manifest's doc comment |
 

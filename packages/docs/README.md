@@ -14,7 +14,7 @@ New here? Read the [introduction](introduction.md), then follow [your first code
 | [Install](getting-started.md) | getting `tcm`, making a codebase, setting up your editor |
 | [Tutorial: first codebase](tutorial-codebase.md) | write, add, change, rename, undo, test and document code (15 minutes) |
 | [Tutorial: first app](tutorial-app.md) | a web app with a database, server and browser code, no API layer (10 minutes) |
-| [Examples](../examples/README.md) | a live polling app, a React notes app with server components, and packages with releases and changelogs |
+| [Examples](../../examples/README.md) | a live polling app, a React notes app with server components, and packages with releases and changelogs |
 
 ## Guides
 
@@ -27,6 +27,7 @@ New here? Read the [introduction](introduction.md), then follow [your first code
 | [Debugging](debugging.md) | stack traces and breakpoints in the code you read, not generated modules |
 | [Formatting](formatting.md) | oxfmt with nothing to set up; restyling stored code without changing a hash |
 | [Writing docs](documentation.md) | doc comments with links and runnable examples that follow your code |
+| [Pages and files](pages.md) | Markdown pages, stylesheets and images kept in the codebase, their links following renames |
 | [Finding code](search.md) | by name, and by type |
 | [Importing a project](importing.md) | bringing an existing TypeScript project into a codebase |
 | [History and branches](history.md) | diffs, undo, branches and merging |
@@ -62,4 +63,4 @@ New here? Read the [introduction](introduction.md), then follow [your first code
 | [Limitations](limitations.md) | what isn't done yet |
 
 These pages describe what the code does now; they're updated in the same change as the feature they describe
-(see [AGENTS.md](../AGENTS.md)).
+(see [AGENTS.md](../../AGENTS.md)).

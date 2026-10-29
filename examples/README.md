@@ -18,7 +18,7 @@ A small app that uses most of what tcm does, with no annotations saying what run
 | [`ui.ts`](polls/ui.ts) | browser code calling the server like local functions, including `for await` over the live stream |
 | [`playground.ts`](polls/playground.ts) | the scratch file you start with: watch expressions over the model, and a definition to change |
 
-Its definitions are documented the [tcm way](../docs/documentation.md): links, and examples that are evaluated
+Its definitions are documented the [tcm way](../packages/docs/documentation.md): links, and examples that are evaluated
 (`tcm docs polls.chart`), and `polls.README` is the namespace's front page.
 
 `setup.sh` adds the three files to a new codebase and then deletes them: from then on the code lives in the
@@ -36,7 +36,7 @@ cd /tmp/notes && tcm dev notes.App      # or ▶ Start in VS Code's Apps view
 ```
 
 A notes app in the style of React's Server Components demo, without a single `"use client"` or `"use server"`.
-tcm infers where each component renders from what it uses ([React](../docs/react.md)):
+tcm infers where each component renders from what it uses ([React](../packages/docs/react.md)):
 
 | file | what it shows |
 |---|---|
@@ -61,7 +61,7 @@ code /tmp/geometry                         # the Releases view, release-geo.md, 
 ```
 
 One codebase holding two npm packages: `geo`, a geometry library, and `atlas`, a command built on it. Each is
-a namespace with a `manifest` ([publishing](../docs/publishing.md)). `setup.sh` gives them a history, step by
+a namespace with a `manifest` ([publishing](../packages/docs/publishing.md)). `setup.sh` gives them a history, step by
 step, printing each:
 
 | step | what it shows |
@@ -69,14 +69,14 @@ step, printing each:
 | [`geo.ts`](geometry/geo.ts), [`atlas.ts`](geometry/atlas.ts) | two packages in one codebase, one using the other; documented, with tests, and a command (`atlas 0,0 3,4`) |
 | `tcm release geo@1.0.0 --notes …` | first releases, declared stable, with a summary each ([`notes/`](geometry/notes)); tcm writes the rest of the notes |
 | [`steps/1.1-geo.ts`](geometry/steps/1.1-geo.ts) | a new definition and an optional parameter: additions, so `tcm release geo` makes it 1.1.0 by itself |
-| [`steps/hexagons.ts`](geometry/steps/hexagons.ts) | a [contribution](../docs/contributions.md), proposed on a branch, commented on and merged through a hub (another codebase, `.hub`); a new case of `Shape` is breaking, so it's geo 2.0.0, and its notes name the contribution |
+| [`steps/hexagons.ts`](geometry/steps/hexagons.ts) | a [contribution](../packages/docs/contributions.md), proposed on a branch, commented on and merged through a hub (another codebase, `.hub`); a new case of `Shape` is breaking, so it's geo 2.0.0, and its notes name the contribution |
 | [`steps/next.ts`](geometry/steps/next.ts) | an unreleased change, and a draft of its notes (`release-geo.md`) for you to write and release |
 | [`playground.ts`](geometry/playground.ts) | the scratch file: watch expressions over both packages |
 
 Then:
 
 - `tcm releases`, `tcm changelog geo`: the releases, and a changelog nobody wrote by hand
-  ([releases](../docs/releases.md)).
+  ([releases](../packages/docs/releases.md)).
 - `tcm release check geo`: what geo's next release would be (2.1.0, additions), and the semver findings why.
 - `tcm pack atlas@1.1.0`: an npm package of atlas 1.1, which depends on `geo ^1.1.0` (the first geo with what it
   uses) rather than carrying a copy.

@@ -170,7 +170,7 @@ import { Markdown } from "#codebase/notes";
 renderToStaticMarkup(<Markdown text="**hi**" />);    // ⧩ '<div class="markdown"><p><strong>hi</strong></p></div>'
 ```
 
-The [notes example](../examples/README.md#notes-react-server-components) is a complete app: a sidebar and
+The [notes example](../../examples/README.md#notes-react-server-components) is a complete app: a sidebar and
 note page rendered on the server, an editor with a live preview in the browser, and search.
 
 ## Contexts

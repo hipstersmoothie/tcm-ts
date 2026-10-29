@@ -1,10 +1,10 @@
-# Builds the docs site (docs/*.md and the examples page) and deploys it to GitHub Pages.
+# Builds the docs site (tcm's docs pages, from its codebase, and the examples page) and deploys it to GitHub Pages.
 name: docs
 
 on:
   push:
     branches: [main]
-    paths: ["docs/**", "examples/**", "scripts/docs-site.ts", "package.json", "pnpm-lock.yaml", ".github/workflows/docs.yml"]
+    paths: ["packages/docs/**", "packages/dev.ts", "examples/**", "package.json", "pnpm-lock.yaml", ".github/workflows/docs.yml"]
   workflow_dispatch:
 
 permissions:
@@ -29,8 +29,9 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # fails on any broken link or anchor
-      - run: node scripts/docs-site.ts dist/site
+      # makes tcm's codebase from packages/ (the first `pnpm tcm`), then builds the site from it; fails on any
+      # broken link or anchor
+      - run: pnpm docs:site "$PWD/dist/site"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist/site

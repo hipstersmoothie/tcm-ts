@@ -44,6 +44,9 @@ and the rest of each file stays as written (comments, import style, barrels):
   mirror; the file it left imports it if its code still uses it, and the file it went to stops. Moved and renamed
   at once, it's moved, then renamed like any rename. A namespace import (`math.half`) can't follow: tcm says so,
   and the files stay as they were.
+- **Files that aren't code or configuration** (Markdown, CSS, images) are [files of the codebase](pages.md), named
+  by their directory's namespace and their own name, and written back as they change. JSON, YAML and TOML are left
+  alone: they're the project's configuration.
 - **Dependents re-hashed** by an update, and packages upgraded, don't change any text: their files stay as they are.
 - **The files' style is kept:** a mirrored codebase stores code as written (not reformatted), and `tcm edit`
   gives it back that way. Code edited in a scratch file is stored as its file spells it once it's written back,

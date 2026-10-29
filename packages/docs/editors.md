@@ -163,7 +163,7 @@ does, so rows appear as a running app writes them.
 - **tcm: Add / Update**, which save the file first; **Rename** and **Edit** ask for names when run from the
   palette.
 
-Try it on the [polls example](../examples/README.md).
+Try it on the [polls example](../../examples/README.md).
 
 Build a `.vsix` (the first `npx` downloads vsce, which takes a while) and install it with **Extensions → … →
 Install from VSIX…**, or with VS Code's CLI (on macOS it's inside the app if `code` isn't on your PATH):
