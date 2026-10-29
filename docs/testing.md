@@ -50,7 +50,8 @@ test("greets", () => {
 
 - **`tcm test`** runs the suites after the test definitions, with `node --test`, against the codebase's own build
   of the command: the suite finds it in `<COMMAND>_BIN` (`GREET_BIN` here; `MY_TOOL_BIN` for `my-tool`). They
-  run when the namespace given is the package's or contains it; `--definitions` leaves them out.
+  run when the namespace given is the package's or contains it, side by side, each reported as it finishes;
+  `--definitions` leaves them out.
 - **Results are cached by the code a suite ran.** V8's coverage of each run (every process it starts) says which
   definitions executed, and the result holds until the suite's files (it and what it imports from beside it)
   change, or the code of one of those definitions does. A definition it didn't run can change without running it

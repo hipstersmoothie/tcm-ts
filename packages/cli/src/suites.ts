@@ -135,7 +135,7 @@ export function runSuite(cb: Codebase, s: Suite, entry: string): Promise<{ resul
  * its files change, or the code of a definition it executed does: one it didn't run can't change what it does
  * without one it ran changing too. A suite that executed nothing of the codebase always runs. `fresh` runs them all.
  */
-export async function runSuites(cb: Codebase, suites: Suite[], fresh: boolean): Promise<TestOutcome[]> {
+export async function runSuites(cb: Codebase, suites: Suite[], fresh: boolean, onOutcome?: (o: TestOutcome) => void): Promise<TestOutcome[]> {
   const key = resultKey(cb);
   const runs = JSON.parse(cb.store.getSetting("suites") ?? "{}") as Record<string, SuiteRun>;
   const rel = (s: Suite) => path.relative(cb.lay.root, s.file);
@@ -162,7 +162,10 @@ export async function runSuites(cb: Codebase, suites: Suite[], fresh: boolean): 
   for (const s of suites) {
     const files = suiteFiles(s.file);
     const r = runs[rel(s)];
-    if (!fresh && r && holds(r, files)) out.set(s, { path: label(s, r.tests), result: r.result, cached: true });
+    if (!fresh && r && holds(r, files)) {
+      out.set(s, { path: label(s, r.tests), result: r.result, cached: true });
+      onOutcome?.(out.get(s)!);
+    }
     else todo.push({ s, files });
   }
   // side by side, as `node --test` runs files
@@ -172,6 +175,7 @@ export async function runSuites(cb: Codebase, suites: Suite[], fresh: boolean): 
       const { s, files } = todo[next++]!;
       const { result, tests, ran } = await runSuite(cb, s, entry(s.main));
       out.set(s, { path: label(s, tests), result, cached: false });
+      onOutcome?.(out.get(s)!);
       // (a run with no tests in it went wrong before they ran: nothing to keep)
       if (Object.keys(ran).length && tests) runs[rel(s)] = { files, key, ran, tests, result };
       else delete runs[rel(s)];

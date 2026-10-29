@@ -16,7 +16,9 @@ register `tcm mcp` (stdio) as an MCP server run in the codebase's directory.
 The server's instructions say how to work here: find code, `tcm_edit` it into a scratch file, edit that with the
 agent's own file tools, `tcm_check`, `tcm_update`, fix what `tcm_todo` lists, `tcm_test`. Each tool runs the tcm
 command of the same name, so it does exactly what that command does at a terminal, and results say what to do
-next where there's a next step (dependents to fix, a check to save).
+next where there's a next step (dependents to fix, a check to save). A client that asks for progress hears each
+line of a command's output as it comes (MCP progress notifications), so a long `tcm_test` shows its suites as
+they finish.
 
 | Tool | |
 |---|---|

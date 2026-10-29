@@ -968,8 +968,8 @@ square(12);
       // suites: test files running a package's command, as a program
       if (suites.length) {
         console.log(`${names.length ? "\n" : ""}${bold("suites")} ${dim(`(running ${[...new Set(suites.map((s) => s.bin))].join(", ")})`)}`);
-        const outcomes = await runSuites(cb, suites, model.fresh);
-        printOutcomes(outcomes);
+        // each as it finishes: a run can take minutes
+        const outcomes = await runSuites(cb, suites, model.fresh, (o) => printOutcomes([o]));
         console.log(`\nsuites: ${summary(outcomes)}`);
         ok &&= outcomes.every((o) => o.result.ok);
       }

@@ -17,12 +17,14 @@ function session() {
   let buf = "";
   let id = 0;
   const waiting = new Map<number, (m: { result?: Record<string, unknown>; error?: { message: string } }) => void>();
+  const notes: { method: string; params: Record<string, unknown> }[] = [];
   child.stdout.on("data", (d) => {
     buf += d;
     for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
-      const m = JSON.parse(buf.slice(0, nl)) as { id: number; result?: Record<string, unknown>; error?: { message: string } };
+      const m = JSON.parse(buf.slice(0, nl)) as { id?: number; method?: string; params?: Record<string, unknown>; result?: Record<string, unknown>; error?: { message: string } };
       buf = buf.slice(nl + 1);
-      waiting.get(m.id)?.(m);
+      if (m.id === undefined) notes.push({ method: m.method!, params: m.params! });
+      else waiting.get(m.id)?.(m);
     }
   });
   const request = (method: string, params: Record<string, unknown> = {}) =>
@@ -31,12 +33,12 @@ function session() {
       waiting.set(i, resolve);
       child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: i, method, params }) + "\n");
     });
-  const call = async (name: string, args: Record<string, unknown> = {}) => {
-    const r = await request("tools/call", { name, arguments: args });
+  const call = async (name: string, args: Record<string, unknown> = {}, meta?: Record<string, unknown>) => {
+    const r = await request("tools/call", { name, arguments: args, ...(meta ? { _meta: meta } : {}) });
     const result = r.result as { content: { text: string }[]; isError: boolean };
     return { text: result.content[0]!.text, isError: result.isError };
   };
-  return { request, call, close: () => child.stdin.end() };
+  return { request, call, notes, close: () => child.stdin.end() };
 }
 
 test("an agent works in the codebase through tcm mcp: find, edit, check, update, test", async () => {
@@ -69,7 +71,10 @@ test("an agent works in the codebase through tcm mcp: find, edit, check, update,
   const updated = await s.call("tcm_update", { file: "scratch-2.ts" });
   assert.match(updated.text, /~ updated +lib\.area \(dependent\)[\s\S]*tcm_test runs the tests/);
   assert.match((await s.call("tcm_view", { names: ["lib.square"] })).text, /x \*\* 2/);
-  assert.match((await s.call("tcm_test", { namespace: "lib" })).text, /1 passed, 0 failed/);
+  // a client that asks for progress hears a long command's output as it comes
+  assert.match((await s.call("tcm_test", { namespace: "lib", fresh: true }, { progressToken: "t1" })).text, /1 passed, 0 failed/);
+  const progress = s.notes.filter((n) => n.method === "notifications/progress" && n.params.progressToken === "t1");
+  assert.ok(progress.some((n) => /lib\.testArea/.test(String(n.params.message))), JSON.stringify(progress));
 
   assert.match((await s.call("tcm_guide", { topic: "editing" })).text, /# Editing/);
   const bad = await s.call("tcm_view", { names: ["lib.nothing"] });

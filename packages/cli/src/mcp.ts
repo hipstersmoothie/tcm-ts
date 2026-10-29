@@ -83,7 +83,8 @@ interface Result {
 
 interface Ctx {
   root: string;
-  tcm: (argv: string[]) => Promise<{ code: number; out: string }>;
+  /** run a tcm command; `onLine` hears its output as it comes */
+  tcm: (argv: string[], onLine?: (line: string) => void) => Promise<{ code: number; out: string }>;
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : v === undefined ? "" : String(v));
@@ -219,12 +220,21 @@ const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
  * what the command does at a terminal, without its output reaching the protocol channel.
  */
 export function serveMcp(root: string, bin: string[], version: string) {
-  const tcm = (argv: string[]) =>
+  const tcm = (argv: string[], onLine?: (line: string) => void) =>
     new Promise<{ code: number; out: string }>((resolve) => {
       const child = spawn(bin[0]!, [...bin.slice(1), ...argv], { cwd: root, env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" }, stdio: ["ignore", "pipe", "pipe"] });
       let out = "";
-      child.stdout.on("data", (d) => (out += d));
-      child.stderr.on("data", (d) => (out += d));
+      let heard = 0;
+      const hear = (d: Buffer) => {
+        out += d;
+        if (!onLine) return;
+        const end = out.lastIndexOf("\n");
+        if (end < heard) return;
+        for (const line of plain(out.slice(heard, end)).split("\n")) if (line.trim()) onLine(line);
+        heard = end + 1;
+      };
+      child.stdout.on("data", hear);
+      child.stderr.on("data", hear);
       child.on("close", (code) => resolve({ code: code ?? 1, out: plain(out).trim() }));
     });
   const ctx: Ctx = { root, tcm };
@@ -249,11 +259,15 @@ export function serveMcp(root: string, bin: string[], version: string) {
         if (!tool) return fail(-32602, `no tool ${String(m.params?.name)}`);
         const args = (m.params?.arguments ?? {}) as Record<string, unknown>;
         try {
+          // a client that asked for progress hears the command's output as it comes: some take minutes
+          const token = (m.params?._meta as { progressToken?: string | number } | undefined)?.progressToken;
+          let progress = 0;
+          const onLine = token === undefined ? undefined : (line: string) => send({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token, progress: ++progress, message: line } });
           let r: Result;
-          if (tool.run) r = await tool.run(args, ctx);
+          if (tool.run) r = await tool.run(args, { ...ctx, tcm: (argv: string[], heard?: (line: string) => void) => tcm(argv, heard ?? onLine) });
           else {
             const argv = tool.argv!(args);
-            const { code, out } = await tcm(argv);
+            const { code, out } = await tcm(argv, onLine);
             const hint = next(argv, out, code);
             r = { text: [out || (code === 0 ? "done" : `tcm ${argv[0]} failed`), hint].filter(Boolean).join("\n\n"), isError: code !== 0 };
           }
