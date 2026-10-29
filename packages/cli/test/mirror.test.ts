@@ -243,6 +243,14 @@ test("a mirror makes files for new namespaces, and renames reach files near it",
   assert.match(fs.readFileSync(path.join(repo, "src", "paths.ts"), "utf8"), /\nexport const SEP = "\/";\n/);
   assert.match(fs.readFileSync(path.join(repo, "src", "extra.ts"), "utf8"), /import \{ SEP \} from "\.\/paths\.ts";/);
   assert.match(run("mirror", "--check"), /the files hash to what the codebase holds/);
+
+  // saved from a scratch file and then re-derived in the same update (it uses one that was): its new code is
+  // written, not left as propagation-only
+  fs.writeFileSync(path.join(repo, "src", "chain.ts"), `export const h = (): number => 1;\nexport const g = (): number => h() + 1;\nexport const f = (): number => g() * 10;\n`);
+  fs.writeFileSync(path.join(cbDir, "scratch.ts"), `// tcm: namespace app.chain\nimport { g } from "#codebase/app/chain";\nexport const h = (): number => 2;\nexport const f = (): number => g() * 100;\n`);
+  assert.match(run("update"), /mirror: wrote chain\.ts/);
+  assert.equal(fs.readFileSync(path.join(repo, "src", "chain.ts"), "utf8"), `export const h = (): number => 2;\nexport const g = (): number => h() + 1;\nexport const f = (): number => g() * 100;\n`);
+  assert.match(run("mirror", "--check"), /the files hash to what the codebase holds/);
 });
 
 test("a definition moved to another namespace moves to its file, and what imports it follows", () => {

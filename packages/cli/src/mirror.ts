@@ -348,9 +348,15 @@ function importsAt(file: string, text: string): number {
 /** Changes to the name log since `log` that leave code's text as it was: dependents re-hashed, packages upgraded. */
 function untextual(cb: Codebase, log: number): Set<string> {
   const out = new Set<string>();
+  // a name whose code was also changed (saved from a scratch file, say) since reads differently, even if a
+  // propagation re-hashed it again after
+  const textual = new Set<string>();
   for (const e of cb.store.history(Number.MAX_SAFE_INTEGER, log)) {
-    if (e.op === "update" && e.newHash && (e.command.endsWith("(propagated)") || e.command.startsWith("upgrade "))) out.add(e.newHash);
+    if (e.op !== "update" || !e.newHash) continue;
+    if (e.command.endsWith("(propagated)") || e.command.startsWith("upgrade ")) out.add(e.newHash);
+    else textual.add(e.path);
   }
+  for (const e of cb.store.history(Number.MAX_SAFE_INTEGER, log)) if (e.newHash && textual.has(e.path)) out.delete(e.newHash);
   return out;
 }
 
