@@ -101,9 +101,10 @@ Names are labels; changing them never touches code.
 
 ## Undo
 
-`tcm history` lists every change to names on this branch, newest first, and `tcm reset <id>` goes back to just
-after an entry. Code is never deleted, so a reset can always be reset again. `tcm diff` shows what the last
-command changed, or what changed since an entry: `tcm diff 12`.
+`tcm history` lists this branch's history, newest first: one entry per command, with what it changed.
+`tcm reset 1` undoes the last command (any entry works: a number of entries back, or its hash), as a new entry,
+so a reset can always be reset again. `tcm diff` shows what the last command changed, or what changed since an
+entry: `tcm diff 3`. See [history](history.md).
 
 ## Browsing
 

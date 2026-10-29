@@ -1,5 +1,5 @@
 import { shortHash, type DefKind, type IR } from "@tcm/core";
-import type { LogEntry, NameRow } from "@tcm/store";
+import type { NameRow } from "@tcm/store";
 import { render } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
@@ -17,26 +17,6 @@ export const keyPath = (key: string) => (key.endsWith(TYPE_SUFFIX) ? key.slice(0
 export function stateOf(rows: NameRow[]): NameState {
   const s: NameState = new Map();
   for (const r of rows) s.set(stateKey(r.path, r.kind), (s.get(stateKey(r.path, r.kind)) ?? new Set()).add(r.hash));
-  return s;
-}
-
-/** Undo log entries (newest first) to recover an earlier namespace. */
-export function rewind(now: NameState, entries: LogEntry[]): NameState {
-  const s: NameState = new Map([...now].map(([p, hs]) => [p, new Set(hs)]));
-  const add = (p: string, h: string) => s.set(p, (s.get(p) ?? new Set()).add(h));
-  const remove = (p: string, h: string) => {
-    s.get(p)?.delete(h);
-    if (s.get(p)?.size === 0) s.delete(p);
-  };
-  for (const e of entries) {
-    const k = stateKey(e.path, e.kind);
-    if (e.op === "add") remove(k, e.newHash!);
-    else if (e.op === "delete") add(k, e.oldHash!);
-    else {
-      remove(k, e.newHash!);
-      if (e.oldHash) add(k, e.oldHash);
-    }
-  }
   return s;
 }
 

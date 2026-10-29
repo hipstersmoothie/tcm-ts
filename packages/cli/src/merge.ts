@@ -1,7 +1,7 @@
 import type { NameRow } from "@tcm/store";
 import { shortHash } from "@tcm/core";
 import type { Codebase } from "./codebase.ts";
-import { diffNamespaces, keyPath, printDiff, rewind, stateOf, type NameState } from "./diff.ts";
+import { diffNamespaces, keyPath, printDiff, stateOf, type NameState } from "./diff.ts";
 import { bold, dim, green, red, yellow } from "./style.ts";
 
 const same = (a: Set<string> | undefined, b: Set<string> | undefined) =>
@@ -67,26 +67,33 @@ export function mergeStates(
   return { merged, conflicts, keptOverDelete, patches };
 }
 
-export const mergeKey = (ours: string, theirs: string) => `merge.${ours}.${theirs}`;
-
-/** Remember that `ours` now includes everything `theirs` has, so the next merge starts from here. */
-export function recordMergeBase(cb: Codebase, ours: string, theirs: string) {
-  cb.store.setSetting(mergeKey(ours, theirs), String(cb.store.branchLogHead(theirs)));
-}
-
 /**
- * Merge another branch into the current one. The base is `theirs` as it was when it was last merged into
- * (or synced with, or forked from) this branch, recovered by rewinding its name history.
+ * Merge another branch into the current one, Unison's way: by history. If this branch already has the other's
+ * history there's nothing to do; if the other has this branch's, it fast-forwards; otherwise it's a three-way
+ * merge from their best common ancestor, recorded as a causal with both heads as parents (so the next merge
+ * starts from here, in any codebase that has this history).
  */
 export function mergeBranch(cb: Codebase, theirs: string, command = `merge ${theirs}`): MergeResult {
   const ours = cb.store.branch().name;
   if (theirs === ours) throw new Error("can't merge a branch into itself");
   if (!cb.store.hasBranch(theirs)) throw new Error(`no branch named '${theirs}'`);
-  const since = Number(cb.store.getSetting(mergeKey(ours, theirs)) ?? 0);
-  const theirsNow = stateOf(cb.store.names(theirs));
-  const base = rewind(theirsNow, cb.store.history(Number.MAX_SAFE_INTEGER, since, theirs));
+  const [oursHead, theirsHead] = [cb.store.head(), cb.store.head(theirs)];
+  const none: MergeResult = { merged: stateOf(cb.store.names()), conflicts: [], keptOverDelete: [], patches: new Map() };
+  if (cb.store.isAncestor(theirsHead, oursHead)) {
+    console.log(dim(`${ours} already has everything in ${theirs}: no changes`));
+    return none;
+  }
   const before = stateOf(cb.store.names());
   const irOf = (h: string) => cb.store.getDef(h)!.ir;
+  if (cb.store.isAncestor(oursHead, theirsHead)) {
+    cb.store.setHead(ours, theirsHead, command);
+    cb.refreshShim();
+    const after = stateOf(cb.store.names());
+    printDiff(cb, diffNamespaces(before, after, irOf), before, after, `fast-forwarded ${ours} to ${theirs}`);
+    return { ...none, merged: after };
+  }
+  const base = stateOf(cb.store.namespaceRows(cb.store.causal(cb.store.mergeBase(oursHead, theirsHead))!.namespace));
+  const theirsNow = stateOf(cb.store.names(theirs));
   const propagated = {
     ours: new Set(diffNamespaces(base, before, irOf).propagated.map((c) => c.path)),
     theirs: new Set(diffNamespaces(base, theirsNow, irOf).propagated.map((c) => c.path)),
@@ -94,9 +101,11 @@ export function mergeBranch(cb: Codebase, theirs: string, command = `merge ${the
   const result = mergeStates(base, before, theirsNow, propagated);
 
   const rows: NameRow[] = [...result.merged].flatMap(([key, hs]) => [...hs].map((hash) => ({ path: keyPath(key), hash, kind: cb.store.getDef(hash)!.kind })));
-  cb.store.setBranchNames(ours, rows, command);
-  for (const [o, n] of result.patches) cb.store.addPatch(o, n);
-  recordMergeBase(cb, ours, theirs);
+  cb.store.transaction(() => {
+    cb.store.addParent(theirsHead);
+    cb.store.setBranchNames(ours, rows, command);
+    for (const [o, n] of result.patches) cb.store.addPatch(o, n);
+  });
 
   // the other side's code may still reference definitions this merge replaced: re-derive it
   const { updated, failed } = result.patches.size ? cb.propagate(new Map(result.patches), new Set()) : { updated: [], failed: [] };

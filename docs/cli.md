@@ -56,10 +56,11 @@ See [history, branches and merging](history.md).
 | Command | |
 |---|---|
 | `tcm diff` | what the last command changed: edits, dependents re-hashed by them, renames |
-| `tcm diff <id> \| <branch> \| <a> <b>` | changes since a history entry, to another branch, or between branches |
-| `tcm history [n]` / `tcm reset <id>` | name changes on this branch / undo back to an entry |
+| `tcm diff <n\|#hash> \| <branch> \| <a> <b>` | changes since a history entry, to another branch, or between two branches or entries |
+| `tcm history [n]` | this branch's history: an entry per command, with its hash, how many back it is, and what it changed |
+| `tcm reset <n\|#hash>` | bring back the names as of an entry (`tcm reset 1` undoes the last command), as a new entry |
 | `tcm branch [name]` / `tcm switch <name>` | list or create branches / switch |
-| `tcm merge <branch>` | three-way merge into this branch |
+| `tcm merge <branch>` | merge into this branch: nothing if it has the other's history, a fast-forward if the other has its, otherwise three-way from their common ancestor |
 
 ## Sync and remote execution
 
@@ -68,8 +69,8 @@ See [sync](sync.md).
 | Command | |
 |---|---|
 | `tcm remote [add <name> <url\|dir> [--token t] [--fingerprint sha256] \| rm <name>]` | manage remotes: a `tcm serve` URL or another codebase directory |
-| `tcm push [remote] [--as branch] [--force]` | send definitions the remote lacks, plus this branch's names. Refuses if the remote moved since your last sync |
-| `tcm pull [remote] [branch]` | fetch into `<remote>/<branch>`; fast-forward this branch if you haven't changed it, merge otherwise |
+| `tcm push [remote] [--as branch] [--force]` | send this branch's history (what the remote lacks) and move the remote branch to it. Refuses if the remote has history you don't, unless `--force` |
+| `tcm pull [remote] [branch]` | fetch the remote branch's history into `<remote>/<branch>`; fast-forward this branch if it can, merge from the common ancestor otherwise |
 | `tcm run <name> [args] --on <remote\|url\|dir>` | send what the remote lacks, run there, stream stdout/stderr back |
 | `tcm serve [--port 7737] [--host 127.0.0.1] [--token t] [--no-run] [--tls [--tls-cert f --tls-key f]] [--insecure]` | serve this codebase over HTTP(S) |
 

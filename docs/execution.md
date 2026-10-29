@@ -6,7 +6,8 @@
 
 - definitions: canonical IR, the original source text, and the span of every reference in it;
 - dependency edges, signatures, docs;
-- names per branch, a name log (the reflog behind `history`/`reset`), patches and `todo`.
+- names per branch, and their [history](history.md): namespace nodes, causals (entries) and each branch's head,
+  plus a log of every name change; patches and `todo`.
 
 App data lives apart from the codebase in `.tcm/data/`: `store.sqlite` (tables), `sessions.sqlite`,
 `jobs.sqlite`. It and secrets are gitignored.

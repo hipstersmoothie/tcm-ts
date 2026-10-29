@@ -178,19 +178,20 @@ name. There was nothing to find and replace.
 Everything you do is in the history:
 
 ```text
-$ tcm history 4
-   8 2026-10-28 06:21:30  geo.dist                 + #vwvxl53m  mv geo.distance geo.dist
-   7 2026-10-28 06:21:30  geo.distance             - #vwvxl53m  mv geo.distance geo.dist
-     ·
-   6 2026-10-28 06:21:30  geo.pathLength           #kuir3xdg → #3ah7ke6j  update (propagated)
-   5 2026-10-28 06:21:29  geo.distance             #vra42ccj → #vwvxl53m  update scratch.ts
+$ tcm history 2
+#upoceguk   0  2026-10-28 06:21:30  mv geo.distance geo.dist
+    geo.dist                     + #vwvxl53m
+    geo.distance                 - #vwvxl53m
+#eizpcqxs   1  2026-10-28 06:21:30  update scratch.ts
+    geo.distance                 #vra42ccj → #vwvxl53m
+    geo.pathLength               #kuir3xdg → #3ah7ke6j
 ```
 
-Go back to how things were after entry 6, before the rename (your numbers may differ):
+Each command is one entry. Go back to how things were one entry ago, before the rename:
 
 ```text
-$ tcm reset 6
-undid 2 changes
+$ tcm reset 1
+names as of #eizpcqxs (1 added, 1 removed)
 ```
 
 `distance` is called `distance` again. Code is never deleted, so you can always go back.

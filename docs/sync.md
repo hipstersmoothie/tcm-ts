@@ -10,12 +10,16 @@ directory. `tcm remote` lists them; `tcm remote rm <name>` removes one.
 
 ## Push and pull
 
-- **Sync is by hash:** only components the other side lacks are sent, along with the package lock entries they
-  use (versions and tarball hashes; see [packages](packages.md#versions)).
-- **`tcm pull [remote] [branch]`** mirrors into `<remote>/<branch>` (e.g. `origin/main`). It fast-forwards your
-  branch if you haven't changed it, and [merges](history.md#merging) otherwise.
-- **`tcm push [remote] [--as branch] [--force]`** sends definitions plus this branch's names. It refuses if the
-  remote moved since your last sync, unless `--force`.
+- **Sync is by hash, history included:** what's sent is what the other side lacks of a branch's
+  [history](history.md) (its entries and their namespaces, node by node: a node the other side has, it has
+  everything under), the definitions those name, and the package lock entries they use (versions and tarball
+  hashes; see [packages](packages.md#versions)). Both sides end up with the same history, hash for hash.
+- **`tcm pull [remote] [branch]`** mirrors into `<remote>/<branch>` (e.g. `origin/main`). If your branch's
+  history is part of theirs, it fast-forwards; if theirs is part of yours, there's nothing to do; otherwise it
+  [merges](history.md#merging) from your common ancestor.
+- **`tcm push [remote] [--as branch] [--force]`** sends this branch's history and moves the remote branch to it.
+  It only moves a remote forward: if the remote has history you don't, it refuses (pull first) unless `--force`,
+  which replaces the remote branch's head.
 - **Pushing to a server running `tcm start` deploys** ([production](production.md)).
 
 ## Serving a codebase

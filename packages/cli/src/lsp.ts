@@ -1109,6 +1109,8 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         return;
       }
       case "workspace/executeCommand":
+        // each command is its own history entry (this process outlives many)
+        cb?.store.endBatch();
         // a command may finish later (migrating data runs the table's code)
         Promise.resolve(cb ? execute(String(p!.command), (p!.arguments as unknown[]) ?? []) : null).then(
           (result) => send({ id: m.id, result }),

@@ -7,20 +7,23 @@ import os from "node:os";
 import path from "node:path";
 import { randomBytes, timingSafeEqual, X509Certificate } from "node:crypto";
 import { shortHash, type DefRecord } from "@tcm/core";
-import type { NameRow } from "@tcm/store";
+import type { Causal, NameRow } from "@tcm/store";
 import { runStreaming } from "@tcm/loader";
 import { Codebase, IDENT_PATH, type LockEntry } from "./codebase.ts";
 import { diffNamespaces, printDiff, stateOf } from "./diff.ts";
-import { mergeBranch, recordMergeBase } from "./merge.ts";
+import { mergeBranch } from "./merge.ts";
 import { bold, dim, green, red, yellow } from "./style.ts";
 
 
 export type Output = (stream: "stdout" | "stderr", data: string) => void;
 
 export interface BranchState {
-  stateHash: string;
+  /** the branch's head causal */
+  head: string;
   names: NameRow[];
 }
+
+export type NamespaceNode = { hash: string; body: string };
 
 /** What one codebase can ask of another. */
 export interface Remote {
@@ -35,8 +38,17 @@ export interface Remote {
   /** lock entries for code about to be sent (before `put`, so it's verified on those versions) */
   putPackages(entries: LockEntry[]): Promise<void>;
   branch(name: string): Promise<BranchState | null>;
-  /** replace a branch's names, only if its state is still `expect` (null: branch must not exist) */
-  setBranch(name: string, names: NameRow[], expect: string | null, command: string): Promise<void>;
+  /** move a branch to a causal it has, only if its head is still `expect` (null: the branch must not exist) */
+  setBranch(name: string, head: string, expect: string | null, command: string): Promise<void>;
+  /** every causal in a causal's history */
+  ancestors(head: string): Promise<string[]>;
+  missingCausals(hashes: string[]): Promise<string[]>;
+  getCausals(hashes: string[]): Promise<Causal[]>;
+  /** causals, parents before children, whose namespaces (and definitions) were sent first */
+  putCausals(causals: Causal[]): Promise<void>;
+  missingNamespaces(hashes: string[]): Promise<string[]>;
+  getNamespaces(hashes: string[]): Promise<NamespaceNode[]>;
+  putNamespaces(nodes: NamespaceNode[]): Promise<void>;
   run(hash: string, args: string[], out: Output): Promise<number>;
 }
 
@@ -79,14 +91,39 @@ export class Peer {
 
   branch(name: string): BranchState | null {
     if (!this.cb.store.hasBranch(name)) return null;
-    return { stateHash: this.cb.store.stateHash(name), names: this.cb.store.names(name) };
+    return { head: this.cb.store.head(name), names: this.cb.store.names(name) };
   }
 
-  setBranch(name: string, names: NameRow[], expect: string | null, command: string) {
-    const current = this.cb.store.hasBranch(name) ? this.cb.store.stateHash(name) : null;
+  setBranch(name: string, head: string, expect: string | null, command: string) {
+    const current = this.cb.store.hasBranch(name) ? this.cb.store.head(name) : null;
     if (current !== expect) throw new ConflictError(`branch '${name}' changed since you last synced`);
-    this.cb.store.setBranchNames(name, validNames(this.cb, names), command);
+    const c = this.cb.store.causal(head);
+    if (!c) throw new Error(`history entry ${shortHash(head)} was not sent`);
+    validNames(this.cb, this.cb.store.namespaceRows(c.namespace));
+    this.cb.store.setHead(name, head, command);
     this.cb.refreshShim();
+  }
+
+  ancestors(head: string): string[] {
+    return this.cb.store.ancestors(head);
+  }
+  missingCausals(hashes: string[]): string[] {
+    return this.cb.store.missingCausals(hashes);
+  }
+  getCausals(hashes: string[]): Causal[] {
+    return this.cb.store.getCausals(hashes);
+  }
+  putCausals(causals: Causal[]) {
+    this.cb.store.putCausals(causals);
+  }
+  missingNamespaces(hashes: string[]): string[] {
+    return this.cb.store.missingNamespaces(hashes);
+  }
+  getNamespaces(hashes: string[]): NamespaceNode[] {
+    return this.cb.store.getNamespaces(hashes);
+  }
+  putNamespaces(nodes: NamespaceNode[]) {
+    this.cb.store.putNamespaces(nodes);
   }
 
   run(hash: string, args: string[], out: Output): Promise<number> {
@@ -136,8 +173,29 @@ class DirectoryRemote implements Remote {
   async branch(n: string) {
     return this.peer.branch(n);
   }
-  async setBranch(n: string, names: NameRow[], expect: string | null, command: string) {
-    this.peer.setBranch(n, names, expect, command);
+  async setBranch(n: string, head: string, expect: string | null, command: string) {
+    this.peer.setBranch(n, head, expect, command);
+  }
+  async ancestors(h: string) {
+    return this.peer.ancestors(h);
+  }
+  async missingCausals(h: string[]) {
+    return this.peer.missingCausals(h);
+  }
+  async getCausals(h: string[]) {
+    return this.peer.getCausals(h);
+  }
+  async putCausals(c: Causal[]) {
+    this.peer.putCausals(c);
+  }
+  async missingNamespaces(h: string[]) {
+    return this.peer.missingNamespaces(h);
+  }
+  async getNamespaces(h: string[]) {
+    return this.peer.getNamespaces(h);
+  }
+  async putNamespaces(n: NamespaceNode[]) {
+    this.peer.putNamespaces(n);
   }
   run(h: string, args: string[], out: Output) {
     return this.peer.run(h, args, out);
@@ -228,8 +286,29 @@ class HttpRemote implements Remote {
   async branch(name: string) {
     return (await this.call<{ branch: BranchState | null }>("branch", { name })).branch;
   }
-  async setBranch(name: string, names: NameRow[], expect: string | null, command: string) {
-    await this.call("set-branch", { name, names, expect, command });
+  async setBranch(name: string, head: string, expect: string | null, command: string) {
+    await this.call("set-branch", { name, head, expect, command });
+  }
+  async ancestors(head: string) {
+    return (await this.call<{ causals: string[] }>("ancestors", { head })).causals;
+  }
+  async missingCausals(hashes: string[]) {
+    return (await this.call<{ missing: string[] }>("missing-causals", { hashes })).missing;
+  }
+  async getCausals(hashes: string[]) {
+    return (await this.call<{ causals: Causal[] }>("get-causals", { hashes })).causals;
+  }
+  async putCausals(causals: Causal[]) {
+    await this.call("put-causals", { causals });
+  }
+  async missingNamespaces(hashes: string[]) {
+    return (await this.call<{ missing: string[] }>("missing-namespaces", { hashes })).missing;
+  }
+  async getNamespaces(hashes: string[]) {
+    return (await this.call<{ nodes: NamespaceNode[] }>("get-namespaces", { hashes })).nodes;
+  }
+  async putNamespaces(nodes: NamespaceNode[]) {
+    await this.call("put-namespaces", { nodes });
   }
 
   /** Output streams back as NDJSON: `{"o":"stdout","d":"..."}` lines, then `{"exit":0}`. */
@@ -318,28 +397,96 @@ async function fetchClosure(cb: Codebase, remote: Remote, hashes: string[]): Pro
   return [...got.values()];
 }
 
-const syncKey = (remote: string, branch: string) => `sync.${remote}.${branch}`;
+/** `xs` in slices of `n`, so no request grows without bound. */
+const chunks = <T>(xs: T[], n = 500): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+
+/** Causals, parents before children. */
+function oldestFirst(causals: Causal[]): Causal[] {
+  const by = new Map(causals.map((c) => [c.hash, c]));
+  const out: Causal[] = [];
+  const done = new Set<string>();
+  const visit = (c: Causal) => {
+    if (done.has(c.hash)) return;
+    done.add(c.hash);
+    for (const p of c.parents) if (by.has(p)) visit(by.get(p)!);
+    out.push(c);
+  };
+  causals.forEach(visit);
+  return out;
+}
+
+/**
+ * Send what the remote lacks of the history up to `head`: its causals, the namespace nodes they point at (a
+ * node the remote has, it has everything under), and every definition those name. Returns definitions sent.
+ */
+async function sendHistory(cb: Codebase, remote: Remote, head: string): Promise<number> {
+  const lacking: string[] = [];
+  for (const c of chunks(cb.store.ancestors(head))) lacking.push(...(await remote.missingCausals(c)));
+  if (!lacking.length) return 0;
+  const causals = oldestFirst(cb.store.getCausals(lacking));
+  const nodes: string[] = [];
+  const named = new Set<string>();
+  const seen = new Set<string>();
+  for (let level = [...new Set(causals.map((c) => c.namespace))]; level.length; ) {
+    level = level.filter((h) => !seen.has(h) && (seen.add(h), true));
+    const missing: string[] = [];
+    for (const c of chunks(level)) missing.push(...(await remote.missingNamespaces(c)));
+    nodes.push(...missing);
+    for (const n of missing) for (const d of cb.store.namespaceDefinitions(n)) named.add(d);
+    level = missing.flatMap((n) => cb.store.namespaceChildren(n));
+  }
+  const sent = await sendClosure(cb, remote, [...named]);
+  // children before the nodes that point at them
+  for (const c of chunks(nodes.reverse())) await remote.putNamespaces(cb.store.getNamespaces(c));
+  for (const c of chunks(causals)) await remote.putCausals(c);
+  return sent;
+}
+
+/** Fetch what this codebase lacks of the remote's history up to `head`; returns definitions received. */
+async function fetchHistory(cb: Codebase, remote: Remote, head: string): Promise<number> {
+  const lacking = cb.store.missingCausals(await remote.ancestors(head));
+  if (!lacking.length) return 0;
+  const causals: Causal[] = [];
+  for (const c of chunks(lacking)) causals.push(...(await remote.getCausals(c)));
+  const nodes: NamespaceNode[] = [];
+  const named = new Set<string>();
+  for (let level = [...new Set(causals.map((c) => c.namespace))]; level.length; ) {
+    const missing = cb.store.missingNamespaces(level).filter((h) => !nodes.some((n) => n.hash === h));
+    const got: NamespaceNode[] = [];
+    for (const c of chunks(missing)) got.push(...(await remote.getNamespaces(c)));
+    if (got.length !== missing.length) throw new Error(`${remote.label} is missing part of its history`);
+    nodes.push(...got);
+    const bodies = got.map((n) => JSON.parse(n.body) as ["ns", [string, string[]][], [string, string][]]);
+    for (const b of bodies) for (const [, hs] of b[1]) for (const d of hs) named.add(d);
+    level = [...new Set(bodies.flatMap((b) => b[2].map(([, child]) => child)))];
+  }
+  const records = await fetchClosure(cb, remote, [...named]);
+  // the versions their code runs on, then the code (verified on them), then the history naming it
+  if (records.length) cb.adoptPackages(cb.packagesUsedBy(records, await remote.packages()));
+  const { stored } = cb.receive(records);
+  cb.store.putNamespaces(nodes);
+  cb.store.putCausals(oldestFirst(causals));
+  return stored;
+}
 
 export async function push(cb: Codebase, spec: string, remoteBranch: string | undefined, force: boolean) {
   const { remote, name } = openRemote(cb, spec);
   if (!name) throw new Error(`push needs a configured remote: \`tcm remote add <name> ${spec}\``);
   const branch = remoteBranch ?? cb.store.branch().name;
   const names = cb.store.names();
-  const mine = cb.store.stateHash();
-  const sent = await sendClosure(cb, remote, names.map((n) => n.hash));
+  const mine = cb.store.head();
   const theirs = await remote.branch(branch);
-  const lastSynced = cb.store.getSetting(syncKey(name, branch));
-  // an empty remote branch (a fresh server) has nothing a push could overwrite
-  if (theirs && theirs.names.length && theirs.stateHash !== mine && theirs.stateHash !== lastSynced && !force) {
+  // a push only moves the remote forward: its head must be in this branch's history (an empty branch, on a
+  // fresh server, has nothing a push could lose)
+  if (theirs && theirs.head !== mine && theirs.names.length && !cb.store.isAncestor(theirs.head, mine) && !force) {
     throw new Error(`${name}/${branch} has changes you don't have: \`tcm pull ${name}\` first (or --force to overwrite them)`);
   }
-  if (theirs?.stateHash !== mine) await remote.setBranch(branch, names, theirs?.stateHash ?? null, `push from ${os.hostname()}:${cb.lay.root}`);
-  cb.store.setSetting(syncKey(name, branch), mine);
-  cb.store.setBranchNames(`${name}/${branch}`, names, `push ${name}`);
-  recordMergeBase(cb, cb.store.branch().name, `${name}/${branch}`);
+  const sent = await sendHistory(cb, remote, mine);
+  if (theirs?.head !== mine) await remote.setBranch(branch, mine, theirs?.head ?? null, `push from ${os.hostname()}:${cb.lay.root}`);
+  cb.store.setHead(`${name}/${branch}`, mine, `push ${name}`);
   const d = theirs ? diffNamespaces(stateOf(theirs.names), stateOf(names), (h) => cb.store.getDef(h)!.ir) : undefined;
   const summary = d ? `${d.added.length} added, ${d.edited.length + d.propagated.length} changed, ${d.removed.length} removed, ${d.renamed.length} renamed` : `${names.length} names (new branch)`;
-  console.log(theirs?.stateHash === mine ? dim(`${name}/${branch} is up to date`) : `${green("pushed")} ${bold(`${name}/${branch}`)}: ${summary}; sent ${sent} definition(s)`);
+  console.log(theirs?.head === mine ? dim(`${name}/${branch} is up to date`) : `${green("pushed")} ${bold(`${name}/${branch}`)}: ${summary}; sent ${sent} definition(s)`);
 }
 
 export async function pull(cb: Codebase, spec: string, remoteBranch: string | undefined) {
@@ -348,33 +495,24 @@ export async function pull(cb: Codebase, spec: string, remoteBranch: string | un
   const branch = remoteBranch ?? cb.store.branch().name;
   const theirs = await remote.branch(branch);
   if (!theirs) throw new Error(`${name} has no branch '${branch}'`);
-  const records = await fetchClosure(cb, remote, theirs.names.map((n) => n.hash));
-  // the versions their code runs on, then the code (verified on them)
-  if (records.length) cb.adoptPackages(cb.packagesUsedBy(records, await remote.packages()));
-  const { stored } = cb.receive(records);
+  const stored = await fetchHistory(cb, remote, theirs.head);
   const tracking = `${name}/${branch}`;
-  cb.store.setBranchNames(tracking, theirs.names, `pull ${name}`);
+  cb.store.setHead(tracking, theirs.head, `pull ${name}`);
   if (stored) console.log(dim(`received ${stored} definition(s), verified by re-hashing`));
 
   const local = cb.store.branch().name;
-  const mine = cb.store.stateHash();
-  const lastSynced = cb.store.getSetting(syncKey(name, branch));
-  if (mine === theirs.stateHash) {
-    cb.store.setSetting(syncKey(name, branch), mine);
-    recordMergeBase(cb, local, tracking);
-    return console.log(dim(`${local} is up to date with ${tracking}`));
+  const mine = cb.store.head();
+  if (cb.store.isAncestor(theirs.head, mine)) {
+    return console.log(dim(mine === theirs.head ? `${local} is up to date with ${tracking}` : `${local} already has everything in ${tracking}; \`tcm push ${name}\` publishes what's new here`));
   }
-  if (cb.store.names().length && mine !== lastSynced) {
-    // both sides changed since the last sync: merge the remote's state in; `push` then publishes the result
+  if (!cb.store.isAncestor(mine, theirs.head)) {
+    // both sides changed since they last shared history: merge theirs in; `push` then publishes the result
     mergeBranch(cb, tracking, `pull ${name} (merge)`);
-    cb.store.setSetting(syncKey(name, branch), theirs.stateHash);
     console.log(dim(`  \`tcm push ${name}\` to publish the merge`));
     return;
   }
   const before = stateOf(cb.store.names());
-  cb.store.setBranchNames(local, theirs.names, `pull ${name}`);
-  cb.store.setSetting(syncKey(name, branch), theirs.stateHash);
-  recordMergeBase(cb, local, tracking);
+  cb.store.setHead(local, theirs.head, `pull ${name}`);
   cb.refreshShim();
   const after = stateOf(cb.store.names());
   printDiff(cb, diffNamespaces(before, after, (h) => cb.store.getDef(h)!.ir), before, after, `fast-forwarded ${local} to ${tracking}`);
@@ -475,9 +613,25 @@ export function serve(cb: Codebase, opts: ServeOptions, insecure = false): http.
         case "branch":
           return reply(200, { branch: peer.branch(String(body.name)) });
         case "set-branch":
-          peer.setBranch(String(body.name), body.names ?? [], body.expect ?? null, String(body.command ?? "remote"));
+          peer.setBranch(String(body.name), String(body.head), body.expect ?? null, String(body.command ?? "remote"));
           console.log(`${green("updated")} branch ${bold(String(body.name))} ${dim(`(${body.command})`)}`);
           return reply(200, { ok: true });
+        case "ancestors":
+          return reply(200, { causals: peer.ancestors(String(body.head)) });
+        case "missing-causals":
+          return reply(200, { missing: peer.missingCausals(body.hashes ?? []) });
+        case "get-causals":
+          return reply(200, { causals: peer.getCausals(body.hashes ?? []) });
+        case "put-causals":
+          peer.putCausals(body.causals ?? []);
+          return reply(200, {});
+        case "missing-namespaces":
+          return reply(200, { missing: peer.missingNamespaces(body.hashes ?? []) });
+        case "get-namespaces":
+          return reply(200, { nodes: peer.getNamespaces(body.hashes ?? []) });
+        case "put-namespaces":
+          peer.putNamespaces(body.nodes ?? []);
+          return reply(200, {});
         case "run": {
           const hash = String(body.hash);
           const args = Array.isArray(body.args) ? body.args.map(String) : [];

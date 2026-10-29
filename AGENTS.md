@@ -38,6 +38,8 @@ New behaviour gets a test in `packages/cli/test/` (end-to-end, through the CLI) 
 
 - **Hashes are frozen.** The IR format (v6) is pinned by `packages/core/test/golden.test.ts`. Never change what
   a definition hashes to without a format bump and `tcm migrate` support.
+  History hashes (namespaces and causals, which codebases compare when they sync) are pinned the same way by
+  `packages/store/test/history.test.ts`.
 - **`packages/cli/src/server-api.ts`'s `createServerApi` must stay self-contained:** its source is written to
   `.tcm/cache/tcm-server.js`, so it can only use what comes in through `deps`.
 - **No explicit client/server boundaries** (no `"use server"`): placement is inferred.

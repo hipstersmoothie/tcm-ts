@@ -21,7 +21,7 @@ import { pack } from "./pack.ts";
 import { vitestChild } from "./vitest.ts";
 import { formatStored, formatText } from "./fmt.ts";
 import { LINT_CONFIG, lintDefinitions, lintScratch, locate, type LintIssue } from "./lint.ts";
-import { diffNamespaces, printDiff, rewind, stateOf } from "./diff.ts";
+import { diffNamespaces, keyPath, printDiff, stateOf, type NameState } from "./diff.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
 import { addRemote, listRemotes, newToken, pull, push, runOn, serve, tlsMaterial } from "./sync.ts";
 import { commands, root } from "./commands.ts";
@@ -530,52 +530,81 @@ function resolveConflict(cb: Codebase, name: string, keep: string) {
   console.log(`${name} → ${shortHash(k)}`);
 }
 
+/**
+ * A history entry: a number, how many entries back on this branch (0 is the latest; `tcm history` shows them),
+ * or a hash from any branch's history (a prefix will do; the `#` is optional, since shells read `#…` as a comment).
+ */
+function causalArg(cb: Codebase, ref: string): string {
+  if (/^\d+$/.test(ref)) {
+    const n = Number(ref);
+    const c = cb.store.causalLog(n + 1)[n];
+    if (!c) throw new UsageError(`this branch's history isn't ${n} entries long`);
+    return c.hash;
+  }
+  const hs = cb.store.causalsWithPrefix(ref.replace(/^#/, ""));
+  if (hs.length !== 1) throw new UsageError(hs.length ? `${ref} matches ${hs.length} history entries; give more of the hash` : `no history entry ${ref} (see \`tcm history\`)`);
+  return hs[0]!;
+}
+
+const isHistoryRef = (ref: string) => /^(\d+|#?[a-z2-7]{4,})$/.test(ref) && (/^\d+$/.test(ref) || ref.startsWith("#") || /[2-7]/.test(ref));
+const stateAt = (cb: Codebase, causal: string) => stateOf(cb.store.namespaceRows(cb.store.causal(causal)!.namespace));
+
 function diff(cb: Codebase, args: string[]) {
   const now = stateOf(cb.store.names());
   const irOf = (h: string) => cb.store.getDef(h)!.ir;
-  const since = (afterId: number) => rewind(now, cb.store.history(Number.MAX_SAFE_INTEGER, afterId));
   if (args.length === 0) {
-    const last = cb.store.lastBatch();
-    if (!last) return console.log(dim("no changes yet"));
-    const before = since(last.firstId - 1);
-    return printDiff(cb, diffNamespaces(before, now, irOf), before, now, `changes from \`${last.command}\``);
+    const head = cb.store.causal(cb.store.head())!;
+    if (!head.parents.length) return console.log(dim("no changes yet"));
+    const before = stateAt(cb, head.parents[0]!);
+    return printDiff(cb, diffNamespaces(before, now, irOf), before, now, `changes from \`${head.command}\``);
   }
-  if (args.length === 1 && /^\d+$/.test(args[0]!)) {
-    const before = since(Number(args[0]));
-    return printDiff(cb, diffNamespaces(before, now, irOf), before, now, `changes since history entry ${args[0]}`);
+  if (args.length === 1 && isHistoryRef(args[0]!) && !cb.store.hasBranch(args[0]!)) {
+    const c = causalArg(cb, args[0]!);
+    const before = stateAt(cb, c);
+    return printDiff(cb, diffNamespaces(before, now, irOf), before, now, `changes since ${shortHash(c)}`);
   }
   const [from, to] = args.length === 1 ? [cb.store.branch().name, args[0]!] : [args[0]!, args[1]!];
-  for (const b of [from, to]) if (!cb.store.hasBranch(b)) throw new UsageError(`no branch named '${b}' (and not a history entry id)`);
-  const [before, after] = [stateOf(cb.store.names(from)), stateOf(cb.store.names(to))];
+  const side = (ref: string) => {
+    if (cb.store.hasBranch(ref)) return stateOf(cb.store.names(ref));
+    if (isHistoryRef(ref)) return stateAt(cb, causalArg(cb, ref));
+    if (!cb.store.hasBranch(ref)) throw new UsageError(`no branch named '${ref}' (or history entry: a number or #hash, see \`tcm history\`)`);
+    return stateOf(cb.store.names(ref));
+  };
+  const [before, after] = [side(from), side(to)];
   printDiff(cb, diffNamespaces(before, after, irOf), before, after, `${from} → ${to}`);
 }
 
+/** What changed between two states, name by name. */
+function nameChanges(before: NameState, after: NameState): string[] {
+  const out: string[] = [];
+  const list = (hs: Set<string> | undefined) => [...(hs ?? [])].map((h) => shortHash(h)).join(", ");
+  for (const key of [...new Set([...before.keys(), ...after.keys()])].sort()) {
+    const [b, a] = [before.get(key), after.get(key)];
+    if (b && a && b.size === a.size && [...b].every((h) => a.has(h))) continue;
+    const change = !b ? green(`+ ${list(a)}`) : !a ? red(`- ${list(b)}`) : yellow(`${list(b)} → ${list(a)}`);
+    out.push(`    ${keyPath(key).padEnd(28)} ${change}`);
+  }
+  return out;
+}
+
+/** This branch's history, newest first: each entry, the command that made it, and what it changed. */
 function history(cb: Codebase, limit: number) {
-  let batch: number | undefined;
-  for (const e of cb.store.history(limit)) {
-    if (batch !== undefined && e.batch !== batch) console.log(dim("     ·"));
-    batch = e.batch;
-    const when = new Date(e.ts).toISOString().replace("T", " ").slice(0, 19);
-    const change = e.op === "add" ? green(`+ ${shortHash(e.newHash!)}`) : e.op === "delete" ? red(`- ${shortHash(e.oldHash!)}`) : yellow(`${e.oldHash ? shortHash(e.oldHash) : "∅"} → ${shortHash(e.newHash!)}`);
-    console.log(`${dim(String(e.id).padStart(4))} ${dim(when)}  ${e.path.padEnd(24)} ${change}  ${dim(e.command)}`);
+  const entries = cb.store.causalLog(limit + 1);
+  for (const [i, c] of entries.slice(0, limit).entries()) {
+    if (!c.parents.length) break;
+    const when = new Date(c.ts).toISOString().replace("T", " ").slice(0, 19);
+    const merge = c.parents.length > 1 ? dim(`  merged ${c.parents.slice(1).map((p) => shortHash(p)).join(", ")}`) : "";
+    console.log(`${yellow(shortHash(c.hash))} ${dim(String(i).padStart(3))}  ${dim(when)}  ${c.command}${merge}`);
+    for (const line of nameChanges(stateAt(cb, c.parents[0]!), stateAt(cb, c.hash))) console.log(line);
   }
 }
 
-function reset(cb: Codebase, id: number) {
-  const entries = cb.store.history(Number.MAX_SAFE_INTEGER, id);
-  const cmd = `reset ${id}`;
-  cb.store.transaction(() => {
-    for (const e of entries) {
-      if (e.op === "add") cb.store.removeName(e.path, e.newHash!, cmd);
-      else if (e.op === "delete") cb.store.addName(e.path, e.oldHash!, e.kind, cmd);
-      else {
-        cb.store.removeName(e.path, e.newHash!, cmd);
-        if (e.oldHash) cb.store.addName(e.path, e.oldHash, e.kind, cmd);
-      }
-    }
-  });
+/** Bring back the names as of a history entry: a new entry on top, so history (pushed or not) is never rewritten. */
+function reset(cb: Codebase, target: string) {
+  const c = causalArg(cb, target);
+  const { added, removed } = cb.store.setBranchNames(cb.store.branch().name, cb.store.namespaceRows(cb.store.causal(c)!.namespace), `reset ${shortHash(c)}`);
   cb.refreshShim();
-  console.log(`undid ${entries.length} change${entries.length === 1 ? "" : "s"}`);
+  console.log(added || removed ? `names as of ${shortHash(c)} ${dim(`(${added} added, ${removed} removed)`)}` : dim(`already as of ${shortHash(c)}`));
 }
 
 // ---- watcher ------------------------------------------------------------------------------------------
@@ -1000,7 +1029,7 @@ square(12);
     }
     case "reset": {
       const { model } = execute(cmd, parse(commands.reset, { argv: rest }));
-      reset(cb, model.id ?? (await chooseReset(cb)));
+      reset(cb, model.to ?? (await chooseReset(cb)));
       return 0;
     }
     case "branch": {
@@ -1032,19 +1061,14 @@ function unknownCommand(word: string): string {
   return `unknown command '${word}'${close.length ? `; did you mean ${close.map((c) => `\`tcm ${c}\``).join(" or ")}?` : ""}\n${dim("see `tcm help`")}`;
 }
 
-/** `tcm reset` with no id: which command to undo, back to before it. */
-function chooseReset(cb: Codebase): Promise<number> {
-  const batches = new Map<number, { first: number; command: string; ts: number; n: number }>();
-  for (const e of cb.store.history(200)) {
-    const b = batches.get(e.batch);
-    if (b) (b.first = Math.min(b.first, e.id), b.n++);
-    else batches.set(e.batch, { first: e.id, command: e.command, ts: e.ts, n: 1 });
-  }
-  if (!batches.size) throw new UsageError("nothing to undo on this branch");
+/** `tcm reset` with no entry: which command to undo (it, and everything after it). */
+function chooseReset(cb: Codebase): Promise<string> {
+  const entries = cb.store.causalLog(100).filter((c) => c.parents.length);
+  if (!entries.length) throw new UsageError("nothing to undo on this branch");
   return choose(
-    "reset <id>",
-    "Undo back to before which command? (it and everything after it)",
-    [...batches.values()].map((b) => ({ value: b.first - 1, label: `tcm ${b.command}`, hint: `${b.n} change(s), ${new Date(b.ts).toISOString().replace("T", " ").slice(0, 16)}` })),
+    "reset <n|#hash>",
+    "Undo back to before which command? (it, and everything after it)",
+    entries.map((c) => ({ value: `#${c.parents[0]!}`, label: `tcm ${c.command}`, hint: `${shortHash(c.hash)}, ${new Date(c.ts).toISOString().replace("T", " ").slice(0, 16)}` })),
     false,
   );
 }

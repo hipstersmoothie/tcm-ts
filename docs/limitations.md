@@ -23,4 +23,8 @@ What isn't done yet, or is deliberately out of scope:
 - **Packed packages run outside tcm** ([publishing](publishing.md#what-a-package-can-hold)): what needs
   `tcm dev` or `tcm start` (server functions called from a browser, tables, jobs) has no server there, and
   packages code finds at runtime by name rather than importing them go in with `--with`.
+- **History syncs whole:** pushing or pulling a branch sends every definition its history names, not just its
+  current ones, and each is re-verified on arrival, so a first sync of a long history takes a while.
+- **Criss-cross merges** (two branches that merged each other) have several best common ancestors; tcm merges
+  from the newest one, where git would merge the candidates first.
 - **Transactions lock per process** ([data](data.md#transactions)).

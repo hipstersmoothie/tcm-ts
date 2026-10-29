@@ -92,8 +92,11 @@ export async function main() { document.querySelector("#app")!.textContent = awa
   assert.equal((await call(url, v1.endpoint, ["ada"])).body, `"hello ada from ${os.hostname()}"`);
 
   // roll back by moving the names back: the v1 build is reused
-  const before = /^\s*(\d+)\s.*app\.greeting.*update scratch\.ts/m.exec(tcm("history", "50"))![1]!;
-  tcm("reset", String(Number(before) - 1));
+  // the history entry that changed the greeting, and the one before it
+  const entries = tcm("history", "50").split(/\n(?=#)/);
+  const changed = entries.findIndex((e) => /update scratch\.ts/.test(e) && /app\.greeting/.test(e));
+  const before = String(changed + 1);
+  tcm("reset", before);
   await waitFor(async () => (await loadTab(url)).asset === v1.asset);
 
   // pruning: keep only the current build; a tab still on the removed v2 build is told to reload (410)

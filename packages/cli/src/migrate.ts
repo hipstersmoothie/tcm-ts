@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { IR_VERSION, saltOf, shortHash, type DefRecord } from "@tcm/core";
-import { Store, stateHashOf } from "@tcm/store";
+import { ROOT_CAUSAL, Store } from "@tcm/store";
 import { ensureExternals, externalsOf, layout, materialize, render } from "@tcm/loader";
 import { Codebase } from "./codebase.ts";
 import { dim, green, red, yellow } from "./style.ts";
@@ -41,7 +41,7 @@ function dependencyOrder(old: Store): string[] {
 /**
  * Rebuild a codebase written with an older hash format. Every stored definition (named or not, so history
  * stays meaningful) is re-rendered from its source against its already-migrated dependencies, typechecked, and
- * hashed by the current analyzer; branches, history, patches, todo and remotes are carried over through the
+ * hashed by the current analyzer; branches, history (causals and the name log), patches, todo and remotes are carried over through the
  * old → new hash map. The old `.tcm` directory is kept as a backup.
  */
 export function migrate(root: string): boolean {
@@ -144,15 +144,24 @@ export function migrate(root: string): boolean {
     for (const r of old.db.prepare("SELECT * FROM todo").all() as Row[]) {
       db.prepare("INSERT OR REPLACE INTO todo (branch_id, hash, message) VALUES (?, ?, ?)").run(branchIds.get(r.branch_id as number)!, remap(r.hash), r.message);
     }
-    // settings: the current branch and remotes carry over; a sync fingerprint is translated if it still
-    // describes its tracking branch, so the next push/pull doesn't mistake migration for divergence
-    for (const [k, v] of old.settings("")) {
-      if (k === "branch" || k.startsWith("remote.")) cb.store.setSetting(k, v);
-      const m = /^sync\.([^.]+)\.(.+)$/.exec(k);
-      if (m && old.hasBranch(`${m[1]}/${m[2]}`) && stateHashOf(old.names(`${m[1]}/${m[2]}`)) === v) {
-        cb.store.setSetting(k, cb.store.stateHash(`${m[1]}/${m[2]}`));
-      }
+    // history: every causal again, oldest first, its namespace's definitions through the hash map (so a
+    // codebase whose hashes come back the same gets the same history back, merges and all)
+    const causals = new Map<string, string>([[ROOT_CAUSAL, ROOT_CAUSAL]]);
+    const visit = (h: string): string => {
+      const done = causals.get(h);
+      if (done) return done;
+      const c = old.causal(h)!;
+      const parents = c.parents.map(visit);
+      const rows = old.namespaceRows(c.namespace).flatMap((r) => (map.has(r.hash) ? [{ path: r.path, hash: map.get(r.hash)! }] : []));
+      const next = cb.store.putCausal(cb.store.namespaceOf(rows), parents, c.ts, c.command);
+      causals.set(h, next);
+      return next;
+    };
+    for (const b of old.db.prepare("SELECT id, name FROM branches").all() as Row[]) {
+      db.prepare("UPDATE branches SET head = ? WHERE id = ?").run(visit(old.head(b.name as string)), branchIds.get(b.id as number)!);
     }
+    // settings: the current branch and remotes carry over
+    for (const [k, v] of old.settings("")) if (k === "branch" || k.startsWith("remote.")) cb.store.setSetting(k, v);
   });
   old.close();
   const next = Codebase.find(root);
