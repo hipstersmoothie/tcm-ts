@@ -178,6 +178,7 @@ export class Codebase {
       };
       fs.writeFileSync(tsconfig, JSON.stringify({ compilerOptions: options, include: ["*.ts", "*.tsx"] }, null, 2) + "\n");
     }
+    setUpAgents(root);
     cb.refreshShim(true);
     return cb;
   }
@@ -684,4 +685,30 @@ export class Codebase {
     }
     return { updated, failed: [...failed] };
   }
+}
+
+/**
+ * So AI agents know how to work here: tcm's MCP server in the project's .mcp.json (its instructions and tools
+ * teach the way of working), and a note in AGENTS.md for agents that read that instead. Neither is touched if it
+ * already mentions tcm.
+ */
+function setUpAgents(root: string) {
+  const mcpFile = path.join(root, ".mcp.json");
+  const mcp = fs.existsSync(mcpFile) ? (JSON.parse(fs.readFileSync(mcpFile, "utf8")) as { mcpServers?: Record<string, unknown> }) : {};
+  if (!mcp.mcpServers?.tcm) {
+    mcp.mcpServers = { ...(mcp.mcpServers ?? {}), tcm: { command: "tcm", args: ["mcp"] } };
+    fs.writeFileSync(mcpFile, JSON.stringify(mcp, null, 2) + "\n");
+  }
+  const agents = path.join(root, "AGENTS.md");
+  const had = fs.existsSync(agents) ? fs.readFileSync(agents, "utf8") : "";
+  if (/\btcm\b/.test(had)) return;
+  const note = `## tcm
+
+This project's code is a tcm codebase (.tcm/codebase.sqlite), not source files: definitions are stored by hash and
+changed through tcm. Use the tcm MCP server's tools (configured in .mcp.json: tcm_status, tcm_find, tcm_view,
+tcm_edit, tcm_update, tcm_test, tcm_guide), or the CLI: \`tcm edit <name>\` writes definitions to a scratch file,
+\`tcm update\` saves it and re-hashes what depends on it, \`tcm todo\` lists what stopped typechecking, \`tcm test\`
+runs tests (cached by hash). Don't edit files under .tcm/. \`tcm help\` lists every command.
+`;
+  fs.writeFileSync(agents, had ? `${had.trimEnd()}\n\n${note}` : `# Agents\n\n${note}`);
 }

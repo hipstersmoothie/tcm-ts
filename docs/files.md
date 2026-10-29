@@ -6,6 +6,8 @@ What `tcm init` creates, what tcm writes as it works, and what to keep in versio
 myproject/
   package.json            "#codebase" and "#tcm/server" imports; your npm dependencies
   tsconfig.json           compiler options (see compiler options)
+  .mcp.json               tcm mcp, the tools AI agents use to work in the codebase (see agents)
+  AGENTS.md               a note for agents on working in a codebase (added to, if you have one)
   scratch.ts              where you write; any top-level .ts or .tsx file is a scratch file
   .tcm/
     codebase.sqlite       the codebase: definitions, names, history, branches, patches, todo
@@ -28,7 +30,8 @@ myproject/
   too.
 - **`.tcm/data/`** is your app's data. Back it up like any database; don't commit it (it holds sessions), and
   don't commit `secret` or `tls/` either.
-- **`package.json`, `tsconfig.json`** are worth committing: they're your project's packages and compiler settings.
+- **`package.json`, `tsconfig.json`** are worth committing: they're your project's packages and compiler settings,
+  and so are `.mcp.json` and `AGENTS.md`, so the agents anyone uses here know how to work in it ([agents](agents.md)).
 - **Scratch files** are optional to keep: once code is added, it lives in the codebase.
 
 `tcm init` writes `.tcm/.gitignore`, which leaves only `codebase.sqlite` to commit: generated directories, app

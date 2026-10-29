@@ -41,6 +41,7 @@ New here? Read the [introduction](introduction.md), then follow [your first code
 | [Background jobs](jobs.md) | queued and recurring jobs |
 | [Deploying](production.md) | production builds, deploying and rolling back by moving a name |
 | [Editor](editors.md) | VS Code (and other editors): status, pages, apps, data |
+| [AI agents](agents.md) | `tcm mcp`: tools and instructions that teach coding agents to work in a codebase |
 
 ## Reference
 

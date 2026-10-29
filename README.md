@@ -25,6 +25,9 @@ tcm add           # save new definitions from scratch.ts
 - **A content-addressed codebase.** Scratch files are ordinary TypeScript. `tcm add`/`update` store
   definitions by hash; updates re-hash dependents automatically, and what stops typechecking goes to `todo`.
   [Getting started](docs/getting-started.md) · [hashing](docs/hashing.md) · [CLI](docs/cli.md)
+- **AI agents work in it.** `tcm mcp` gives coding agents (Claude Code, Cursor, …) tools and instructions for the
+  codebase's way of working: find, edit in a scratch file, update, fix what broke, test. `tcm init` sets it up.
+  [Agents](docs/agents.md)
 - **Editor integration.** The codebase in a VS Code sidebar, pages for definitions and namespaces (rendered docs,
   linked source, uses and used-by), one finder for names, docs and types, apps you can start, a table viewer;
   in scratch files, each definition's status with Add/Update actions and watch values inline. `tcm lsp` serves

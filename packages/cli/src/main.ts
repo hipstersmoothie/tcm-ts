@@ -14,6 +14,7 @@ import { checkDocExamples, renderDoc } from "./docs.ts";
 import { build, dev, listBuilds, migrateTable, parseHttpFlag, pruneBuilds, start } from "./web.ts";
 import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
+import { serveMcp } from "./mcp.ts";
 import { checkMirror, joinName, linkMirror, loadMirror, namespaceForFile, recordRelease, releaseCommit, replayReleases, sourceFiles, unlinkMirror } from "./mirror.ts";
 import { evaluateCached, isTestPath, printOutcomes, runCached, summary } from "./testing.ts";
 import { listPackages, upgradeTo, upgradeWithin } from "./upgrade.ts";
@@ -746,6 +747,12 @@ square(12);
     return 0;
   }
   // the editor says where the workspace is (initialize), so the codebase is found then
+  // agents connect before there may be a codebase; each tool runs tcm itself, so this stays out of the way
+  if (cmd === "mcp") {
+    execute(cmd, parse(commands.mcp, { argv: rest }));
+    await serveMcp(cwd, [process.execPath, ...process.execArgv, process.argv[1]!], `TypeScript ${TS_VERSION}`);
+    return 0;
+  }
   if (cmd === "lsp") {
     execute(cmd, parse(commands.lsp, { argv: rest }));
     sendRunnerOutputToStderr();

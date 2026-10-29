@@ -21,6 +21,7 @@ or option a command doesn't take is an error naming it.
 | `tcm init` | set up a codebase here: `.tcm/codebase.sqlite`, `package.json` `#codebase` imports, `tsconfig.json`, `scratch.ts` |
 | `tcm` / `tcm watch [--fresh]` | watch `*.ts` scratch files: typecheck, hash, report, evaluate watch expressions and tests. Their results are cached by hash; `--fresh` re-runs them |
 | `tcm lsp [--stdio]` | language server for editors, over stdio ([editors](editors.md)) |
+| `tcm mcp` | tools for AI agents to work in the codebase: a Model Context Protocol server, over stdio ([agents](agents.md)) |
 | `tcm complete <shell>` | a completion script for zsh, bash, fish or powershell, completing names from the codebase too |
 | `tcm check [file] [--fresh]` | one-shot version of watch. Reports each definition as `new` / `identical` / `update` / `alias` / `conflict` |
 | `tcm add [file] [--into ns]` | save new definitions from a scratch file (default `scratch.ts`) |

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tcm": {
+      "command": "sh",
+      "args": ["scripts/codebase.sh", "mcp"]
+    }
+  }
+}

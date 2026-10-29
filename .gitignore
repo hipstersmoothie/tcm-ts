@@ -4,3 +4,5 @@ dist/
 selfhost/tsconfig.json
 selfhost/scratch.ts
 codebase/
+selfhost/.mcp.json
+selfhost/AGENTS.md

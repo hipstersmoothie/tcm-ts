@@ -237,6 +237,7 @@ export const commands = {
     ...tls,
     toggle(name("insecure"), description("allow clear-text tokens beyond localhost")),
   ),
+  mcp: command(name("mcp"), description("tools for AI agents to work in the codebase: a Model Context Protocol server (stdio)")),
   lsp: command(name("lsp"), description("language server for editors (stdio)"), toggle(name("stdio"), description("accepted for editors that pass it; stdio is the only transport"))),
   complete: command(name("complete"), description("shell completion: `source <(tcm complete zsh)` (or bash, fish, powershell)"), argument(name("shell"), description("zsh, bash, fish or powershell"), schema(text(null)))),
 };
@@ -244,7 +245,7 @@ export const commands = {
 /** Sections of `tcm help`, in order; every command is in one. */
 export const SECTIONS: [string, string[]][] = [
   ["Codebase", ["init", "watch", "check", "add", "update", "import", "edit", "view", "ls", "find", "deps", "dependents", "docs", "run", "mv", "alias", "rm", "todo", "resolve", "mirror"]],
-  ["Tools", ["test", "lint", "fmt", "verify", "lsp", "complete"]],
+  ["Tools", ["test", "lint", "fmt", "verify", "lsp", "mcp", "complete"]],
   ["Packages and releases", ["packages", "upgrade", "release", "releases", "changelog", "pack"]],
   ["History and branches", ["diff", "history", "reset", "branch", "switch", "merge"]],
   ["Apps, data and jobs", ["dev", "build", "start", "apps", "data", "jobs"]],

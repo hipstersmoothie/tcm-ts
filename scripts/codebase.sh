@@ -6,9 +6,10 @@ set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$REPO/codebase"
 cd "$REPO/codebase"
+# (what making it prints goes to stderr: `pnpm tcm mcp`'s stdout is the protocol channel)
 if [ ! -f .tcm/codebase.sqlite ]; then
   node "$REPO/packages/cli/bin/tcm.js" init > /dev/null
   rm -f scratch.ts
-  node "$REPO/packages/cli/bin/tcm.js" import ../packages --into tcmts --tests --mirror
+  node "$REPO/packages/cli/bin/tcm.js" import ../packages --into tcmts --tests --mirror >&2
 fi
 exec node "$REPO/packages/cli/bin/tcm.js" "$@"

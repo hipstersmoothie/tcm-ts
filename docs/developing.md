@@ -67,6 +67,9 @@ pnpm tcm mv tcmts.core.semver.meetsComparator tcmts.core.semver.matchesComparato
 pnpm tcm test tcmts                            # the tests the change reaches, the rest cached
 ```
 
+Agents work on tcm the same way: the repository's `.mcp.json` runs [`tcm mcp`](agents.md) on this codebase
+(`pnpm tcm mcp`), so an MCP client opened in the repository gets tcm's tools and instructions.
+
 Editing `packages/` directly still works: `pnpm tcm import ../packages --into tcmts --tests --update` takes the
 edits (and links the mirror again). Delete `codebase/` to start over from `packages/`.
 

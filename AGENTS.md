@@ -4,6 +4,13 @@ tcm-ts is Unison's content-addressed codebase model for plain TypeScript, plus a
 (inferred client/server placement, server functions, jobs, typed tables). Start with
 [docs/README.md](docs/README.md); [docs/developing.md](docs/developing.md) has the repo layout.
 
+## Working in tcm's codebase
+
+tcm is developed in its own codebase, which mirrors `packages/` ([developing](docs/developing.md#working-on-tcm-in-tcm)).
+With the tcm MCP server (this repository's `.mcp.json`), use its tools: tcm_find and tcm_view to read,
+tcm_edit then tcm_update to change, tcm_todo, tcm_test. Without it, `pnpm tcm <command>` is the CLI. Changes made
+through tcm are written to `packages/`, which is what's committed.
+
 ## Keep the docs current
 
 `docs/` documents every user-visible feature, one page per area (index in `docs/README.md`). It describes what
