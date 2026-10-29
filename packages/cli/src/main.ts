@@ -1722,12 +1722,20 @@ export function fileRows(cb: Codebase, file: string, into: string | undefined): 
  * has it, and one gone from the files goes from the codebase.
  */
 export function importAssets(cb: Codebase, root: string, dir: string, mode: "add" | "update", into: string, verbose: boolean, exclude: string[], following?: Mirror): Map<string, string> | undefined {
-  const files = assetFiles(root, new Set(exclude.map((e) => path.resolve(root, e))));
-  const names = new Set(files.map((f) => assetName(root, into, f)));
-  const planned: { def: DefRecord; path: string; warnings: string[] }[] = [];
   let failed = false;
-  for (const f of files) {
-    const name = assetName(root, into, f);
+  // a file that can't be named in the codebase (a dot in its name) is a problem with it, said, not a stop
+  const named = assetFiles(root, new Set(exclude.map((e) => path.resolve(root, e)))).flatMap((f) => {
+    try {
+      return [{ f, name: assetName(root, into, f) }];
+    } catch (e) {
+      console.log(red(`${path.relative(root, f)}: ${(e as Error).message}`));
+      failed = true;
+      return [];
+    }
+  });
+  const names = new Set(named.map((n) => n.name));
+  const planned: { def: DefRecord; path: string; warnings: string[] }[] = [];
+  for (const { f, name } of named) {
     const { def, problems, warnings } = fileDefinition(cb, name, assetFormat(f), fs.readFileSync(f), names);
     for (const p of problems) console.log(red(`${path.relative(root, f)}: ${p}`));
     failed ||= problems.length > 0;

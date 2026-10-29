@@ -62,7 +62,8 @@ can be a namespace of files instead of a path ([publishing](publishing.md#packag
 
 In a [mirror](importing.md#mirrors), the files under the mirrored directory that aren't code or configuration
 (Markdown, CSS, images; not JSON, YAML or TOML) are files of the codebase, written back as they change. So is
-everything in a directory with a `.tcm-files` file in it, code included: example projects, kept as written.
+everything in a directory with a `.tcm-files` file in it, code included: example projects, an editor extension,
+kept as written. The mark's lines are patterns of what to leave out, as in a `.gitignore` (`*.vsix`).
 
 tcm's own docs are files of its codebase (`tcmts.docs`, mirrored to `packages/docs/`), and its docs site is built
 from them by a definition (`pnpm docs:site`, which is `pnpm tcm run tcmts.dev.site`). `pnpm verify` builds it too,

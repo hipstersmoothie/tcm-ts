@@ -529,7 +529,7 @@ export const testVscodeRegistersNoServerCommands = () => withChildren(async (kee
   const c = client(keep);
   const init = await c.request("initialize", { processId: null, rootUri: null, capabilities: {}, clientInfo: { name: "Visual Studio Code" } });
   const offered: string[] = init.capabilities.executeCommandProvider.commands;
-  const extension = fs.readFileSync(repoPath("editors/vscode/extension.js"), "utf8");
+  const extension = fs.readFileSync(repoPath("packages/editors/vscode/extension.js"), "utf8");
   const registered = [...extension.matchAll(/registerCommand\("([^"]+)"/g)].map((m) => m[1]);
   assert.ok(registered.length > 10);
   assert.deepEqual(registered.filter((r) => offered.includes(r)), [], "both registering one fails the client's start: 'command already exists'");

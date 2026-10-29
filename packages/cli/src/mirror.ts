@@ -1050,14 +1050,18 @@ export function mentions(sf: ReturnType<typeof ts.parse>, name: string): boolean
 /**
  * The files under a mirrored directory that aren't code (Markdown, CSS, images): files of the codebase.
  */
-export function assetFiles(dir: string, exclude: Set<string>, marked = false): string[] {
-  // in a directory marked as holding files, all of it is
-  const all = marked || fs.existsSync(path.join(dir, FILES_MARK));
+export function assetFiles(dir: string, exclude: Set<string>, marked?: { at: string; skip: string[] }): string[] {
+  // in a directory marked as holding files, all of it is, but what the mark's lines leave out (like .gitignore's:
+  // `*.vsix`)
+  const mark = path.join(dir, FILES_MARK);
+  const within = marked ?? (fs.existsSync(mark) ? { at: dir, skip: fs.readFileSync(mark, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")) } : undefined);
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
     if (exclude.has(path.resolve(p)) || e.name.startsWith(".")) return [];
-    if (e.isDirectory()) return ["node_modules", "dist", "build"].includes(e.name) ? [] : assetFiles(p, exclude, all);
-    return all || isAsset(e.name) ? [p] : [];
+    const rel = within && path.relative(within.at, p);
+    if (rel && within.skip.some((g) => path.matchesGlob(rel, g) || path.matchesGlob(e.name, g))) return [];
+    if (e.isDirectory()) return ["node_modules", "dist", "build"].includes(e.name) ? [] : assetFiles(p, exclude, within);
+    return within || isAsset(e.name) ? [p] : [];
   });
 }
 

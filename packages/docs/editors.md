@@ -102,7 +102,7 @@ and open as pages.
 
 ## VS Code
 
-`editors/vscode` is the extension. Beyond starting `tcm lsp` in workspaces with a codebase, it adds:
+`packages/editors/vscode` is the extension. Beyond starting `tcm lsp` in workspaces with a codebase, it adds:
 
 The `#` icon in the activity bar opens these views:
 
@@ -157,7 +157,7 @@ All five refresh when the codebase changes (including from a terminal), and the 
 does, so rows appear as a running app writes them.
 - **tcm: Find by type** (the search icon in the sidebar, or the command palette): type a TypeScript type, pick a
   match, and it opens.
-- **A TypeScript server plugin** (`editors/vscode/ts-plugin`, loaded through VS Code's
+- **A TypeScript server plugin** (`packages/editors/vscode/ts-plugin`, loaded through VS Code's
   `typescriptServerPlugins`): Go to Definition skips tcm's generated modules, so Cmd+click on a codebase name
   lands on its source rather than offering `.tcm/cache/<hash>.ts` too. Reload the window after installing.
 - **tcm: Add / Update**, which save the file first; **Rename** and **Edit** ask for names when run from the
@@ -169,7 +169,7 @@ Build a `.vsix` (the first `npx` downloads vsce, which takes a while) and instal
 Install from VSIX…**, or with VS Code's CLI (on macOS it's inside the app if `code` isn't on your PATH):
 
 ```sh
-cd editors/vscode && npm install && npx @vscode/vsce package
+cd packages/editors/vscode && npm install && npx @vscode/vsce package
 "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --install-extension tcm-ts-*.vsix
 ```
 
@@ -187,7 +187,7 @@ Any LSP client can run `tcm lsp` for TypeScript files, next to its TypeScript se
 the codebase directory (or inside it).
 
 Packages tcm provides (ones the project hasn't installed; see [packages](packages.md)) are resolved for the
-editor by tcm's TypeScript plugin, `editors/vscode/ts-plugin`. Load it in your TypeScript server (as a
+editor by tcm's TypeScript plugin, `packages/editors/vscode/ts-plugin`. Load it in your TypeScript server (as a
 `tsserver` plugin) to get the same resolution; without it, TypeScript reports those imports as missing, though
 tcm's own checks and diagnostics are unaffected.
 

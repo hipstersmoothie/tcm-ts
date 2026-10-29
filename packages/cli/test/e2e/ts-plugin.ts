@@ -9,9 +9,9 @@ import { plainEnv, repoPath, tcmBin, tempDir } from "./harness.ts";
 
 type Plugin = () => { create(info: { languageService: ts.LanguageService }): ts.LanguageService };
 
-/** The VS Code extension's TypeScript plugin (editors/vscode/ts-plugin). */
+/** The VS Code extension's TypeScript plugin (packages/editors/vscode/ts-plugin). */
 function vscodePlugin(): Plugin {
-  const file = repoPath("editors/vscode/ts-plugin/index.js");
+  const file = repoPath("packages/editors/vscode/ts-plugin/index.js");
   return createRequire(file)(file) as Plugin;
 }
 
