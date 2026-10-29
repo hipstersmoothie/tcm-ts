@@ -77,7 +77,7 @@ a scratch file:
 | neverthrow | 51 | `strict: false`, kept as its check profile |
 | ts-pattern | 247 | namespace imports (`P.infer<…>`), `declare const` |
 | valibot (`library/src`, `--exclude vitest`) | 941 | 573 files in 4s; module state, `@ts-expect-error` above overloads |
-| tcm-ts itself | `packages/` | see [self-hosting](developing.md#self-hosting) |
+| tcm-ts itself | `packages/` | see [verifying a change](developing.md#verifying-a-change) |
 
 ## What import mode accepts beyond scratch files
 

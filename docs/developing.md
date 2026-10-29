@@ -11,7 +11,7 @@ packages/
             #tcm/server runtime, the wire codec
 editors/    vscode/: the VS Code extension (a thin client for `tcm lsp`; not part of the npm package)
 examples/   polls/: an example app, built and run in a browser by packages/cli/test/e2e/examples.ts
-scripts/    build.sh (npm package), selfhost.sh, verify.sh, codebase.sh (`pnpm tcm`), docs-site.ts, docs-dev.ts, compare-compilers.sh
+scripts/    codebase.sh (`pnpm tcm`), docs-site.ts, docs-dev.ts, compare-compilers.sh (verifying is a definition: packages/dev.ts)
 docs/       user documentation, one page per feature area
 ```
 
@@ -35,17 +35,15 @@ written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything i
 
 | Command | |
 |---|---|
-| `pnpm verify` | everything a commit needs: typecheck, then `pnpm selfhost`; prints each stage's result and time and names failing tests. When all pass, the package tested becomes the [known-good tcm](#the-known-good-tcm) |
-| `pnpm test` | all suites from source, the quick run while working (a commit's run is selfhost's, against the package): hashing invariants, frozen golden hashes, and end-to-end CLI scenarios (sync, merge, web apps in real Chrome, production, jobs, data, import) |
+| `pnpm verify` | everything a commit needs, from tcm's codebase ([below](#verifying-a-change)); names failing tests. When all pass, the package tested becomes the [known-good tcm](#the-known-good-tcm) |
+| `pnpm test` | every test from source with `node:test`, through the runners beside them: hashing invariants, frozen golden hashes, and end-to-end CLI scenarios (sync, merge, web apps in real Chrome, production, jobs, data, import) |
 | `pnpm typecheck` | typecheck the repo (TypeScript 7's `tsc`) |
-| `pnpm selfhost` | the self-hosting check below |
 | `pnpm docs:dev` | serve the docs site locally (port 4321, or the next free one), rebuilding and reloading open pages when `docs/` or `examples/` change |
 | `pnpm docs:site` | build the docs site (`docs/*.md` and the examples page) into `dist/site`; it fails on any broken link or anchor. A GitHub Actions workflow (`.github/workflows/docs.yml`) builds and deploys it to GitHub Pages on pushes to `main` |
 | `pnpm compare-compilers` | hash the repo with TypeScript 7 and with [tsrs](compiler-options.md#the-compiler), and run the golden test with tsrs; hashes must match |
 
-`pnpm verify` should pass before a commit. It runs the suites once, against the package built from tcm's
-codebase: that run covers the source (the codebase is imported from it), the codebase (the package is rendered
-from it) and the packaging at once.
+`pnpm verify` should pass before a commit: it checks the codebase, its tests against its own tcm, and the
+package packed from it, [below](#verifying-a-change).
 
 tcm's tests are [test definitions](testing.md), in its own codebase like the code they test. Those that call code
 directly (the core and store tests, the CLI's server-component and highlighting tests) are in
@@ -87,31 +85,37 @@ and its end-to-end tests as [suites](testing.md#suites-testing-a-command-as-a-pr
 tcm (`tcmts.cli.test.e2e`, in `packages/cli/test/e2e/`), each only if code it ran changed. And `TCM_LIVE=1 pnpm tcm <command>` runs `packages/` as it is, to try a change before verifying it. Before
 the first `pnpm verify`, there's no known-good build, and `pnpm tcm` says so and runs `packages/`.
 
-## Self-hosting
+## Verifying a change
 
-`pnpm selfhost` runs `pnpm build` (which imports `packages/` into `selfhost/.tcm` and packs tcm from it) and
-then:
+`pnpm verify` is `pnpm tcm run tcmts.dev.verify`: a definition in tcm's codebase (`packages/dev.ts`), run with
+the codebase's own tcm, which `tcm run` gives it as `TCM_BIN`. It checks, printing each stage's result and time:
 
-1. runs `tcm verify` with the **self-hosted** tcm: every definition round-trips to its own hash;
-2. runs tcm's test definitions with the self-hosted `tcm test --definitions` (imported with `--tests`), then again: the second
-   run must be all cached. Afterwards, a change to one definition re-runs only the tests that reach it;
-3. checks the fixed point: the self-hosted tcm imports `packages/` again and assigns exactly the same hashes;
-4. checks the self-hosted tcm works far from this repository (it makes a codebase in a temporary directory);
-5. installs the package `pnpm build` packed from the codebase and runs the whole test suite against it
-   (`TCM_BIN=<it>/bin/tcm.js`).
+1. **codebase**: nothing needs fixing (`tcm todo`), and every definition renders and re-hashes to itself
+   (`tcm verify`);
+2. **files**, while the codebase is mirrored to `packages/`: the files hash to what it holds (`tcm mirror
+   --check`: the fixed point, this tcm reading its own source as the codebase it is), and typecheck (`tsc`);
+3. **tests**: `tcm test tcmts`, the test definitions and the end-to-end tests, each run against this tcm;
+4. **package**: the `tcm-ts` package packed from the codebase installs (into `dist/candidate`), works far from
+   the repository (it makes a codebase in a temporary directory), and passes the end-to-end tests too
+   (`tcm test --bin tcm=<it>`).
 
-Getting there took two small refactors, both now enforced by the tool. A top-level `for` loop that filled a
-lookup table became an immediately-invoked function, and the CLI's top-level `try` moved into an exported
-`runCli`. Running from a codebase also means a module's exports are named by hash, so code that tells another
-process where to import something from says which export too: `transpileModule()` gives the module hook its
-URL and export name (a function in a codebase carries its hash at runtime, and the hash names its export).
+Tests run again only where code they ran changed, against each build, so a small change verifies in well under a
+minute; one that every test runs (the `Codebase` class, say) takes a few. When everything passes, the package
+becomes the [known-good tcm](#the-known-good-tcm).
+
+Getting tcm to run from its own codebase took two small refactors, both now enforced by the tool. A top-level
+`for` loop that filled a lookup table became an immediately-invoked function, and the CLI's top-level `try`
+moved into an exported `runCli`. Running from a codebase also means a module's exports are named by hash, so
+code that tells another process where to import something from says which export too: `transpileModule()` gives
+the module hook its URL and export name (a function in a codebase carries its hash at runtime, and the hash names
+its export).
 
 ## Packaging
 
 `tcm-ts`, the npm package, is a [package](publishing.md#packages) of tcm's own codebase: its manifest is
 `packages/index.ts` (the `tcm` and `tcm-ts` bins run `tcmts.cli.main.runCli`, `tcm-ts/core` exports the
-analyzer). `pnpm build` packs it into `dist/package` from tcm's codebase (built afresh in `selfhost/.tcm`, its
-releases made again from git), with dependencies pinned at the codebase's locked versions. At a release it's that
+analyzer). `pnpm build` packs it into `dist/package` from tcm's codebase (`codebase/`, its releases made again from git
+when it was made), with dependencies pinned at the codebase's locked versions. At a release it's that
 release; otherwise it's the code as it is, as `0.0.0`.
 
 Releasing is [`tcm release`](releases.md), in tcm's codebase, from committed files:

@@ -31,13 +31,10 @@ the code does *now*.
 
 ## Verifying a change
 
-Run `pnpm verify` before committing (about three minutes); it names any failing tests. It runs:
-
-```sh
-pnpm typecheck
-pnpm selfhost       # tcm-ts imports and verifies its own source, runs its tests from the codebase, checks the
-                    # fixed point, packs tcm-ts from the codebase and runs every suite against it
-```
+Run `pnpm verify` before committing; it names any failing tests. It's a definition in tcm's codebase
+(`tcmts.dev.verify`, run with `pnpm tcm run`): it checks the codebase (`tcm todo`, `tcm verify`), that the files
+hash to it and typecheck, runs its tests against its own tcm, and packs tcm-ts and runs the end-to-end tests
+against that. Tests run again only where code they ran changed, so it takes seconds to a few minutes.
 
 `pnpm test` runs the suites from source: the quick check while working.
 

@@ -258,8 +258,10 @@ export function suitesIn(cb: Codebase, ns: string): Suite[] {
 }
 
 /**
- * What a build of a command is: a fingerprint of the package it's in (its files, but installed packages), so
- * results against it are kept until it changes.
+ * What a build of a command is: a fingerprint of the code in the package it's in (its scripts and manifests), so
+ * results against it are kept until that changes. Not its docs, its installed packages, nor its modules: a packed
+ * module is named by its component's hash, and whether one a test ran changed is judged by the code it ran, as
+ * in the codebase.
  */
 export function buildOf(file: string): string {
   let root = path.dirname(file);
@@ -269,8 +271,8 @@ export function buildOf(file: string): string {
     for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (e.name !== "node_modules") walk(p);
-      } else h.update(`${path.relative(root, p)}\0`).update(fs.readFileSync(p)).update("\0");
+        if (e.name !== "node_modules" && !(e.name === "modules" && dir === root)) walk(p);
+      } else if (/\.(m|c)?js$|\.json$/.test(e.name)) h.update(`${path.relative(root, p)}\0`).update(fs.readFileSync(p)).update("\0");
     }
   };
   walk(root);

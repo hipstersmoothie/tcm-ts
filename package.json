@@ -9,10 +9,9 @@
     "test": "node --test --disable-warning=ExperimentalWarning 'packages/*/test/**/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json",
     "tcm": "scripts/codebase.sh",
-    "verify": "scripts/verify.sh",
-    "selfhost": "scripts/selfhost.sh",
+    "verify": "sh scripts/codebase.sh run tcmts.dev.verify",
     "compare-compilers": "scripts/compare-compilers.sh",
-    "build": "scripts/build.sh",
+    "build": "sh scripts/codebase.sh pack tcm-ts --out ../dist/package",
     "docs:site": "node scripts/docs-site.ts",
     "docs:dev": "node scripts/docs-dev.ts"
   },

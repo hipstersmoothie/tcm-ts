@@ -123,5 +123,5 @@ A packed package runs on its own, without tcm. Code that only makes sense under 
 but has no app server to talk to: a server function the browser calls, typed tables and background jobs. Use
 an app for those ([apps](apps.md), [deploying](production.md)).
 
-tcm itself is packed this way: `pnpm selfhost` makes tcm's package from tcm's own codebase, and the test suite
-passes against it ([developing](developing.md#self-hosting)).
+tcm itself is packed this way: `pnpm verify` makes tcm's package from tcm's own codebase, and the test suite
+passes against it ([developing](developing.md#verifying-a-change)).
