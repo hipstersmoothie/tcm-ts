@@ -86,7 +86,8 @@ nothing to do
 ## Editing what's saved
 
 `tcm edit <name>...` is also how you change anything: it writes definitions into `scratch.ts` (refusing to
-overwrite a file with something in it; `--file other.ts` picks another, `--force` overwrites). Edit, then
+overwrite a file holding work, anything not saved as it is; `--file other.ts` picks another, `--force`
+overwrites). Edit, then
 `tcm update`. You can edit several at once, from different namespaces: each gets a `// tcm: path a.b.c` comment
 when its path isn't the file's namespace plus its name, so `update` puts it back where it came from.
 

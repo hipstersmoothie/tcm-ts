@@ -7,6 +7,9 @@ tcm lints with [oxlint](https://oxc.rs/docs/guide/usage/linter), with nothing to
   to `"error"` stops the save;
 - on the codebase: `tcm lint [namespace]`.
 
+`tcm check` and saving look only at code that's new or changed. A definition in a cycle with one you changed is
+saved with it and re-hashed, but its code is as it was, so it isn't linted.
+
 ```text
 $ tcm lint
 ui.Pic #uds7r4nm

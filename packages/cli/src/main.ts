@@ -134,7 +134,7 @@ function check(cb: Codebase, file: string, into?: string, fresh = false): boolea
   console.log(`${bold(path.basename(file))}${a.namespace || into ? dim(` → ${into ?? a.namespace}`) : ""}`);
   if (rows.length) printRows(rows);
   else if (!a.watches.length) console.log(dim("  (no definitions)"));
-  printScratchLint(cb, file);
+  printScratchLint(cb, file, a.defs.length ? changedCode(cb, rows) : undefined);
   if (a.watches.length) {
     const results = evaluateCached(cb, a.watches, cb.source([...a.defs, ...a.watches]), fresh);
     for (const w of a.watches) {
@@ -176,7 +176,7 @@ function save(cb: Codebase, file: string, mode: "add" | "update", into?: string)
     }
   }
   // lint what's being saved: warnings are shown, errors (rules set to "error" in lint.config) stop the save
-  const saving = rows.filter((r) => r.status !== "identical").flatMap((r) => (r.def as ProjectDef).range ?? []);
+  const saving = changedCode(cb, rows);
   if (saving.length && printScratchLint(cb, file, saving)) {
     console.log(red(`\n${path.basename(file)} has lint errors; nothing was saved. Fix them, or set the rule to "warn" in ${LINT_CONFIG}.`));
     return false;
@@ -498,7 +498,8 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
   // JSX only parses in a .tsx file: the default scratch file follows what's being edited
   const jsx = targets.some((t) => (t.startsWith("#") ? [cb.lookupOne(t)] : cb.lookup(t)).some((h) => cb.store.getDef(h)?.jsx));
   const file = typeof target === "string" ? target : target(jsx);
-  if (fs.existsSync(file) && fs.readFileSync(file, "utf8").trim() && !force) {
+  // a scratch file holding only what's saved has nothing to lose
+  if (fs.existsSync(file) && fs.readFileSync(file, "utf8").trim() && !force && !holdsOnlySaved(cb, file)) {
     throw new UsageError(`${path.basename(file)} is not empty; pass --force to overwrite or --file <other.ts>`);
   }
   const pathOf = new Map<string, string | undefined>();
@@ -1393,3 +1394,29 @@ export function followMirror(cb: Codebase) {
     process.stdout.write = write;
   }
 }
+
+/**
+ * Where a scratch file's changed code is: definitions new or changed, leaving out ones re-hashed only because they
+ * refer to one that changed and back (a cycle's members are hashed together; a member's IR is as it was, but for
+ * the positions it refers to the others by, which a change to one can reorder).
+ */
+export function changedCode(cb: Codebase, rows: Row[]): { start: number; end: number }[] {
+  return rows
+    .filter((r) => r.status !== "identical" && r.status !== "doc" && !cb.store.hashesAt(r.path, r.def.kind).some((h) => withoutCyclePositions(cb.store.getDef(h)?.ir ?? "") === withoutCyclePositions(r.def.ir)))
+    .flatMap((r) => (r.def as ProjectDef).range ?? []);
+}
+
+/**
+ * Whether every definition in a scratch file is saved as it is (and nothing else is in it: a watch expression, code that doesn't check).
+ */
+export function holdsOnlySaved(cb: Codebase, file: string): boolean {
+  cb.refreshShim();
+  const a = cb.analyze(file, cb.scratchSalts());
+  if (a.errors.length || a.diagnostics.length || a.watches.length || !a.defs.length) return false;
+  return classify(cb, a.defs, a.namespace ?? "").every((r) => r.status === "identical");
+}
+
+/**
+ * A definition's IR without the positions of the cycle members it refers to.
+ */
+export const withoutCyclePositions = (ir: string) => ir.replace(/\["Cyc","\d+"\]/g, '["Cyc"]');
