@@ -30,13 +30,18 @@ and the rest of each file stays as written (comments, import style, barrels):
 - **An edited definition** (`tcm edit`, then `tcm update`; a merge; a pull) is replaced where it is in its file. What
   it refers to is spelled the way the file already spells it (`ts.Node` through a namespace import, `parse` through
   a named one); imports it needs are added, and ones it stopped using are removed.
-- **A new definition** goes at the end of its namespace's file; **a removed one** is deleted.
+- **A new definition** goes at the end of its namespace's file; **a removed one** is deleted. A namespace no file
+  is for yet gets one, where the mirror reads it back as that namespace: next to a sibling namespace's file, in
+  its parent's directory, or by the namespace's path.
 - **A rename** (`tcm mv`) is made at every reference, as an editor's rename would: named imports, namespace
-  imports (`math.twice`), shorthand properties (`{ double: twice }`), re-exports. A function's or class's name is
-  part of its hash (code sees it as `.name`), so the codebase then takes the renamed code.
+  imports (`math.twice`), shorthand properties (`{ double: twice }`), re-exports. It reaches the files near the
+  mirror that use the name too (the rest of its git repository: scripts, tests, an editor extension), though
+  only the mirror's files are checked. A function's or class's name is part of its hash (code sees it as
+  `.name`), so the codebase then takes the renamed code.
 - **Dependents re-hashed** by an update, and packages upgraded, don't change any text: their files stay as they are.
 - **The files' style is kept:** a mirrored codebase stores code as written (not reformatted), and `tcm edit`
-  gives it back that way.
+  gives it back that way. Code edited in a scratch file is stored as its file spells it once it's written back,
+  so a scratch file's spellings (`import nodePath from "node:path"`) don't reach the files later.
 
 After writing, the files are analyzed again and must hash to what the codebase holds; if they don't, they're put
 back as they were and tcm says why. A file changed by hand since tcm last saw it isn't overwritten: write-back

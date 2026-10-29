@@ -338,6 +338,26 @@ export function syncMirror(cb: Codebase): boolean {
   const byNs = new Map(Object.entries(m.files).map(([rel, f]) => [f.ns, rel]));
   const now = new Map<string, Record<string, string>>();
   for (const f of Object.values(m.files)) now.set(f.ns, namesIn(cb, f.ns));
+  const problems: string[] = [];
+  // a definition in a namespace no file is for yet: its file is made, where the namespace says it goes
+  const created: string[] = [];
+  for (const n of cb.store.names()) {
+    if (!n.path.startsWith(m.into ? `${m.into}.` : "")) continue;
+    const ns = n.path.slice(0, n.path.lastIndexOf("."));
+    if (byNs.has(ns) || [...byNs.keys()].some((k) => k.startsWith(`${ns}.`))) continue;
+    const names = namesIn(cb, ns);
+    const rel = fileFor(m, ns, Object.values(names).some((h) => cb.store.getDef(h)?.jsx));
+    if (!rel) {
+      problems.push(`${n.path} is in ${ns}, and there's no file it could be in that the mirror would read as ${ns}; create one, then \`tcm import --update\``);
+      continue;
+    }
+    fs.mkdirSync(path.dirname(abs(rel)), { recursive: true });
+    fs.writeFileSync(abs(rel), "");
+    m.files[rel] = { ns, sha: sha(""), names: {} };
+    byNs.set(ns, rel);
+    now.set(ns, names);
+    created.push(rel);
+  }
   // where each definition of the mirror lives now, for references to it
   const home = new Map<string, { file: string; ns: string; leaf: string }>();
   for (const [ns, names] of now) for (const [leaf, h] of Object.entries(names)) home.set(h, { file: abs(byNs.get(ns)!), ns, leaf });
@@ -346,7 +366,6 @@ export function syncMirror(cb: Codebase): boolean {
   const named = new Map<string, string>();
   for (const f of Object.values(m.files)) for (const [leaf, h] of Object.entries(f.names)) named.set(h, joinName(f.ns, leaf));
   const renames: { rel: string; from: string; to: string }[] = [];
-  const problems: string[] = [];
 
   for (const [rel, f] of Object.entries(m.files)) {
     const text = before.get(rel)!;
@@ -406,38 +425,36 @@ export function syncMirror(cb: Codebase): boolean {
         problems.push(`${joinName(f.ns, leaf)}: ${(e as Error).message}`);
       }
     }
-    if (added) edits.push({ start: text.length, end: text.length, text: (text.endsWith("\n") ? "" : "\n") + added });
+    // a new file starts with its imports, if any, then its code
+    if (added) edits.push({ start: text.length, end: text.length, text: !text ? (spelling.imports.length ? added : added.replace(/^\n/, "")) : (text.endsWith("\n") ? "" : "\n") + added });
     if (spelling.imports.length) {
       const at = importsAt(abs(rel), text);
       edits.push({ start: at, end: at, text: (at ? "\n" : "") + spelling.imports.join("\n") + (at ? "" : "\n") });
     }
     if (edits.length) fs.writeFileSync(abs(rel), pruneImports(abs(rel), text, applyEdits(text, edits)));
   }
-  // definitions in a namespace no file is for yet
-  for (const n of cb.store.names()) {
-    if (!n.path.startsWith(m.into ? `${m.into}.` : "")) continue;
-    const ns = n.path.slice(0, n.path.lastIndexOf("."));
-    if (!byNs.has(ns) && ![...byNs.keys()].some((k) => k.startsWith(`${ns}.`))) problems.push(`${n.path} is in ${ns}, which no file in the mirror is for; create its file, then \`tcm import --update\``);
-  }
-
+  // files outside the mirror that a rename reached, as they were
+  let outside = new Map<string, string>();
   if (renames.length && !problems.length) {
     try {
-      renameEverywhere(cb, m, renames);
+      outside = renameEverywhere(cb, m, renames);
     } catch (e) {
       problems.push(`renaming: ${(e as Error).message}`);
     }
   }
 
   const restore = () => {
-    for (const [rel, text] of before) fs.writeFileSync(abs(rel), text);
+    for (const [rel, text] of before) if (!created.includes(rel)) fs.writeFileSync(abs(rel), text);
+    for (const rel of created) fs.rmSync(abs(rel), { force: true });
+    for (const [file, text] of outside) fs.writeFileSync(file, text);
   };
   if (!problems.length) {
     // the files must hash to what the codebase holds; a renamed function or class doesn't until the codebase takes
     // the renamed code
-    const mismatch = checkMirror(cb, m);
+    const mismatch = checkMirror(cb, m, true);
     if (mismatch.length && renames.length && cb.adoptMirror) {
       console.log(dim(`mirror: ${renames.map((r) => `${r.from} → ${r.to}`).join(", ")} renamed in the code too; importing it`));
-      if (cb.adoptMirror(m) && !checkMirror(cb, loadMirror(cb) ?? m).length) return true;
+      if (cb.adoptMirror(m) && !checkMirror(cb, loadMirror(cb) ?? m, true).length) return true;
       problems.push("importing the renamed code didn't bring the files and the codebase together");
     } else if (mismatch.length) problems.push(...mismatch);
   }
@@ -448,7 +465,7 @@ export function syncMirror(cb: Codebase): boolean {
     return false;
   }
   const changed = [...before].filter(([rel, text]) => fs.readFileSync(abs(rel), "utf8") !== text).map(([rel]) => rel);
-  if (changed.length) console.log(dim(`mirror: wrote ${changed.join(", ")}`));
+  if (changed.length) console.log(dim(`mirror: wrote ${changed.join(", ")}${outside.size ? ` (and renamed in ${[...outside.keys()].map((f) => path.relative(m.dir, f)).join(", ")}, outside it)` : ""}`));
   for (const [rel, f] of Object.entries(m.files)) m.files[rel] = { ...f, sha: sha(fs.readFileSync(abs(rel), "utf8")), names: now.get(f.ns)! };
   m.log = cb.store.logHead();
   saveMirror(cb, m);
@@ -456,9 +473,11 @@ export function syncMirror(cb: Codebase): boolean {
 }
 
 /** Rename definitions at every reference in the mirror's files, as an editor's rename would. */
-function renameEverywhere(cb: Codebase, m: Mirror, renames: { rel: string; from: string; to: string }[]) {
+function renameEverywhere(cb: Codebase, m: Mirror, renames: { rel: string; from: string; to: string }[]): Map<string, string> {
   const files = Object.keys(m.files).map((rel) => path.join(m.dir, rel));
-  const { program, service } = createProgram(files, cb.compilerOptions(m.dir, "import"));
+  // and the files around the mirror that may use the names (scripts, tests): renamed too, not checked
+  const near = nearbyFiles(m, renames.map((r) => r.from));
+  const { program, service } = createProgram([...files, ...near], cb.compilerOptions(m.dir, "import"));
   const edits = new Map<string, Edit[]>();
   for (const r of renames) {
     const file = path.join(m.dir, r.rel);
@@ -478,7 +497,14 @@ function renameEverywhere(cb: Codebase, m: Mirror, renames: { rel: string; from:
       }
     }
   }
-  for (const [file, list] of edits) fs.writeFileSync(file, applyEdits(fs.readFileSync(file, "utf8"), list));
+  const outside = new Map<string, string>();
+  const mirrored = new Set(files);
+  for (const [file, list] of edits) {
+    const text = fs.readFileSync(file, "utf8");
+    if (!mirrored.has(file)) outside.set(file, text);
+    fs.writeFileSync(file, applyEdits(text, list));
+  }
+  return outside;
 }
 
 function findDeclarationName(sf: ts.SourceFile, name: string): ts.Identifier | undefined {
@@ -489,8 +515,12 @@ function findDeclarationName(sf: ts.SourceFile, name: string): ts.Identifier | u
   return undefined;
 }
 
-/** What doesn't match between the mirror's files and the codebase, re-analyzing the files as `import` does. */
-export function checkMirror(cb: Codebase, m: Mirror): string[] {
+/**
+ * What doesn't match between the mirror's files and the codebase, re-analyzing the files as `import` does. With
+ * `keepText`, when they match, the codebase keeps each definition's code as the files spell it, so the next write
+ * spells references the way the files do (not as the scratch file it was edited in did).
+ */
+export function checkMirror(cb: Codebase, m: Mirror, keepText = false): string[] {
   const files = sourceFiles(m.dir, new Set(m.exclude.map((e) => path.resolve(m.dir, e))), m.tests);
   const a = cb.analyzeProject(files, (file, name) => cb.lineageSalt(joinName(m.into, namespaceForFile(m.dir, file), name)), [], cb.compilerOptions(m.dir, "import"));
   const problems = [...a.errors, ...a.diagnostics.map((d) => d.message)];
@@ -505,6 +535,12 @@ export function checkMirror(cb: Codebase, m: Mirror): string[] {
   }
   for (const f of Object.values(m.files)) for (const leaf of Object.keys(namesIn(cb, f.ns))) {
     if (!seen.has(joinName(f.ns, leaf))) out.push(`${joinName(f.ns, leaf)} is in the codebase but not in the files`);
+  }
+  if (keepText && !out.length) {
+    for (const d of a.defs) {
+      const was = cb.store.getDef(d.hash);
+      if (was && was.sourceText !== d.sourceText) cb.store.replaceSource(d.hash, d.sourceText, d.spans, d.reservedNames);
+    }
   }
   return out;
 }
@@ -667,4 +703,50 @@ export function unusedImports(file: string, text: string): Set<string> {
   };
   for (const st of sf.statements) if (!ts.isImportDeclaration(st)) visit(st);
   return new Set(importedNames(file, text).filter((n) => !mentioned.has(n)));
+}
+
+/**
+ * Where a new namespace's file goes in a mirror: next to a sibling namespace's file, in a parent's directory (or
+ * an index.ts for a namespace with children), or by the namespace's path from the root. Only a path the mirror
+ * reads back as that namespace, and that doesn't exist yet.
+ */
+export function fileFor(m: Mirror, ns: string, jsx: boolean): string | undefined {
+  const ext = jsx ? ".tsx" : ".ts";
+  const parent = ns.includes(".") ? ns.slice(0, ns.lastIndexOf(".")) : "";
+  const leaf = ns.slice(ns.lastIndexOf(".") + 1);
+  const candidates: string[] = [];
+  for (const [rel, f] of Object.entries(m.files)) {
+    const dir = path.dirname(rel);
+    const fParent = f.ns.includes(".") ? f.ns.slice(0, f.ns.lastIndexOf(".")) : "";
+    if (fParent === parent) candidates.push(path.join(dir, leaf + ext));
+    if (f.ns === parent) candidates.push(/^index\.(m|c)?tsx?$/.test(path.basename(rel)) ? path.join(dir, leaf + ext) : path.join(dir, path.basename(rel).replace(/\.(m|c)?tsx?$/, ""), leaf + ext));
+    if (fParent === ns) candidates.push(path.join(dir, "index" + ext));
+  }
+  const rest = (m.into && ns.startsWith(`${m.into}.`) ? ns.slice(m.into.length + 1) : ns).split(".");
+  candidates.push(path.join(...rest) + ext);
+  return candidates.find((c) => joinName(m.into, namespaceForFile(m.dir, path.join(m.dir, c))) === ns && !fs.existsSync(path.join(m.dir, c)));
+}
+
+/**
+ * TypeScript files near a mirror that aren't in it and mention any of `names`: the rest of its git repository
+ * (or its parent directory), leaving out installed packages, build output, hidden directories and codebases.
+ */
+export function nearbyFiles(m: Mirror, names: string[]): string[] {
+  const top = git(m.dir, "rev-parse", "--show-toplevel") ?? path.dirname(m.dir);
+  const mirrored = new Set(Object.keys(m.files).map((rel) => path.join(m.dir, rel)));
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (!e.name.startsWith(".") && !["node_modules", "dist", "build", "coverage"].includes(e.name) && !fs.existsSync(path.join(p, ".tcm"))) walk(p);
+        continue;
+      }
+      if (!/\.(m|c)?tsx?$/.test(e.name) || /\.d\.(m|c)?ts$/.test(e.name) || mirrored.has(p)) continue;
+      const text = fs.readFileSync(p, "utf8");
+      if (names.some((n) => text.includes(n))) out.push(p);
+    }
+  };
+  walk(top);
+  return out;
 }

@@ -174,3 +174,45 @@ test("a cycle edited through a mirror changes only what was edited: names re-has
   assert.equal(fs.readFileSync(path.join(proj, "src", "log.ts"), "utf8"), `import type { Counter } from "./counter.ts";\n\nexport function log(c: Counter): void {\n  console.log("count", c.n);\n}\n`);
   assert.match(run("mirror", "--check"), /the files hash to what the codebase holds/);
 });
+
+test("a mirror makes files for new namespaces, and renames reach files near it", () => {
+  const repo = path.join(root, "near");
+  const cbDir = path.join(root, "near-cb");
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "scripts"));
+  fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ type: "module" }));
+  fs.writeFileSync(path.join(repo, "src", "math.ts"), `export function double(x: number): number {\n  return x * 2;\n}\n`);
+  // outside the mirror (src/), in the same repository
+  const report = `import { double } from "../src/math.ts";\n\nconsole.log(double(21));\n`;
+  fs.writeFileSync(path.join(repo, "scripts", "report.ts"), report);
+  assert.equal(spawnSync("git", ["-C", repo, "init", "-q"]).status, 0);
+  fs.mkdirSync(cbDir);
+  const run = (...args: string[]) => {
+    const r = spawnSync(process.execPath, [BIN, ...args], { cwd: cbDir, encoding: "utf8", env });
+    const out = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "");
+    if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} exited ${r.status}:\n${out}`);
+    return out;
+  };
+  run("init");
+  run("import", path.join(repo, "src"), "--into", "app", "--mirror");
+
+  // a namespace with no file yet gets one, where the mirror reads it back as that namespace
+  fs.writeFileSync(path.join(cbDir, "scratch.ts"), `// tcm: namespace app.extra\nimport { double } from "#codebase/app/math";\nexport const quad = (x: number): number => double(double(x));\n`);
+  assert.match(run("add"), /mirror: wrote extra\.ts/);
+  assert.equal(fs.readFileSync(path.join(repo, "src", "extra.ts"), "utf8"), `import { double } from "./math.ts";\n\nexport const quad = (x: number): number => double(double(x));\n`);
+
+  // a rename reaches the script that uses it, outside the mirror
+  assert.match(run("mv", "app.math.double", "app.math.twice"), /mv|moved/);
+  assert.equal(fs.readFileSync(path.join(repo, "scripts", "report.ts"), "utf8"), report.replaceAll("double", "twice"));
+  assert.match(fs.readFileSync(path.join(repo, "src", "extra.ts"), "utf8"), /twice\(twice\(x\)\)/);
+  assert.match(run("mirror", "--check"), /the files hash to what the codebase holds/);
+
+  // code edited in a scratch file that spells an import its own way is kept as the file spells it, so the next
+  // write doesn't bring the scratch file's spelling in
+  fs.writeFileSync(path.join(repo, "src", "paths.ts"), `import path from "node:path";\n\nexport const base = (p: string): string => path.basename(p);\n`);
+  run("import", path.join(repo, "src"), "--into", "app", "--update");
+  fs.writeFileSync(path.join(cbDir, "scratch.ts"), `// tcm: namespace app.paths\nimport nodePath from "node:path";\nexport const base = (p: string): string => nodePath.basename(p).toUpperCase();\n`);
+  run("update");
+  assert.match(fs.readFileSync(path.join(repo, "src", "paths.ts"), "utf8"), / path\.basename\(p\)\.toUpperCase\(\)/);
+  assert.match(run("view", "app.paths.base"), / path\.basename\(p\)\.toUpperCase\(\)/);
+});

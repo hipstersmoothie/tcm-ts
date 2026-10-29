@@ -53,7 +53,7 @@ const GUIDE: Record<string, string> = {
 - tcm_cli ["pack", "<pkg>@<version>"] makes the npm package; publishing is done by hand.`,
   mirrors: `# Mirrors
 
-- A codebase can mirror a directory of source files (tcm_cli ["import", "<dir>", "--into", "<ns>", "--mirror"]): changes made in tcm are written back to those files as edits, so git and other editors see them. tcm_status says whether there's one.
+- A codebase can mirror a directory of source files (tcm_cli ["import", "<dir>", "--into", "<ns>", "--mirror"]): changes made in tcm are written back to those files as edits, so git and other editors see them. A new namespace gets a file; a rename reaches files near the mirror that use the name (scripts, tests). tcm_status says whether there's one.
 - With a mirror you can also edit its files directly, then import them: tcm_cli ["import", "<dir>", "--into", "<ns>", "--update"] (plus "--tests" if the codebase has the tests). A file changed by hand isn't overwritten by tcm until it's imported.
 - Releases of a mirrored codebase are recorded with its files (tcm-releases.json) and need the files committed first.`,
   troubleshooting: `# When something goes wrong
