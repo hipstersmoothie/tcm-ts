@@ -133,4 +133,7 @@ test("a mirror's releases are kept in git with its files, and made again in a fr
   assert.match(run(second, "release", "check", "shapes"), /after 0\.1\.1\): no API changes/);
   // and packs as the release it's at
   assert.match(run(second, "pack", "shapes", "--out", path.join(root, "packed")), /packed shapes@0\.1\.1/);
+  // each release is at its own history entry: the earlier one packs as it was, without cube
+  assert.match(run(second, "pack", "shapes@0.1.0", "--out", path.join(root, "packed-0.1.0")), /packed shapes@0\.1\.0/);
+  assert.equal(fs.readdirSync(path.join(root, "packed-0.1.0", "modules")).length < fs.readdirSync(path.join(root, "packed", "modules")).length, true);
 });

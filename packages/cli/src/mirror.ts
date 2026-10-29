@@ -549,12 +549,45 @@ export function recordRelease(m: Mirror, r: ReleaseRecord) {
 }
 
 /**
+ * Let code taken from git (into `root`, a copy of the mirror `dir`) resolve its packages as it did: a workspace
+ * package (a directory with a package.json naming it) to its copy here, anything else to what's installed now.
+ * Each package gets a node_modules like its counterpart's in `dir` (pnpm installs dependencies per package), with
+ * the workspace's own packages pointing at the copies.
+ */
+function linkPackages(root: string, dir: string, top: string) {
+  const workspace = new Map<string, string>();
+  const packages = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path.join(root, e.name));
+  for (const p of [root, ...packages]) {
+    const pkgJson = path.join(p, "package.json");
+    const name = fs.existsSync(pkgJson) ? (JSON.parse(fs.readFileSync(pkgJson, "utf8")) as { name?: string }).name : undefined;
+    if (name) workspace.set(name, p);
+  }
+  const link = (target: string, at: string) => {
+    fs.mkdirSync(path.dirname(at), { recursive: true });
+    if (!fs.existsSync(at)) fs.symlinkSync(target, at, "dir");
+  };
+  for (const [name, p] of workspace) link(p, path.join(top, "node_modules", name));
+  for (const p of [root, ...packages]) {
+    const installed = path.join(dir, path.relative(root, p), "node_modules");
+    if (!fs.existsSync(installed)) continue;
+    for (const e of fs.readdirSync(installed)) {
+      if (e.startsWith(".")) continue;
+      const names = e.startsWith("@") ? fs.readdirSync(path.join(installed, e)).map((n) => `${e}/${n}`) : [e];
+      for (const name of names) {
+        const target = workspace.get(name) ?? fs.realpathSync(path.join(installed, name));
+        link(target, path.join(p, "node_modules", name));
+      }
+    }
+  }
+}
+
+/**
  * Make a mirror's recorded releases again, in a codebase that doesn't have them: for each, in order, its commit's
  * files are imported (`importAt`) and the release is put at the history entry that makes. The files are taken
  * from git into a directory inside the repository, so packages resolve as they did, and workspace packages
  * (`@tcm/core`, say) are linked to their copies there rather than to today's.
  */
-export function replayReleases(cb: Codebase, dir: string, importAt: (root: string) => boolean, namespaceOf: (pkg: string) => string | undefined): number {
+export function replayReleases(cb: Codebase, dir: string, importAt: (root: string, label: string) => boolean, namespaceOf: (pkg: string) => string | undefined): number {
   const records = releaseRecords(dir).filter((r) => !cb.store.release(r.package, r.version));
   if (!records.length) return 0;
   const top = git(dir, "rev-parse", "--show-toplevel");
@@ -567,16 +600,11 @@ export function replayReleases(cb: Codebase, dir: string, importAt: (root: strin
       const tar = spawnSync("sh", ["-c", `git -C "$0" archive "$1" -- "$2" | tar -x -C "$3"`, top, r.commit, rel, at], { encoding: "utf8" });
       if (tar.status !== 0) throw new Error(`can't take ${r.package}@${r.version}'s files from git (commit ${r.commit.slice(0, 8)}): ${tar.stderr.trim()}`);
       const root = path.join(at, rel);
-      for (const pkgJson of fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path.join(root, e.name, "package.json"))) {
-        if (!fs.existsSync(pkgJson)) continue;
-        const name = (JSON.parse(fs.readFileSync(pkgJson, "utf8")) as { name?: string }).name;
-        if (!name) continue;
-        const link = path.join(at, "node_modules", name);
-        fs.mkdirSync(path.dirname(link), { recursive: true });
-        fs.symlinkSync(path.dirname(pkgJson), link, "dir");
-      }
+      linkPackages(root, dir, at);
       console.log(dim(`making ${r.package}@${r.version} again from git (${r.commit.slice(0, 8)})…`));
-      if (!importAt(root)) throw new Error(`${r.package}@${r.version}'s files (commit ${r.commit.slice(0, 8)}) didn't import`);
+      if (!importAt(root, `${path.relative(process.cwd(), dir) || "."} at ${r.commit.slice(0, 8)}`)) throw new Error(`${r.package}@${r.version}'s files (commit ${r.commit.slice(0, 8)}) didn't import`);
+      // its own history entry, which what's imported next doesn't replace (a command's changes are otherwise one)
+      cb.store.endBatch();
       const namespace = namespaceOf(r.package);
       if (namespace === undefined) throw new Error(`${r.package}@${r.version}: its commit has no package ${r.package}`);
       cb.store.putRelease({ package: r.package, version: r.version, namespace, causal: cb.store.head(), notes: r.notes, author: r.author, ts: r.ts });

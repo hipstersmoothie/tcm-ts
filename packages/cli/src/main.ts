@@ -310,16 +310,18 @@ function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: 
   if (relink) cb.syncsMirror = false;
   try {
     // linking a mirror into a codebase: its releases, kept with its files in git, are made again first
+    let made = 0;
     if (mirror) {
-      const made = replayReleases(
+      made = replayReleases(
         cb,
         root,
-        (at) => importFiles(cb, at, path.relative(process.cwd(), at), "update", into, false, exclude, tests),
+        (at, label) => importFiles(cb, at, label, "update", into, false, exclude, tests),
         (pkg) => packagesIn(cb, cb.store.names()).find((p) => p.name === pkg)?.namespace,
       );
       if (made) console.log(dim(`made ${made} release${made > 1 ? "s" : ""} again from git`));
     }
-    const ok = importFiles(cb, root, dir, mode, into, verbose, exclude, tests);
+    // after the releases, the files as they are now are an update of the last one
+    const ok = importFiles(cb, root, dir, made ? "update" : mode, into, verbose, exclude, tests);
     if (ok && relink) {
       linkMirror(cb, root, into, tests, exclude);
       if (mirror) console.log(dim(`mirror: changes made in tcm under ${into || "the root namespace"} are written back to ${dir}`));
