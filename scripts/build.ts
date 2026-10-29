@@ -79,7 +79,7 @@ fs.writeFileSync(
       version: root.version ?? "0.1.0",
       description: "Unison's content-addressed codebase model for plain TypeScript",
       type: "module",
-      // `tcm-ts` too, since Unison's own CLI is also called `tcm`
+      // `tcm-ts` too, for where `tcm` is taken
       bin: { tcm: "bin/tcm.js", "tcm-ts": "bin/tcm.js" },
       engines: { node: ">=22.18" },
       dependencies,

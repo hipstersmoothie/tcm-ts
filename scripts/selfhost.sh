@@ -25,7 +25,7 @@ echo "fixed point: the self-hosted tcm assigns its own source the same $(wc -l <
 
 PACK="$(mktemp -d)"
 (cd "$REPO/selfhost" && node tcm.ts pack core=tcmts.core.analyze.analyzeFile core=tcmts.core.analyze.analyzeProject core=tcmts.core.hash.IR_VERSION \
-  --name tcm-ts --version "$(node -p 'require("../package.json").version')" --bin tcm=tcmts.cli.main.runCli,tcm-ts=tcmts.cli.main.runCli \
+  --name "tcm-ts@$(node -p 'require("../package.json").version')" --bin tcm=tcmts.cli.main.runCli,tcm-ts=tcmts.cli.main.runCli \
   --with @types/node@^24 --files ../README.md,../docs --out "$PACK/package")
 (cd "$PACK/package" && npm pack --silent --pack-destination "$PACK" > /dev/null)
 (cd "$PACK" && npm init -y > /dev/null && npm install ./tcm-ts-*.tgz --no-audit --no-fund --loglevel=error > /dev/null)

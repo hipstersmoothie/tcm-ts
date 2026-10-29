@@ -27,8 +27,8 @@ export function main(...names: string[]): number {
 ```
 
 ```text
-$ tcm pack greet --name greeter --version 1.2.0 --bin greeter=greet.main --files README.md
-packed greeter into .tcm/pack/greeter: 4 module(s), depends on escape-string-regexp
+$ tcm pack greet --name greeter@1.2.0 --bin greeter=greet.main --files README.md
+packed greeter@1.2.0 into .tcm/pack/greeter: 4 module(s), depends on escape-string-regexp
 $ cd .tcm/pack/greeter && npm publish
 ```
 
@@ -65,7 +65,7 @@ hello, Ada
   locked one if there is one, and `*` otherwise.
 - **`--files a,b`** copies files or directories in, such as a README or a licence. They keep their path under the
   codebase root; files from outside it go in by name.
-- **`--version`** defaults to `0.0.0` and **`--out`** to `.tcm/pack/<name>`. `--description` fills that field
+- **`--name <pkg>@<version>`** sets the version, `0.0.0` without one; **`--out`** defaults to `.tcm/pack/<name>`. `--description` fills that field
   of `package.json`. The output directory is replaced each time, so it has to be empty or an earlier pack.
 
 The package is ESM (`"type": "module"`) and needs Node 22.18 or newer, as tcm does.

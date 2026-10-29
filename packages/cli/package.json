@@ -12,6 +12,9 @@
     "@tcm/core": "workspace:*",
     "@tcm/store": "workspace:*",
     "@tcm/loader": "workspace:*",
-    "vite": "^8.3.5"
+    "vite": "^8.3.5",
+    "@bomb.sh/router": "^0.8.0",
+    "@bomb.sh/tab": "^0.0.22",
+    "@clack/prompts": "^1.8.1"
   }
 }

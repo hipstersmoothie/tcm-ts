@@ -15,6 +15,11 @@ scripts/    build.ts (npm package), docs-site.ts, docs-dev.ts, selfhost.sh, test
 docs/       user documentation, one page per feature area
 ```
 
+The command line is declared once, in `packages/cli/src/commands.ts`: each command's arguments and options as a
+[@bomb.sh/router](https://bomb.sh) route tree, parsed into a typed model per command. `tcm help`, `--help`,
+usage errors and shell completion ([@bomb.sh/tab](https://bomb.sh)) are all read from those definitions, and
+prompts at a terminal use [@clack/prompts](https://bomb.sh) (`ui.ts`).
+
 The `#tcm/server` runtime (`packages/cli/src/server-api.ts`) is one factory function whose own source is
 written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything it uses comes in through its
 `deps` parameter.

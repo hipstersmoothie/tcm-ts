@@ -56,8 +56,8 @@ export function main(...names: string[]): number {
   tcm("add", "ui.tsx");
   write("README.md", "# greeter\n");
 
-  const out = tcm("pack", "greet", "ui=ui", "--name", "greeter", "--version", "1.2.0", "--bin", "greeter=greet.main", "--files", "README.md");
-  assert.match(out, /packed greeter into \.tcm\/pack\/greeter: \d+ module\(s\), depends on @types\/react, escape-string-regexp, react/);
+  const out = tcm("pack", "greet", "ui=ui", "--name", "greeter@1.2.0", "--bin", "greeter=greet.main", "--files", "README.md");
+  assert.match(out, /packed greeter@1\.2\.0 into \.tcm\/pack\/greeter: \d+ module\(s\), depends on @types\/react, escape-string-regexp, react/);
   const pkgDir = path.join(dir, ".tcm", "pack", "greeter");
   const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"));
   const locked = (name: string) => /\d+\.\d+\.\d+/.exec(tcm("packages").split("\n").find((l) => l.trimStart().startsWith(`${name} `))!)![0];

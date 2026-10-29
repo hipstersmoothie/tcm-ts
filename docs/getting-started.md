@@ -1,6 +1,7 @@
 # Install
 
-You need **Node 22.18 or newer** (tcm-ts is tested on 24). Its only dependency is TypeScript.
+You need **Node 22.18 or newer** (tcm-ts is tested on 24). Everything else comes with it, or is installed when
+your code first needs it.
 
 ## Get tcm
 
@@ -12,7 +13,19 @@ npm install -g "$(cd dist/package && npm pack --silent)"
 tcm help
 ```
 
-That installs the `tcm` command (also available as `tcm-ts`, since Unison's own CLI is called `tcm` too).
+That installs the `tcm` command (also available as `tcm-ts`). `tcm help` lists the commands, and
+`tcm <command> --help` shows one's arguments and options.
+
+## Shell completion
+
+Tab completes commands, options and arguments, and the arguments come from your codebase: definition names
+for `tcm view` or `tcm run`, namespaces for `tcm ls`, branches for `tcm switch`, remotes for `tcm push`.
+
+```sh
+echo 'source <(tcm complete zsh)' >> ~/.zshrc     # or: bash >> ~/.bashrc
+tcm complete fish > ~/.config/fish/completions/tcm.fish
+tcm complete powershell >> $PROFILE
+```
 
 If you're working on tcm-ts itself, run it straight from the source instead:
 

@@ -13,7 +13,8 @@ the code does *now*.
   command, flag, API, error message users act on, guarantee or limitation.
 - **Put it on the page for its area.** A new area gets a new page, listed in the `docs/README.md` index (and in
   the README's feature list if it's a headline feature).
-- **New CLI commands or flags** also go in `docs/cli.md` and the `tcm help` text in `packages/cli/src/main.ts`.
+- **New CLI commands or flags** also go in `docs/cli.md` and the command definitions in `packages/cli/src/commands.ts`
+  (`tcm help`, `--help` and shell completion read them).
 - **Fixed or newly found limits** are updated in `docs/limitations.md`.
 - **Check claims against the code**, not memory or older docs. Remove what's no longer true.
 - **The README stays short:** a pitch, quick start, and links into `docs/`.

@@ -182,14 +182,31 @@ function hasTypes(lay: Layout, alias: string): boolean {
   }
 }
 
+/** How installs are shown: a line each by default; the CLI shows spinners on a terminal. */
+export interface Progress {
+  start(message: string): { stop(message: string): void; fail(message: string): void };
+}
+let progress: Progress = { start: (message) => (process.stderr.write(`${message}\n`), { stop() {}, fail() {} }) };
+export function setProgress(p: Progress) {
+  progress = p;
+}
+
 function install(lay: Layout, what: string[]) {
-  process.stderr.write(`installing ${what.join(", ")}\n`);
+  const shown = progress.start(`installing ${what.join(", ")}`);
+  const started = Date.now();
   const args =
     packageManager() === "pnpm"
       ? ["install", "--ignore-scripts", "--ignore-workspace", "--reporter=silent", "--config.auto-install-peers=true", "--config.strict-peer-dependencies=false"]
       : ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"];
-  const r = spawnSync(packageManager(), args, { cwd: lay.cacheDir, stdio: ["ignore", "ignore", "inherit"] });
-  if (r.status !== 0) throw new Error(`${packageManager()} install failed in .tcm/cache`);
+  // the package manager's complaints come after the progress line, not through it
+  const r = spawnSync(packageManager(), args, { cwd: lay.cacheDir, stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" });
+  if (r.status !== 0) {
+    shown.fail(`couldn't install ${what.join(", ")}`);
+    process.stderr.write(r.stderr ?? "");
+    throw new Error(`${packageManager()} install failed in .tcm/cache`);
+  }
+  shown.stop(`installed ${what.join(", ")} in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+  if (r.stderr) process.stderr.write(r.stderr);
 }
 
 /**

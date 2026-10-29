@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { checkValue, isConflicted, sameSpace, shortHash, type DefKind, type DefRecord } from "@tcm/core";
+import { checkValue, isConflicted, IR_VERSION, sameSpace, shortHash, TS_VERSION, type DefKind, type DefRecord } from "@tcm/core";
+import { parse } from "@bomb.sh/router";
 import { decode } from "./codec.ts";
 import type { Analysis, ProjectDef } from "@tcm/core";
 import { inspect } from "node:util";
@@ -23,31 +24,10 @@ import { LINT_CONFIG, lintDefinitions, lintScratch, locate, type LintIssue } fro
 import { diffNamespaces, printDiff, rewind, stateOf } from "./diff.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
 import { addRemote, listRemotes, newToken, pull, push, runOn, serve, tlsMaterial } from "./sync.ts";
-
-
-class UsageError extends Error {}
-
-const VALUE_FLAGS = new Set(["into", "file", "on", "as", "port", "host", "token", "fingerprint", "tls-cert", "tls-key", "keep", "http", "exclude", "name", "version", "description", "bin", "with", "files", "out"]);
-
-function parseArgs(argv: string[]) {
-  const positional: string[] = [];
-  const flags: Record<string, string | true> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!;
-    if (a === "--") {
-      positional.push(...argv.slice(i + 1));
-      break;
-    }
-    if (a.startsWith("--")) {
-      const eq = a.indexOf("=");
-      const [k, v] = eq < 0 ? [a.slice(2), undefined] : [a.slice(2, eq), a.slice(eq + 1)];
-      if (v !== undefined) flags[k] = v;
-      else if (VALUE_FLAGS.has(k)) flags[k] = argv[++i] ?? "";
-      else flags[k] = true;
-    } else positional.push(a);
-  }
-  return { positional, flags };
-}
+import { commands, root } from "./commands.ts";
+import { helpText, suggest, usageError } from "./help.ts";
+import { complete } from "./complete.ts";
+import { ask, choose, chooseName, confirm, interactive, intro, outro, showInstallProgress, success, UsageError } from "./ui.ts";
 
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
@@ -520,14 +500,15 @@ function alias(cb: Codebase, from: string, to: string) {
   console.log(`${to} is now an alias of ${from}`);
 }
 
-function rm(cb: Codebase, name: string, force: boolean) {
+async function rm(cb: Codebase, name: string, force: boolean) {
   const hs = cb.store.hashesAt(name);
   if (!hs.length) throw new UsageError(`'${name}' not found`);
   for (const h of hs) {
     const otherNames = cb.store.pathsOf(h).filter((p) => p !== name);
     const users = cb.store.dependents(h).filter((d) => cb.store.pathsOf(d).length);
     if (users.length && !otherNames.length && !force) {
-      throw new UsageError(`'${name}' is used by ${users.map((u) => cb.displayRef(`#${u}`)).join(", ")}; pass --force to remove the name anyway (they keep working)`);
+      const used = `'${name}' is used by ${users.map((u) => cb.displayRef(`#${u}`)).join(", ")}`;
+      if (!(await confirm(`${used}. Remove the name anyway? (they keep working)`))) throw new UsageError(`${used}; pass --force to remove the name anyway (they keep working)`);
     }
   }
   cb.store.transaction(() => hs.forEach((h) => cb.store.removeName(name, h, `rm ${name}`)));
@@ -630,94 +611,72 @@ function watch(cb: Codebase, into?: string, fresh = false) {
 
 // ---- entry --------------------------------------------------------------------------------------------
 
-const HELP = `${bold("tcm")} — a content-addressed codebase manager for TypeScript
+/** Thrown to finish a command early with output already decided (help, the version). */
+class Printed {
+  readonly text: string;
+  constructor(text: string) {
+    this.text = text;
+  }
+}
 
-  tcm init                       set up a codebase in this directory
-  tcm [watch] [--fresh]          watch *.ts/*.tsx scratch files: typecheck, hash, evaluate watch expressions and tests
-                                 (their results are cached by hash; --fresh re-runs them)
-  tcm check [file] [--fresh]     one-shot version of watch
-  tcm lsp                        language server for editors (stdio): status, watch values, hovers, save commands
-  tcm add [file] [--into ns]     add new definitions from a scratch file (default scratch.ts)
-  tcm update [file] [--into ns]  add, and replace changed definitions; dependents are re-hashed
-  tcm import <dir> [--into ns] [--update] [--exclude a,b] [--verbose]
-                                 add an existing project: one namespace per file (src/ and index dropped)
-  tcm fmt [namespace]            reformat stored definitions with oxfmt (no hash changes); options in a
-                                 \`fmt.config\` definition
-  tcm lint [namespace] [--fresh] lint definitions with oxlint (results are cached by hash); configure with a
-                                 \`lint.config\` definition, whose imports are its plugins
-  tcm test [namespace] [--fresh]  run tests (definitions named test… or under \`tests\`); results are cached by hash
-  tcm verify                     re-render and re-hash every live definition; must be the identity
-  tcm migrate                    rebuild a codebase written with an older hash format (keeps a backup)
-  tcm view <name|#hash>...       show definitions with current names
-  tcm ls [namespace]             list names
-  tcm find <query>               search names and signature text
-  tcm find ':<type>'             search by type, e.g. ':(xs: T[]) => T' (unknown names are type variables)
-  tcm deps <name> / dependents <name>
-  tcm run <name> [args...]       run a definition (functions are called with args)
-  tcm edit <name>... [--file f] [--force]   write definitions to a scratch file for editing
-  tcm mv <from> <to>             rename a definition or namespace (no code changes)
-  tcm alias <name> <new>         add another name for a definition
-  tcm rm <name> [--force]        remove a name
-  tcm todo                       conflicts and dependents that need fixing
-  tcm packages                   the npm packages the codebase runs: range, locked version, what uses them
-  tcm upgrade <pkg> [--force]    newest versions within the ranges in use (and of what's built against it);
-                                 no hashes change, everything using them is re-checked
-  tcm upgrade <pkg>@<range|latest> [namespace]
-                                 re-pin code to another range (a new major): re-hashed, dependents follow
-  tcm pack [[subpath=]<namespace|name>...] --name <pkg> [--version 0.0.0] [--bin cmd=<name>,...]
-           [--with pkg,...] [--files a,b] [--out dir]
-                                 an npm package from the codebase: the definitions' closure as JavaScript with
-                                 types, entry points exporting them by name, bins, dependencies from the lock
-  tcm resolve <name> <#hash>     pick one definition for a conflicted name
-  tcm docs <name>                show documentation
-  tcm diff                       what the last command changed: edits, dependents re-hashed by them, renames
-  tcm diff <id> | <branch> | <a> <b>
-                                 changes since a history entry, to another branch, or between branches
-  tcm history [n] / reset <id>   name changes on this branch / undo back to an entry
-  tcm branch [name] / switch <name>
-  tcm dev <app> [--port 5173] [--http <namespace>[=/prefix]]
-                                 serve a browser app (a function, or a React component) from the codebase; what needs
-                                 the server runs there, called by hash
-  tcm build <app> [--force]      production build into .tcm/apps/<hash>/ (immutable; reused if it exists)
-  tcm data [table [n]]           typed tables (table<Row>() from #tcm/server): row counts, or a table's rows
-  tcm data migrate <table>       upgrade every stored row to the current row type now, through migrate
-  tcm jobs [n] | retry <id> | cancel <id>
-                                 background jobs: enqueue() / every() from #tcm/server, run by tcm start / tcm dev
-  tcm apps [prune [--keep 3]]    list builds (* = current); prune keeps the current build plus the newest N others
-                                 (tabs on a pruned build reload themselves onto the current one)
-  tcm start <app> [--port 8080] [--host] [--tls] [--keep N] [--http <namespace>[=/prefix]]
-                                 serve the app in production; follows its name (deploy and rollback = moving the
-                                 name) and keeps earlier builds' assets and server functions working for open tabs
-  tcm merge <branch>             three-way merge into this branch; dependents follow the other side's updates
+/**
+ * A parsed command line, if it asks to run the command: help and the version are printed instead, and a line
+ * the command doesn't accept is a usage error saying why.
+ */
+function execute<R extends { ok: boolean }>(cmd: string | undefined, r: R): Extract<R, { method: "execute" }> {
+  const x = r as unknown as { ok: boolean; method?: string; path?: string[]; code: string; issues?: { message: string; path?: unknown[] }[] };
+  const where = [...(cmd ? [cmd] : []), ...(x.path ?? [])];
+  if (!x.ok) throw new UsageError(usageError(where, x));
+  if (x.method === "help") throw new Printed(helpText(where));
+  if (x.method === "version") throw new Printed(`tcm ${dim(`(hash format v${IR_VERSION}, TypeScript ${TS_VERSION})`)}`);
+  return r as never;
+}
 
-  tcm remote [add <name> <url|dir> [--token t] [--fingerprint sha256] | rm <name>]
-  tcm push [remote] [--as branch] [--force]   send definitions + this branch's names (refuses if the remote moved)
-  tcm pull [remote] [branch]     fetch into <remote>/<branch>; fast-forward this branch if it hasn't changed
-  tcm run <name> [args] --on <remote|url|dir>   send what the remote lacks, run there, stream output back
-  tcm serve [--port 7737] [--host 127.0.0.1] [--token t] [--no-run] [--tls [--tls-cert f --tls-key f]] [--insecure]
-                                 serve this codebase; clients with the token can push, pull and run code.
-                                 --tls without files makes a self-signed certificate; clients pin its fingerprint
-`;
+const words = (literals: Iterable<{ text: string }>) => [...literals].map((l) => l.text);
+
+function checkInto(into: string | undefined): string | undefined {
+  if (into !== undefined && into !== "" && !IDENT_PATH.test(into)) throw new UsageError(`'${into}' is not a valid namespace`);
+  return into;
+}
 
 export async function main(argv: string[]): Promise<number> {
   // code from the codebase that runs in this process (server functions under tcm dev, say) reports errors at
   // its definitions, not its generated modules
   process.setSourceMapsEnabled(true);
-  const { positional, flags } = parseArgs(argv);
-  const [cmd = "watch", ...args] = positional;
-  const cwd = process.cwd();
-  const into = typeof flags.into === "string" ? flags.into : undefined;
-  if (into !== undefined && into !== "" && !IDENT_PATH.test(into)) throw new UsageError(`'${into}' is not a valid namespace`);
-  const scratch = (f?: string) => path.resolve(cwd, f ?? "scratch.ts");
-  const need = (n: number, usage: string) => {
-    if (args.length < n) throw new UsageError(`usage: tcm ${usage}`);
-  };
-
-  if (cmd === "help" || flags.help) {
-    console.log(HELP);
+  try {
+    return await dispatch(argv);
+  } catch (e) {
+    if (!(e instanceof Printed)) throw e;
+    console.log(e.text);
     return 0;
   }
+}
+
+async function dispatch(argv: string[]): Promise<number> {
+  const cwd = process.cwd();
+  const scratch = (f?: string) => path.resolve(cwd, f ?? "scratch.ts");
+  // the test runner's child process (see vitest.ts), not a command anyone types
+  if (argv[0] === "internal-vitest") return (await vitestChild(argv[1]!), 0);
+
+  const word = argv[0] && !argv[0].startsWith("-") ? argv[0] : undefined;
+  if (word === "help") {
+    const path = argv.slice(1).filter((a) => !a.startsWith("-"));
+    if (path[0] && !Object.hasOwn(commands, path[0])) throw new UsageError(unknownCommand(path[0]));
+    throw new Printed(helpText(path));
+  }
+  if (word && !Object.hasOwn(commands, word)) throw new UsageError(unknownCommand(word));
+  const cmd = word as keyof typeof commands | undefined;
+  const rest = argv.slice(cmd ? 1 : 0);
+  showInstallProgress();
+
+  if (!cmd) {
+    const { model } = execute(cmd, parse(root, { argv: rest }));
+    watch(Codebase.find(cwd), checkInto(model.into), model.fresh);
+    return -1; // keep running
+  }
   if (cmd === "init") {
+    execute(cmd, parse(commands.init, { argv: rest }));
+    intro("tcm init");
     const cb = Codebase.init(cwd);
     const file = scratch();
     if (!fs.existsSync(file)) {
@@ -733,81 +692,75 @@ square(12);
 `,
       );
     }
-    console.log(`initialized codebase in ${cb.lay.tcmDir}\nnext: run \`tcm\` and edit scratch.ts`);
+    success(`initialized codebase in ${cb.lay.tcmDir}`);
+    outro(`next: run \`tcm\` and edit scratch.ts${interactive() ? dim(" · `source <(tcm complete zsh)` completes commands and names") : ""}`);
     return 0;
   }
-
   // migrate opens codebases the version guard would refuse
-  if (cmd === "migrate") return migrate(Codebase.findRoot(cwd)) ? 0 : 1;
+  if (cmd === "migrate") {
+    execute(cmd, parse(commands.migrate, { argv: rest }));
+    return migrate(Codebase.findRoot(cwd)) ? 0 : 1;
+  }
   // the editor says where the workspace is (initialize), so the codebase is found then
   if (cmd === "lsp") {
+    execute(cmd, parse(commands.lsp, { argv: rest }));
     sendRunnerOutputToStderr();
     serveLsp((dir) => Codebase.find(dir), { classify, save: (cb, file, mode) => save(cb, file, mode), mv, edit, migrateTable });
     return -1; // serve until the editor says exit
   }
+  // completing a word shouldn't open (or fail to find) the codebase
+  if (cmd === "complete") {
+    const r = execute(cmd, parse(commands.complete, { argv: rest }));
+    const asked = words(r.literals);
+    if (!r.model.shell && !rest.includes("--")) throw new UsageError("usage: tcm complete <zsh|bash|fish|powershell>, e.g. `source <(tcm complete zsh)` in ~/.zshrc");
+    complete(r.model.shell, asked, cwd);
+    return 0;
+  }
 
+  // help and usage errors don't need a codebase: check the line before looking for one (parsed again, typed,
+  // by the command below)
+  execute(cmd, (parse as (definition: unknown, input: { argv: string[] }) => { ok: boolean })(commands[cmd], { argv: rest }));
   const cb = Codebase.find(cwd);
   switch (cmd) {
-    case "watch":
-      watch(cb, into, !!flags.fresh);
+    case "watch": {
+      const { model } = execute(cmd, parse(commands.watch, { argv: rest }));
+      watch(cb, checkInto(model.into), model.fresh);
       return -1; // keep running
-    case "check":
-      return check(cb, scratch(args[0]), into, !!flags.fresh) ? 0 : 1;
-    case "add":
-    case "update":
-      return save(cb, scratch(args[0]), cmd, into) ? 0 : 1;
-    case "import":
-      need(1, "import <dir> [--into ns] [--update]");
-      return importProject(cb, args[0]!, flags.update ? "update" : "add", into ?? "", !!flags.verbose, typeof flags.exclude === "string" ? flags.exclude.split(",") : []) ? 0 : 1;
-    case "verify":
-      return verify(cb) ? 0 : 1;
-    case "dev":
-      need(1, "dev <app> [--port 5173]");
-      await dev(cb, args[0]!, Number(typeof flags.port === "string" ? flags.port : 5173), typeof flags.http === "string" ? parseHttpFlag(flags.http) : undefined);
-      return -1; // keep serving
-    case "data":
-      if (args[0] === "migrate") {
-        need(2, "data migrate <table>");
-        return (await migrateTable(cb, args[1]!)) ? 0 : 1;
-      }
-      data(cb, args[0], Number(args[1] ?? 20));
-      return 0;
-    case "jobs": {
-      const file = path.join(cb.lay.tcmDir, "data", "jobs.sqlite");
-      if (!fs.existsSync(file)) return (console.log(dim("no jobs yet (enqueue() from a server function, or every() for recurring ones)")), 0);
-      const db = new DatabaseSync(file);
-      try {
-        const find = (prefix: string) => {
-          const rows = db.prepare("SELECT id FROM jobs WHERE id LIKE ?").all(`${prefix}%`) as { id: string }[];
-          if (rows.length !== 1) throw new UsageError(rows.length ? `'${prefix}' matches ${rows.length} jobs` : `no job '${prefix}'`);
-          return rows[0]!.id;
-        };
-        if (args[0] === "retry") {
-          need(2, "jobs retry <id>");
-          db.prepare("UPDATE jobs SET status = 'queued', run_at = ?, attempts = 0, last_error = NULL, finished = NULL WHERE id = ?").run(Date.now(), find(args[1]!));
-          return (console.log("queued again"), 0);
-        }
-        if (args[0] === "cancel") {
-          need(2, "jobs cancel <id>");
-          const r = db.prepare("UPDATE jobs SET status = 'cancelled', finished = ? WHERE id = ? AND status = 'queued'").run(Date.now(), find(args[1]!));
-          return (console.log(r.changes ? "cancelled" : dim("not queued (already running or finished)")), 0);
-        }
-        const rows = db.prepare("SELECT * FROM jobs ORDER BY created DESC LIMIT ?").all(Number(args[0] ?? 30)) as Record<string, string | number | null>[];
-        const colour: Record<string, (s: string) => string> = { done: green, failed: red, queued: yellow, running: cyan, cancelled: dim };
-        for (const r of rows) {
-          const when = new Date(Number(r.status === "queued" ? r.run_at : (r.finished ?? r.run_at))).toISOString().replace("T", " ").slice(0, 19);
-          // a finished job's last error is history; a failed or retrying one's is the news
-          const err = r.last_error && r.status !== "done" ? dim(`  ${String(r.last_error).split("\n")[0]}`) : "";
-          console.log(`${dim(String(r.id).slice(0, 8))}  ${(colour[String(r.status)] ?? dim)(String(r.status).padEnd(9))} ${String(r.fn_name).padEnd(24)} ${dim(`${r.attempts}/${r.max_attempts}  ${when}`)}${err}`);
-        }
-        return 0;
-      } finally {
-        db.close();
-      }
     }
+    case "check": {
+      const { model } = execute(cmd, parse(commands.check, { argv: rest }));
+      return check(cb, scratch(model.file), checkInto(model.into), model.fresh) ? 0 : 1;
+    }
+    case "add":
+    case "update": {
+      const { model } = execute(cmd, parse(commands[cmd], { argv: rest }));
+      return save(cb, scratch(model.file), cmd, checkInto(model.into)) ? 0 : 1;
+    }
+    case "import": {
+      const { model } = execute(cmd, parse(commands.import, { argv: rest }));
+      return importProject(cb, model.dir, model.update ? "update" : "add", checkInto(model.into) ?? "", model.verbose, model.exclude) ? 0 : 1;
+    }
+    case "verify":
+      execute(cmd, parse(commands.verify, { argv: rest }));
+      return verify(cb) ? 0 : 1;
+    case "dev": {
+      const { model } = execute(cmd, parse(commands.dev, { argv: rest }));
+      const app = model.app ?? (await chooseName(cb, "dev <app> [--port 5173]", "Which app?", "value"));
+      await dev(cb, app, model.port, model.http === undefined ? undefined : parseHttpFlag(model.http));
+      return -1; // keep serving
+    }
+    case "data": {
+      const r = execute(cmd, parse(commands.data, { argv: rest }));
+      if (r.route === "/migrate") return (await migrateTable(cb, r.model.table)) ? 0 : 1;
+      data(cb, r.model.table, r.model.n);
+      return 0;
+    }
+    case "jobs":
+      return jobs(cb, execute(cmd, parse(commands.jobs, { argv: rest })));
     case "apps": {
-      if (args[0] === "prune") {
-        pruneBuilds(cb, Number(typeof flags.keep === "string" ? flags.keep : 3));
+      const r = execute(cmd, parse(commands.apps, { argv: rest }));
+      if (r.route === "/prune") {
+        pruneBuilds(cb, r.model.keep);
         return 0;
       }
       const builds = listBuilds(cb);
@@ -821,29 +774,21 @@ square(12);
       }
       return 0;
     }
-    case "build":
-      need(1, "build <app> [--force]");
-      await build(cb, args[0]!, { force: !!flags.force });
+    case "build": {
+      const { model } = execute(cmd, parse(commands.build, { argv: rest }));
+      await build(cb, model.app ?? (await chooseName(cb, "build <app> [--force]", "Which app?", "value")), { force: model.force });
       return 0;
+    }
     case "start": {
-      need(1, "start <app> [--port 8080] [--host 127.0.0.1] [--tls [--tls-cert f --tls-key f]]");
-      const str = (k: string) => (typeof flags[k] === "string" ? (flags[k] as string) : undefined);
-      const tls = flags.tls || str("tls-cert") ? tlsMaterial(cb, str("tls-cert"), str("tls-key")) : undefined;
-      await start(cb, args[0]!, {
-        port: Number(str("port") ?? 8080),
-        host: str("host") ?? "127.0.0.1",
-        tls,
-        keep: str("keep") === undefined ? undefined : Number(str("keep")),
-        http: str("http") === undefined ? undefined : parseHttpFlag(str("http")!),
-      });
+      const { model } = execute(cmd, parse(commands.start, { argv: rest }));
+      const app = model.app ?? (await chooseName(cb, "start <app> [--port 8080]", "Which app?", "value"));
+      const tls = model.tls || model["tls-cert"] ? tlsMaterial(cb, model["tls-cert"], model["tls-key"]) : undefined;
+      await start(cb, app, { port: model.port, host: model.host, tls, keep: model.keep, http: model.http === undefined ? undefined : parseHttpFlag(model.http) });
       return -1; // keep serving
     }
-    // the test runner's child process (see vitest.ts)
-    case "internal-vitest":
-      await vitestChild(args[0]!);
-      return 0;
     case "fmt": {
-      const ns = args[0] ?? "";
+      const { model } = execute(cmd, parse(commands.fmt, { argv: rest }));
+      const ns = model.namespace ?? "";
       const live = cb.liveHashes();
       const hashes = cb.store.names().filter((n) => live.has(n.hash) && (!ns || n.path === ns || n.path.startsWith(ns + "."))).map((n) => n.hash);
       const r = formatStored(cb, [...new Set(hashes)]);
@@ -854,10 +799,11 @@ square(12);
       return r.skipped.length ? 1 : 0;
     }
     case "lint": {
-      const ns = args[0] ?? "";
+      const { model } = execute(cmd, parse(commands.lint, { argv: rest }));
+      const ns = model.namespace ?? "";
       const live = cb.liveHashes();
       const targets = cb.store.names().filter((n) => n.kind !== "type" && live.has(n.hash) && (!ns || n.path === ns || n.path.startsWith(ns + ".")));
-      const results = lintDefinitions(cb, targets, !!flags.fresh);
+      const results = lintDefinitions(cb, targets, model.fresh);
       let warnings = 0;
       let errors = 0;
       for (const r of results) {
@@ -876,53 +822,60 @@ square(12);
       return errors ? 1 : 0;
     }
     case "test": {
-      const ns = args[0] ?? "";
+      const { model } = execute(cmd, parse(commands.test, { argv: rest }));
+      const ns = model.namespace ?? "";
       const names = cb.store.names().filter((n) => n.kind !== "type" && isTestPath(n.path) && (!ns || n.path === ns || n.path.startsWith(ns + ".")));
       if (!names.length) {
         console.log(dim(`no tests${ns ? ` under ${ns}` : ""} (tests are definitions named test… or under a \`tests\` namespace)`));
         return 0;
       }
-      const outcomes = runCached(cb, names.map((n) => ({ path: n.path, rec: cb.store.getDef(n.hash)! })), cb.source(), !!flags.fresh);
+      const outcomes = runCached(cb, names.map((n) => ({ path: n.path, rec: cb.store.getDef(n.hash)! })), cb.source(), model.fresh);
       printOutcomes(outcomes);
       console.log(`\n${summary(outcomes)}`);
       return outcomes.every((o) => o.result.ok) ? 0 : 1;
     }
-    case "view":
-      need(1, "view <name|#hash>...");
-      view(cb, args);
+    case "view": {
+      const { model } = execute(cmd, parse(commands.view, { argv: rest }));
+      view(cb, model.names.length ? model.names : [await chooseName(cb, "view <name|#hash>...", "Which definition?")]);
       return 0;
-    case "ls":
-      ls(cb, args[0]);
+    }
+    case "ls": {
+      const { model } = execute(cmd, parse(commands.ls, { argv: rest }));
+      ls(cb, model.namespace);
       return 0;
-    case "find":
-      need(1, "find <query>");
-      find(cb, args.join(" "));
+    }
+    case "find": {
+      const { model } = execute(cmd, parse(commands.find, { argv: rest }));
+      find(cb, model.query.length ? model.query.join(" ") : await ask("find <query>", "Search for", "a name, or :<type> like :(xs: T[]) => T"));
       return 0;
+    }
     case "deps":
-      need(1, "deps <name>");
-      deps(cb, args[0]!);
-      return 0;
     case "dependents":
-      need(1, "dependents <name>");
-      dependents(cb, args[0]!);
+    case "docs": {
+      const { model } = execute(cmd, parse(commands[cmd], { argv: rest }));
+      const name = model.name ?? (await chooseName(cb, `${cmd} <name>`, cmd === "docs" ? "Documentation for?" : cmd === "deps" ? "What uses what?" : "Who uses what?"));
+      if (cmd === "deps") deps(cb, name);
+      else if (cmd === "dependents") dependents(cb, name);
+      else console.log(renderDoc(cb, cb.store.getDef(cb.lookupOne(name))!, { evaluate: true })?.markdown ?? dim("no documentation"));
       return 0;
+    }
     case "run": {
-      need(1, "run <name> [args...] [--on <remote>]");
-      const h = cb.lookupOne(args[0]!, "value");
-      if (cb.store.getDef(h)!.kind === "type") throw new UsageError(`${args[0]} is a type`);
-      if (typeof flags.on === "string") return runOn(cb, flags.on, h, args.slice(1));
-      return run(h, args.slice(1), cb.source(), cb.lay);
+      const r = execute(cmd, parse(commands.run, { argv: rest }));
+      const name = r.model.name ?? (await chooseName(cb, "run <name> [args...] [--on <remote>]", "Run what?", "value"));
+      const args = [...r.model.args, ...words(r.literals)];
+      const h = cb.lookupOne(name, "value");
+      if (cb.store.getDef(h)!.kind === "type") throw new UsageError(`${name} is a type`);
+      if (r.model.on !== undefined) return runOn(cb, r.model.on, h, args);
+      return run(h, args, cb.source(), cb.lay);
     }
     case "remote": {
-      const [sub, name, url] = args;
-      if (sub === "add") {
-        if (!name || !url) throw new UsageError("usage: tcm remote add <name> <url|path> [--token t]");
-        addRemote(cb, name, url, typeof flags.token === "string" ? flags.token : undefined, typeof flags.fingerprint === "string" ? flags.fingerprint : undefined);
-        console.log(`added remote ${name}`);
-      } else if (sub === "rm") {
-        if (!name) throw new UsageError("usage: tcm remote rm <name>");
-        cb.store.deleteSetting(`remote.${name}`);
-        console.log(`removed remote ${name}`);
+      const r = execute(cmd, parse(commands.remote, { argv: rest }));
+      if (r.route === "/add") {
+        addRemote(cb, r.model.remote, r.model.url, r.model.token, r.model.fingerprint);
+        console.log(`added remote ${r.model.remote}`);
+      } else if (r.route === "/rm") {
+        cb.store.deleteSetting(`remote.${r.model.remote}`);
+        console.log(`removed remote ${r.model.remote}`);
       } else {
         const remotes = listRemotes(cb);
         if (!remotes.length) console.log(dim("no remotes; add one with `tcm remote add <name> <url|path>`"));
@@ -930,58 +883,76 @@ square(12);
       }
       return 0;
     }
-    case "push":
-      await push(cb, args[0] ?? "origin", typeof flags.as === "string" ? flags.as : undefined, !!flags.force);
+    case "push": {
+      const { model } = execute(cmd, parse(commands.push, { argv: rest }));
+      await push(cb, model.remote, model.as, model.force);
       return 0;
-    case "pull":
-      await pull(cb, args[0] ?? "origin", args[1]);
+    }
+    case "pull": {
+      const { model } = execute(cmd, parse(commands.pull, { argv: rest }));
+      await pull(cb, model.remote, model.branch);
       return 0;
+    }
     case "serve": {
-      const token = typeof flags.token === "string" ? flags.token : (process.env.TCM_TOKEN ?? newToken());
-      const port = Number(typeof flags.port === "string" ? flags.port : 7737);
-      const str = (k: string) => (typeof flags[k] === "string" ? (flags[k] as string) : undefined);
-      const tls = flags.tls || str("tls-cert") ? tlsMaterial(cb, str("tls-cert"), str("tls-key")) : undefined;
-      const host = str("host") ?? "127.0.0.1";
+      const { model } = execute(cmd, parse(commands.serve, { argv: rest }));
+      const token = model.token ?? process.env.TCM_TOKEN ?? newToken();
+      const tls = model.tls || model["tls-cert"] ? tlsMaterial(cb, model["tls-cert"], model["tls-key"]) : undefined;
       // --insecure acknowledges clear-text tokens beyond localhost
-      serve(cb, { host, port, token, allowRun: !flags["no-run"], tls }, !!flags.insecure);
+      serve(cb, { host: model.host, port: model.port, token, allowRun: model.run, tls }, model.insecure);
       return -1; // keep running
     }
-    case "edit":
-      need(1, "edit <name>...");
-      edit(cb, args, typeof flags.file === "string" ? scratch(flags.file) : (jsx) => scratch(jsx ? "scratch.tsx" : "scratch.ts"), !!flags.force);
+    case "edit": {
+      const { model } = execute(cmd, parse(commands.edit, { argv: rest }));
+      const names = model.names.length ? model.names : [await chooseName(cb, "edit <name>...", "Edit which definition?")];
+      edit(cb, names, model.file !== undefined ? scratch(model.file) : (jsx) => scratch(jsx ? "scratch.tsx" : "scratch.ts"), model.force);
       return 0;
-    case "mv":
-      need(2, "mv <from> <to>");
-      mv(cb, args[0]!, args[1]!);
+    }
+    case "mv": {
+      const { model } = execute(cmd, parse(commands.mv, { argv: rest }));
+      const from = model.from ?? (await chooseName(cb, "mv <from> <to>", "Rename what?"));
+      mv(cb, from, model.to ?? (await ask("mv <from> <to>", `Rename ${from} to`, from)));
       return 0;
-    case "alias":
-      need(2, "alias <name> <new>");
-      alias(cb, args[0]!, args[1]!);
+    }
+    case "alias": {
+      const { model } = execute(cmd, parse(commands.alias, { argv: rest }));
+      const name = model.name ?? (await chooseName(cb, "alias <name> <new>", "Add a name for?"));
+      alias(cb, name, model.to ?? (await ask("alias <name> <new>", `Another name for ${name}`, name)));
       return 0;
-    case "rm":
-      need(1, "rm <name>");
-      rm(cb, args[0]!, !!flags.force);
+    }
+    case "rm": {
+      const { model } = execute(cmd, parse(commands.rm, { argv: rest }));
+      await rm(cb, model.name ?? (await chooseName(cb, "rm <name> [--force]", "Remove which name?")), model.force);
       return 0;
+    }
     case "todo":
+      execute(cmd, parse(commands.todo, { argv: rest }));
       todo(cb);
       return 0;
     case "packages":
+      execute(cmd, parse(commands.packages, { argv: rest }));
       listPackages(cb);
       return 0;
     case "upgrade": {
-      need(1, "upgrade <package>[@range|@latest] [namespace] [--force]");
-      const spec = args[0]!;
+      const { model } = execute(cmd, parse(commands.upgrade, { argv: rest }));
+      const spec =
+        model.package ??
+        (await choose(
+          "upgrade <package>[@range|@latest] [namespace] [--force]",
+          "Upgrade which package?",
+          [...new Map(cb.store.lockedPackages().filter((l) => !l.name.startsWith("@types/")).map((l) => [l.name, l])).values()].map((l) => ({ value: l.name, label: l.name, hint: `${l.range} → ${l.version}` })),
+        ));
       const at = spec.lastIndexOf("@");
       const [name, target] = at > 0 ? [spec.slice(0, at), spec.slice(at + 1)] : [spec, undefined];
-      const ok = target ? upgradeTo(cb, name, target, args[1]) : upgradeWithin(cb, name, !!flags.force);
+      const ok = target ? upgradeTo(cb, name, target, model.namespace) : upgradeWithin(cb, name, model.force);
       if (ok) cb.refreshShim();
       return ok ? 0 : 1;
     }
     case "pack": {
-      const str = (k: string) => (typeof flags[k] === "string" ? (flags[k] as string) : undefined);
-      const list = (k: string) => (str(k) ?? "").split(",").filter(Boolean);
-      const name = str("name");
-      if (!name || (!args.length && !str("bin"))) throw new UsageError("usage: tcm pack [[subpath=]<namespace|name>...] --name <pkg> [--bin cmd=<name>] [--version v] [--out dir]");
+      const { model } = execute(cmd, parse(commands.pack, { argv: rest }));
+      if (!model.entries.length && !model.bin.length) throw new UsageError("usage: tcm pack [[subpath=]<namespace|name>...] --name <pkg>[@version] [--bin cmd=<name>]");
+      const spec = model.name ?? (await ask("pack [[subpath=]<namespace|name>...] --name <pkg>[@version]", "Package name (and version: name@1.0.0)", "my-package"));
+      const at = spec.lastIndexOf("@");
+      const [name, version] = at > 0 ? [spec.slice(0, at), spec.slice(at + 1)] : [spec, "0.0.0"];
       const pair = (s: string, what: string) => {
         const eq = s.indexOf("=");
         if (what === "bin" && eq < 0) throw new UsageError(`--bin wants cmd=<name>, not '${s}'`);
@@ -989,58 +960,124 @@ square(12);
       };
       const r = pack(cb, {
         name,
-        version: str("version") ?? "0.0.0",
-        description: str("description"),
-        entries: args.map((a) => pair(a, "entry")).map(([subpath, target]) => ({ subpath: subpath ? subpath.replace(/^\.\//, "") : ".", target: target! })),
-        bins: list("bin").map((b) => pair(b, "bin")).map(([command, target]) => ({ command: command!, target: target! })),
-        with: list("with"),
-        files: list("files"),
-        out: str("out") ?? path.join(".tcm", "pack", name.replace(/^@/, "").replace("/", "__")),
+        version,
+        description: model.description,
+        entries: model.entries.map((a) => pair(a, "entry")).map(([subpath, target]) => ({ subpath: subpath ? subpath.replace(/^\.\//, "") : ".", target: target! })),
+        bins: model.bin.map((b) => pair(b, "bin")).map(([command, target]) => ({ command: command!, target: target! })),
+        with: model.with,
+        files: model.files,
+        out: model.out ?? path.join(".tcm", "pack", name.replace(/^@/, "").replace("/", "__")),
       });
       const deps = Object.keys(r.dependencies);
       const shown = path.relative(cwd, r.dir);
-      console.log(`packed ${name} into ${shown.startsWith("..") ? r.dir : shown || "."}: ${r.modules} module(s)${deps.length ? `, depends on ${deps.join(", ")}` : ""}`);
+      console.log(`packed ${name}@${version} into ${shown.startsWith("..") ? r.dir : shown || "."}: ${r.modules} module(s)${deps.length ? `, depends on ${deps.join(", ")}` : ""}`);
       return 0;
     }
-    case "diff":
-      diff(cb, args);
-      return 0;
-    case "resolve":
-      need(2, "resolve <name> <#hash>");
-      resolveConflict(cb, args[0]!, args[1]!);
-      return 0;
-    case "docs": {
-      need(1, "docs <name>");
-      const rec = cb.store.getDef(cb.lookupOne(args[0]!))!;
-      console.log(renderDoc(cb, rec, { evaluate: true })?.markdown ?? dim("no documentation"));
+    case "diff": {
+      const { model } = execute(cmd, parse(commands.diff, { argv: rest }));
+      diff(cb, model.refs);
       return 0;
     }
-    case "history":
-      history(cb, Number(args[0] ?? 30));
+    case "resolve": {
+      const { model } = execute(cmd, parse(commands.resolve, { argv: rest }));
+      const conflicted = [...new Set(cb.store.names().map((n) => n.path))].filter((p) => cb.store.hashesAt(p).length > 1);
+      const name = model.name ?? (await choose("resolve <name> <#hash>", "Which conflict?", conflicted.map((p) => ({ value: p, label: p, hint: `${cb.store.hashesAt(p).length} definitions` }))));
+      const keep =
+        model.hash ??
+        (await choose(
+          "resolve <name> <#hash>",
+          `Keep which ${name}?`,
+          cb.store.hashesAt(name).map((h) => ({ value: `#${h}`, label: `#${shortHash(h)}`, hint: cb.store.getDef(h)?.signature })),
+          false,
+        ));
+      resolveConflict(cb, name, keep);
       return 0;
-    case "reset":
-      need(1, "reset <id>");
-      reset(cb, Number(args[0]));
+    }
+    case "history": {
+      const { model } = execute(cmd, parse(commands.history, { argv: rest }));
+      history(cb, model.n);
       return 0;
-    case "branch":
-      if (!args[0]) {
+    }
+    case "reset": {
+      const { model } = execute(cmd, parse(commands.reset, { argv: rest }));
+      reset(cb, model.id ?? (await chooseReset(cb)));
+      return 0;
+    }
+    case "branch": {
+      const { model } = execute(cmd, parse(commands.branch, { argv: rest }));
+      if (!model.branch) {
         for (const b of cb.store.branches()) console.log(`${b === cb.store.branch().name ? green("* ") : "  "}${b}`);
         return 0;
       }
-      cb.store.createBranch(args[0]);
-      console.log(`created branch ${args[0]} from ${cb.store.branch().name}`);
+      cb.store.createBranch(model.branch);
+      console.log(`created branch ${model.branch} from ${cb.store.branch().name}`);
       return 0;
+    }
     case "merge":
-      need(1, "merge <branch>");
-      return mergeBranch(cb, args[0]!).conflicts.length ? 1 : 0;
-    case "switch":
-      need(1, "switch <branch>");
-      cb.store.switchBranch(args[0]!);
+    case "switch": {
+      const { model } = execute(cmd, parse(commands[cmd], { argv: rest }));
+      const others = cb.store.branches().filter((b) => b !== cb.store.branch().name);
+      const branch = model.branch ?? (await choose(`${cmd} <branch>`, cmd === "merge" ? "Merge which branch?" : "Switch to?", others.map((b) => ({ value: b, label: b }))));
+      if (cmd === "merge") return mergeBranch(cb, branch).conflicts.length ? 1 : 0;
+      cb.store.switchBranch(branch);
       cb.refreshShim(true);
-      console.log(`on branch ${args[0]}`);
+      console.log(`on branch ${branch}`);
       return 0;
-    default:
-      throw new UsageError(`unknown command '${cmd}'\n\n${HELP}`);
+    }
+  }
+}
+
+function unknownCommand(word: string): string {
+  const close = suggest(word);
+  return `unknown command '${word}'${close.length ? `; did you mean ${close.map((c) => `\`tcm ${c}\``).join(" or ")}?` : ""}\n${dim("see `tcm help`")}`;
+}
+
+/** `tcm reset` with no id: which command to undo, back to before it. */
+function chooseReset(cb: Codebase): Promise<number> {
+  const batches = new Map<number, { first: number; command: string; ts: number; n: number }>();
+  for (const e of cb.store.history(200)) {
+    const b = batches.get(e.batch);
+    if (b) (b.first = Math.min(b.first, e.id), b.n++);
+    else batches.set(e.batch, { first: e.id, command: e.command, ts: e.ts, n: 1 });
+  }
+  if (!batches.size) throw new UsageError("nothing to undo on this branch");
+  return choose(
+    "reset <id>",
+    "Undo back to before which command? (it and everything after it)",
+    [...batches.values()].map((b) => ({ value: b.first - 1, label: `tcm ${b.command}`, hint: `${b.n} change(s), ${new Date(b.ts).toISOString().replace("T", " ").slice(0, 16)}` })),
+    false,
+  );
+}
+
+function jobs(cb: Codebase, r: Extract<ReturnType<typeof parse<typeof commands.jobs>>, { method: "execute" }>): number {
+  const file = path.join(cb.lay.tcmDir, "data", "jobs.sqlite");
+  if (!fs.existsSync(file)) return (console.log(dim("no jobs yet (enqueue() from a server function, or every() for recurring ones)")), 0);
+  const db = new DatabaseSync(file);
+  try {
+    const find = (prefix: string) => {
+      const rows = db.prepare("SELECT id FROM jobs WHERE id LIKE ?").all(`${prefix}%`) as { id: string }[];
+      if (rows.length !== 1) throw new UsageError(rows.length ? `'${prefix}' matches ${rows.length} jobs` : `no job '${prefix}'`);
+      return rows[0]!.id;
+    };
+    if (r.route === "/retry") {
+      db.prepare("UPDATE jobs SET status = 'queued', run_at = ?, attempts = 0, last_error = NULL, finished = NULL WHERE id = ?").run(Date.now(), find(r.model.id));
+      return (console.log("queued again"), 0);
+    }
+    if (r.route === "/cancel") {
+      const c = db.prepare("UPDATE jobs SET status = 'cancelled', finished = ? WHERE id = ? AND status = 'queued'").run(Date.now(), find(r.model.id));
+      return (console.log(c.changes ? "cancelled" : dim("not queued (already running or finished)")), 0);
+    }
+    const rows = db.prepare("SELECT * FROM jobs ORDER BY created DESC LIMIT ?").all(r.model.n) as Record<string, string | number | null>[];
+    const colour: Record<string, (s: string) => string> = { done: green, failed: red, queued: yellow, running: cyan, cancelled: dim };
+    for (const row of rows) {
+      const when = new Date(Number(row.status === "queued" ? row.run_at : (row.finished ?? row.run_at))).toISOString().replace("T", " ").slice(0, 19);
+      // a finished job's last error is history; a failed or retrying one's is the news
+      const err = row.last_error && row.status !== "done" ? dim(`  ${String(row.last_error).split("\n")[0]}`) : "";
+      console.log(`${dim(String(row.id).slice(0, 8))}  ${(colour[String(row.status)] ?? dim)(String(row.status).padEnd(9))} ${String(row.fn_name).padEnd(24)} ${dim(`${row.attempts}/${row.max_attempts}  ${when}`)}${err}`);
+    }
+    return 0;
+  } finally {
+    db.close();
   }
 }
 

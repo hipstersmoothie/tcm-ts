@@ -600,4 +600,4 @@ writeFileSync(${JSON.stringify(out)}, JSON.stringify(results));
 }
 
 export { writeIfChanged };
-export { ensureExternals, installedPeers, lockAtLeast, newestVersion, npmAlias, packageManager, parseModule, usePackageLock, versionsIn, type PackageLock } from "./packages.ts";
+export { ensureExternals, installedPeers, lockAtLeast, newestVersion, npmAlias, packageManager, parseModule, setProgress, usePackageLock, versionsIn, type PackageLock, type Progress } from "./packages.ts";

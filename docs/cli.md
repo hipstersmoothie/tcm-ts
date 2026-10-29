@@ -1,6 +1,18 @@
 # CLI reference
 
-`tcm help` prints the same list in short form.
+`tcm help` prints the same list in short form; `tcm <command> --help` (or `tcm help <command>`) shows a
+command's arguments and options, with their defaults. A mistyped command gets a suggestion, and an argument
+or option a command doesn't take is an error naming it.
+
+- **Arguments for `tcm run`** that start with `-` go after `--`: `tcm run lib.main -- --verbose`.
+- **Missing arguments are asked for** at a terminal: `tcm view`, `run`, `edit`, `docs`, `deps`, `mv`, `rm`, `dev`
+  and others offer the codebase's names to search, `tcm switch` and `merge` offer branches, `tcm resolve` the
+  conflicts and their definitions, `tcm reset` the recent commands to undo, and `tcm upgrade` the packages.
+  `tcm rm` of a name others use asks instead of refusing. Elsewhere (scripts, CI, editors), a missing argument is
+  a usage error.
+- **Package installs** show as a line each, replaced by what was installed and how long it took on a terminal.
+- **Shell completion:** `source <(tcm complete zsh)` (or `bash`, `fish`, `powershell`); see
+  [install](getting-started.md#shell-completion).
 
 ## Codebase
 
@@ -8,7 +20,8 @@
 |---|---|
 | `tcm init` | set up a codebase here: `.tcm/codebase.sqlite`, `package.json` `#codebase` imports, `tsconfig.json`, `scratch.ts` |
 | `tcm` / `tcm watch [--fresh]` | watch `*.ts` scratch files: typecheck, hash, report, evaluate watch expressions and tests. Their results are cached by hash; `--fresh` re-runs them |
-| `tcm lsp` | language server for editors, over stdio ([editors](editors.md)) |
+| `tcm lsp [--stdio]` | language server for editors, over stdio ([editors](editors.md)) |
+| `tcm complete <shell>` | a completion script for zsh, bash, fish or powershell, completing names from the codebase too |
 | `tcm check [file] [--fresh]` | one-shot version of watch. Reports each definition as `new` / `identical` / `update` / `alias` / `conflict` |
 | `tcm add [file] [--into ns]` | save new definitions from a scratch file (default `scratch.ts`) |
 | `tcm update [file] [--into ns]` | save, re-point changed names, and re-hash every dependent. Dependents that stop typechecking keep their old hash and go to `todo`. Also checks stored table rows against changed row types ([data](data.md)) |
@@ -30,7 +43,7 @@
 | `tcm packages` | the npm packages the codebase runs: range, locked version, what uses them ([packages](packages.md)) |
 | `tcm upgrade <pkg> [--force]` | newest versions within the ranges in use (and of what's built against it); no hashes change, everything using them is re-checked |
 | `tcm upgrade <pkg>@<range\|latest> [namespace]` | re-pin code to another range: re-hashed, dependents follow |
-| `tcm pack [[subpath=]<namespace\|name>...] --name <pkg> [--version v] [--bin cmd=<name>,...] [--with pkg,...] [--files a,b] [--out dir]` | make an npm package from definitions: JavaScript with types, entry points exporting them by name, bins, dependencies at their locked versions ([publishing](publishing.md)) |
+| `tcm pack [[subpath=]<namespace\|name>...] --name <pkg>[@version] [--bin cmd=<name>,...] [--with pkg,...] [--files a,b] [--out dir]` | make an npm package from definitions: JavaScript with types, entry points exporting them by name, bins, dependencies at their locked versions ([publishing](publishing.md)) |
 | `tcm resolve <name> <#hash>` | pick one definition for a conflicted name |
 | `tcm test [namespace] [--fresh]` | run tests, cached by hash ([testing](testing.md)) |
 | `tcm verify` | re-render and re-hash every live definition; must be the identity ([hashing](hashing.md)) |
