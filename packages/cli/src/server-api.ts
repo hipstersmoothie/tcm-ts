@@ -28,6 +28,13 @@ export function createServerApi(deps: {
   decode: typeof decode;
   checkValue: typeof checkValue;
 }) {
+  /** A random id people may type: base64url, never starting with `-` (a command line would read it as a flag). */
+  const typedId = (bytes: number): string => {
+    let id: string;
+    do id = deps.randomBytes(bytes).toString("base64url");
+    while (id.startsWith("-"));
+    return id;
+  };
   interface ServerRequest {
     method: string;
     url: string;
@@ -217,7 +224,7 @@ export function createServerApi(deps: {
     const dataDir = dataDirNow();
     const hash = opts.hash ?? (fn as unknown as Record<symbol, string | undefined>)[HASH_MARK];
     if (dataDir && !hash) throw new Error(`enqueue() needs a codebase function (a top-level definition, so it can be found by hash), not an inline one`);
-    const id = deps.randomBytes(12).toString("base64url");
+    const id = typedId(12);
     const encoded = deps.encode(args, `arguments to ${fn.name || "the job"}`);
     const insert = () => {
       const r = jobsDb(dataDir)
@@ -679,7 +686,7 @@ export function createServerApi(deps: {
     }
     /** Store a new row; returns its id. */
     async insert(value: T): Promise<string> {
-      const id = deps.randomBytes(9).toString("base64url");
+      const id = typedId(9);
       await this.put(id, value);
       return id;
     }

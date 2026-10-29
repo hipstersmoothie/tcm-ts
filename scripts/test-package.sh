@@ -10,4 +10,13 @@ node "$REPO/scripts/build.ts"
 PKG="$TMP/node_modules/tcm-ts"
 echo "installed $(ls "$TMP"/tcm-ts-*.tgz | xargs basename) into $TMP"
 cd "$REPO"
-TCM_BIN="$PKG/bin/tcm.js" TCM_CORE="$PKG/core/index.js" node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts' | grep -E '^ℹ (tests|pass|fail) '
+# the suites' totals and the names of failing tests; fails if a test did
+suites() {
+  out="$(mktemp)"
+  status=0
+  "$@" > "$out" 2>&1 || status=$?
+  grep -E '^ℹ (tests|pass|fail) ' "$out"
+  grep '^✖ ' "$out" | grep -v '^✖ failing tests' | sort -u
+  return "$status"
+}
+TCM_BIN="$PKG/bin/tcm.js" TCM_CORE="$PKG/core/index.js" suites node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts'

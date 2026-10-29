@@ -14,10 +14,22 @@ node ../packages/cli/bin/tcm.js import ../packages --into tcmts
 node tcm.ts verify
 
 cd "$REPO"
-TCM_BIN=selfhost/tcm.ts TCM_CORE=selfhost/core.ts node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts' | grep -E '^ℹ (tests|pass|fail) '
+# the suites' totals and the names of failing tests; fails if a test did
+suites() {
+  out="$(mktemp)"
+  status=0
+  "$@" > "$out" 2>&1 || status=$?
+  grep -E '^ℹ (tests|pass|fail) ' "$out"
+  grep '^✖ ' "$out" | grep -v '^✖ failing tests' | sort -u
+  return "$status"
+}
+TCM_BIN=selfhost/tcm.ts TCM_CORE=selfhost/core.ts suites node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts'
 
 FIX="$(mktemp -d)"
-(cd "$FIX" && node "$REPO/selfhost/tcm.ts" init > /dev/null && rm scratch.ts && node "$REPO/selfhost/tcm.ts" import "$REPO/packages" --into tcmts > /dev/null 2>&1)
+if ! (cd "$FIX" && node "$REPO/selfhost/tcm.ts" init > /dev/null && rm scratch.ts && node "$REPO/selfhost/tcm.ts" import "$REPO/packages" --into tcmts) > "$FIX/import.log" 2>&1; then
+  grep -v '^warning' "$FIX/import.log"
+  exit 1
+fi
 sqlite3 "$REPO/selfhost/.tcm/codebase.sqlite" "SELECT path || ' ' || hash FROM names ORDER BY path" > "$FIX/source-built.txt"
 sqlite3 "$FIX/.tcm/codebase.sqlite" "SELECT path || ' ' || hash FROM names ORDER BY path" > "$FIX/self-hosted.txt"
 diff "$FIX/source-built.txt" "$FIX/self-hosted.txt"

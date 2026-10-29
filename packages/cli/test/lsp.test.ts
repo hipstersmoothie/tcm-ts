@@ -102,7 +102,8 @@ square(12);
   assert.equal(hints[0].label, "⧩ 144");
   assert.equal(hints[0].position.line, 7);
   lenses = await c.request("textDocument/codeLens", doc);
-  assert.ok(titles(lenses).includes("✓ passed"), titles(lenses).join(" | "));
+  // the run may have finished before the lens was asked for, in which case it reports the cached result
+  assert.ok(titles(lenses).some((t) => /^✓ passed( \(cached\))?$/.test(t)), titles(lenses).join(" | "));
 
   // the Add action saves to the codebase; the lenses then show the hash
   const added = await c.request("workspace/executeCommand", { command: "tcm.add", arguments: [uri] });
