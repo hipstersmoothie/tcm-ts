@@ -3,6 +3,7 @@
 #   1. every definition re-renders and re-hashes to itself (`tcm verify`, run by the self-hosted tcm)
 #   2. the test suite passes against the self-hosted CLI and analyzer
 #   3. fixed point: the self-hosted tcm imports packages/ and assigns exactly the same hashes
+#   4. `tcm pack` makes tcm's npm package from the codebase, and the installed package works
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO/selfhost"
@@ -21,3 +22,13 @@ sqlite3 "$REPO/selfhost/.tcm/codebase.sqlite" "SELECT path || ' ' || hash FROM n
 sqlite3 "$FIX/.tcm/codebase.sqlite" "SELECT path || ' ' || hash FROM names ORDER BY path" > "$FIX/self-hosted.txt"
 diff "$FIX/source-built.txt" "$FIX/self-hosted.txt"
 echo "fixed point: the self-hosted tcm assigns its own source the same $(wc -l < "$FIX/source-built.txt" | tr -d ' ') hashes"
+
+PACK="$(mktemp -d)"
+(cd "$REPO/selfhost" && node tcm.ts pack core=tcmts.core.analyze.analyzeFile core=tcmts.core.analyze.analyzeProject core=tcmts.core.hash.IR_VERSION \
+  --name tcm-ts --version "$(node -p 'require("../package.json").version')" --bin tcm=tcmts.cli.main.runCli,tcm-ts=tcmts.cli.main.runCli \
+  --with @types/node@^24 --files ../README.md,../docs --out "$PACK/package")
+(cd "$PACK/package" && npm pack --silent --pack-destination "$PACK" > /dev/null)
+(cd "$PACK" && npm init -y > /dev/null && npm install ./tcm-ts-*.tgz --no-audit --no-fund --loglevel=error > /dev/null)
+TRY="$(mktemp -d)"
+(cd "$TRY" && node "$PACK/node_modules/.bin/tcm" init > /dev/null && node "$PACK/node_modules/.bin/tcm" add > /dev/null && test "$(node "$PACK/node_modules/.bin/tcm" run square 12)" = 144)
+echo "packed: tcm's package from its own codebase installs and runs (TCM_BIN=$PACK/node_modules/tcm-ts/bin/tcm.js runs the suites against it)"

@@ -31,6 +31,7 @@ New here? Read the [introduction](introduction.md), then follow [your first code
 | [Importing a project](importing.md) | bringing an existing TypeScript project into a codebase |
 | [History and branches](history.md) | diffs, undo, branches and merging |
 | [Sharing code](sync.md) | pushing and pulling between codebases, running code on another machine |
+| [Publishing to npm](publishing.md) | `tcm pack`: definitions as an npm package, with types, bins and dependencies |
 | [Web apps](apps.md) | how tcm splits an app between server and browser |
 | [React](react.md) | components, and server components without `"use client"` or `"use server"` |
 | [Server functions](server-api.md) | requests, cookies, sessions, errors, streaming, HTTP endpoints |

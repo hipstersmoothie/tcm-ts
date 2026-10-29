@@ -40,14 +40,23 @@ All three of `pnpm test`, `pnpm selfhost` and `pnpm test:package` should pass be
 1. runs `tcm verify` with the **self-hosted** tcm: every definition round-trips to its own hash;
 2. runs the whole test suite against the self-hosted CLI and analyzer (`TCM_BIN=selfhost/tcm.ts
    TCM_CORE=selfhost/core.ts`), which execute entirely from `.tcm/cache`;
-3. checks the fixed point: the self-hosted tcm imports `packages/` again and assigns exactly the same hashes.
+3. checks the fixed point: the self-hosted tcm imports `packages/` again and assigns exactly the same hashes;
+4. makes tcm's npm package from the codebase with [`tcm pack`](publishing.md) (the `tcm` bins run
+   `tcmts.cli.main.runCli`, and `tcm-ts/core` exports the analyzer), installs it and runs code with it. The
+   whole suite passes against that package too (`TCM_BIN=<it>/bin/tcm.js TCM_CORE=<it>/core/index.js`; the
+   script prints where it is).
 
 Getting there took two small refactors, both now enforced by the tool. A top-level `for` loop that filled a
 lookup table became an immediately-invoked function, and the CLI's top-level `try` moved into an exported
-`runCli`.
+`runCli`. Running from a codebase also means a module's exports are named by hash, so code that tells another
+process where to import something from says which export too: `transpileModule()` gives the module hook its
+URL and export name (a function in a codebase carries its hash at runtime, and the hash names its export).
 
 ## Packaging
 
 Node won't strip types from files under `node_modules`, so `pnpm build` (`scripts/build.ts`) transpiles the
 workspace into one plain-JavaScript package, `tcm-ts`, in `dist/package`. Code tcm generates (`.tcm/cache`)
 stays TypeScript, because it lives in the user's project. Publishing is done by hand.
+
+`pnpm selfhost` makes the same package from the codebase with `tcm pack`, the step towards tcm being developed
+in a codebase rather than in `packages/`.

@@ -6,4 +6,4 @@ import { enableCompileCache } from "node:module";
 const cache = enableCompileCache?.();
 if (cache?.directory) process.env.NODE_COMPILE_CACHE ??= cache.directory;
 const { runCli } = await import("../src/main.ts");
-runCli(process.argv.slice(2));
+runCli(...process.argv.slice(2));

@@ -30,6 +30,7 @@
 | `tcm packages` | the npm packages the codebase runs: range, locked version, what uses them ([packages](packages.md)) |
 | `tcm upgrade <pkg> [--force]` | newest versions within the ranges in use (and of what's built against it); no hashes change, everything using them is re-checked |
 | `tcm upgrade <pkg>@<range\|latest> [namespace]` | re-pin code to another range: re-hashed, dependents follow |
+| `tcm pack [[subpath=]<namespace\|name>...] --name <pkg> [--version v] [--bin cmd=<name>,...] [--with pkg,...] [--files a,b] [--out dir]` | make an npm package from definitions: JavaScript with types, entry points exporting them by name, bins, dependencies at their locked versions ([publishing](publishing.md)) |
 | `tcm resolve <name> <#hash>` | pick one definition for a conflicted name |
 | `tcm test [namespace] [--fresh]` | run tests, cached by hash ([testing](testing.md)) |
 | `tcm verify` | re-render and re-hash every live definition; must be the identity ([hashing](hashing.md)) |

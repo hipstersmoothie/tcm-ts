@@ -20,4 +20,7 @@ What isn't done yet, or is deliberately out of scope:
   a range, tcm trusts semver: moving the lock to a newer version re-checks types, not behaviour.
 - **Server-only npm packages are found by a heuristic:** no browser build, and an entry that imports Node
   builtins.
+- **Packed packages run outside tcm** ([publishing](publishing.md#what-a-package-can-hold)): what needs
+  `tcm dev` or `tcm start` (server functions called from a browser, tables, jobs) has no server there, and
+  packages code finds at runtime by name rather than importing them go in with `--with`.
 - **Transactions lock per process** ([data](data.md#transactions)).

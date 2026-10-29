@@ -16,6 +16,7 @@ myproject/
     apps/                 production builds, by hash (tcm build / tcm start)
     web/, build/          working files for tcm dev and tcm build (generated)
     examples/             doc examples, as runnable modules (generated)
+    pack/                 packages made by tcm pack, by package name (generated)
     secret, tls/          the server's session secret and TLS certificate, once there are any
     .gitignore            ignores everything above except codebase.sqlite
 ```

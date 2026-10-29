@@ -2,4 +2,4 @@
 // built from ../packages by `tcm import`, and runs from .tcm/cache.
 import { runCli } from "#codebase/tcmts/cli/main";
 
-runCli(process.argv.slice(2));
+runCli(...process.argv.slice(2));

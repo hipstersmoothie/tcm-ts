@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { builtinModules, createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { exportId } from "./hash.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -196,8 +197,15 @@ export function transpileForNode(source: string, fileName: string): string {
   return `${code}\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,${Buffer.from(map).toString("base64")}\n`;
 }
 
-/** This module, for processes that load the same compilation through a module hook. */
-export const transpileModuleUrl = import.meta.url;
+/**
+ * Where transpileForNode can be imported from, for processes that load the same compilation through a module
+ * hook: this module and the export to import (by name from source; by hash when tcm runs from a codebase,
+ * where a function carries its hash).
+ */
+export function transpileModule(): { url: string; export: string; transpile: typeof transpileForNode } {
+  const hash = (transpileModule as unknown as Record<symbol, string | undefined>)[Symbol.for("tcm.hash")];
+  return { url: import.meta.url, export: hash ? exportId(hash) : "transpileModule", transpile: transpileForNode };
+}
 
 /** Where that TypeScript lives, for processes that compile on their own (runners spawned by tcm). */
 export function typescriptUrl(): string | undefined {

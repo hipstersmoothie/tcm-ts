@@ -52,6 +52,8 @@ export interface RenderOptions {
   annotate?: (hash: string, declaredAs: string) => string | undefined;
   /** put `export` on each member's declaration (for type/value pair modules) */
   exportDeclarations?: boolean;
+  /** put documentation above members (scratch style always does; `tcm pack` wants it in declarations) */
+  docs?: boolean;
   /** keep every identifier as it is written in the stored source (migration re-derives text-identical code) */
   preserveText?: boolean;
 }
@@ -261,7 +263,7 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
   for (const m of ordered) {
     if (emitted.has(m.sourceText)) continue;
     emitted.add(m.sourceText);
-    if (opts.style === "scratch" && m.doc) lines.push(`/**\n${m.doc.split("\n").map((l) => ` * ${l}`.trimEnd()).join("\n")}\n */`);
+    if ((opts.style === "scratch" || opts.docs) && m.doc) lines.push(`/**\n${m.doc.split("\n").map((l) => ` * ${l}`.trimEnd()).join("\n")}\n */`);
     const note = opts.style === "scratch" ? opts.annotate?.(m.hash, memberNames.get(m.hash)!) : undefined;
     if (note) lines.push(note);
     // `export` before each statement (every overload of a function needs one), after any comments above it, so

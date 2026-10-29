@@ -16,6 +16,7 @@ import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
 import { evaluateCached, isTestPath, printOutcomes, runCached, summary } from "./tests.ts";
 import { listPackages, upgradeTo, upgradeWithin } from "./upgrade.ts";
+import { pack } from "./pack.ts";
 import { vitestChild } from "./vitest.ts";
 import { formatStored, formatText } from "./fmt.ts";
 import { LINT_CONFIG, lintDefinitions, lintScratch, locate, type LintIssue } from "./lint.ts";
@@ -26,7 +27,7 @@ import { addRemote, listRemotes, newToken, pull, push, runOn, serve, tlsMaterial
 
 class UsageError extends Error {}
 
-const VALUE_FLAGS = new Set(["into", "file", "on", "as", "port", "host", "token", "fingerprint", "tls-cert", "tls-key", "keep", "http", "exclude"]);
+const VALUE_FLAGS = new Set(["into", "file", "on", "as", "port", "host", "token", "fingerprint", "tls-cert", "tls-key", "keep", "http", "exclude", "name", "version", "description", "bin", "with", "files", "out"]);
 
 function parseArgs(argv: string[]) {
   const positional: string[] = [];
@@ -38,7 +39,8 @@ function parseArgs(argv: string[]) {
       break;
     }
     if (a.startsWith("--")) {
-      const [k, v] = a.slice(2).split("=", 2) as [string, string | undefined];
+      const eq = a.indexOf("=");
+      const [k, v] = eq < 0 ? [a.slice(2), undefined] : [a.slice(2, eq), a.slice(eq + 1)];
       if (v !== undefined) flags[k] = v;
       else if (VALUE_FLAGS.has(k)) flags[k] = argv[++i] ?? "";
       else flags[k] = true;
@@ -662,6 +664,10 @@ const HELP = `${bold("tcm")} — a content-addressed codebase manager for TypeSc
                                  no hashes change, everything using them is re-checked
   tcm upgrade <pkg>@<range|latest> [namespace]
                                  re-pin code to another range (a new major): re-hashed, dependents follow
+  tcm pack [[subpath=]<namespace|name>...] --name <pkg> [--version 0.0.0] [--bin cmd=<name>,...]
+           [--with pkg,...] [--files a,b] [--out dir]
+                                 an npm package from the codebase: the definitions' closure as JavaScript with
+                                 types, entry points exporting them by name, bins, dependencies from the lock
   tcm resolve <name> <#hash>     pick one definition for a conflicted name
   tcm docs <name>                show documentation
   tcm diff                       what the last command changed: edits, dependents re-hashed by them, renames
@@ -971,6 +977,31 @@ square(12);
       if (ok) cb.refreshShim();
       return ok ? 0 : 1;
     }
+    case "pack": {
+      const str = (k: string) => (typeof flags[k] === "string" ? (flags[k] as string) : undefined);
+      const list = (k: string) => (str(k) ?? "").split(",").filter(Boolean);
+      const name = str("name");
+      if (!name || (!args.length && !str("bin"))) throw new UsageError("usage: tcm pack [[subpath=]<namespace|name>...] --name <pkg> [--bin cmd=<name>] [--version v] [--out dir]");
+      const pair = (s: string, what: string) => {
+        const eq = s.indexOf("=");
+        if (what === "bin" && eq < 0) throw new UsageError(`--bin wants cmd=<name>, not '${s}'`);
+        return eq < 0 ? ["", s] : [s.slice(0, eq), s.slice(eq + 1)];
+      };
+      const r = pack(cb, {
+        name,
+        version: str("version") ?? "0.0.0",
+        description: str("description"),
+        entries: args.map((a) => pair(a, "entry")).map(([subpath, target]) => ({ subpath: subpath ? subpath.replace(/^\.\//, "") : ".", target: target! })),
+        bins: list("bin").map((b) => pair(b, "bin")).map(([command, target]) => ({ command: command!, target: target! })),
+        with: list("with"),
+        files: list("files"),
+        out: str("out") ?? path.join(".tcm", "pack", name.replace(/^@/, "").replace("/", "__")),
+      });
+      const deps = Object.keys(r.dependencies);
+      const shown = path.relative(cwd, r.dir);
+      console.log(`packed ${name} into ${shown.startsWith("..") ? r.dir : shown || "."}: ${r.modules} module(s)${deps.length ? `, depends on ${deps.join(", ")}` : ""}`);
+      return 0;
+    }
     case "diff":
       diff(cb, args);
       return 0;
@@ -1014,7 +1045,7 @@ square(12);
 }
 
 /** Process entry point: run a command, report errors, set the exit code. */
-export async function runCli(argv: string[]): Promise<void> {
+export async function runCli(...argv: string[]): Promise<void> {
   try {
     const code = await main(argv);
     if (code >= 0) process.exitCode = code;
