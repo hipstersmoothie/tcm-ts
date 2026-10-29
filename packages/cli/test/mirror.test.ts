@@ -235,6 +235,14 @@ test("a mirror makes files for new namespaces, and renames reach files near it",
   run("update");
   assert.match(fs.readFileSync(path.join(repo, "src", "paths.ts"), "utf8"), / path\.basename\(p\)\.toUpperCase\(\)/);
   assert.match(run("view", "app.paths.base"), / path\.basename\(p\)\.toUpperCase\(\)/);
+
+  // in the codebase anything can be imported; in the files, what another file imports is exported where it is
+  fs.appendFileSync(path.join(repo, "src", "paths.ts"), `\nconst SEP = "/";\n\nexport const join = (a: string, b: string): string => a + SEP + b;\n`);
+  fs.writeFileSync(path.join(cbDir, "scratch.ts"), `// tcm: namespace app.extra\nimport { SEP } from "#codebase/app/paths";\nexport const under = (p: string): string => SEP + p;\n`);
+  run("add");
+  assert.match(fs.readFileSync(path.join(repo, "src", "paths.ts"), "utf8"), /\nexport const SEP = "\/";\n/);
+  assert.match(fs.readFileSync(path.join(repo, "src", "extra.ts"), "utf8"), /import \{ SEP \} from "\.\/paths\.ts";/);
+  assert.match(run("mirror", "--check"), /the files hash to what the codebase holds/);
 });
 
 test("a definition moved to another namespace moves to its file, and what imports it follows", () => {

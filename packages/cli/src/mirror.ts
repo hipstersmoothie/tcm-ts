@@ -123,7 +123,7 @@ interface Decl {
   shared: boolean;
 }
 
-function declarations(file: string, text: string): Map<string, Decl> {
+export function declarations(file: string, text: string): Map<string, Decl> {
   const sf = ts.parse(file, text);
   const out = new Map<string, Decl>();
   const add = (name: string, st: ts.Statement, shared = false) => {
@@ -169,7 +169,7 @@ class Spelling {
   /** a module (codebase file or package entry) → the namespace prefix it's reached through, `ts.` */
   private prefix = new Map<string, string>();
   /** imports the code written here needs: what each brings in, and whether any use of it is a value's */
-  private wanted: { key: string; spec: string; name: string; local: string; value: boolean }[] = [];
+  private wanted: { key: string; spec: string; name: string; local: string; value: boolean; file?: string }[] = [];
   private taken: Set<string>;
   private cb: Codebase;
   private file: string;
@@ -243,7 +243,7 @@ class Spelling {
       if (pre) return this.remember(key, pre + t.leaf);
       const local = this.local(t.leaf);
       const value = s.pos !== "type" && this.cb.store.getDef(s.hash)?.kind !== "type";
-      this.wanted.push({ key, spec: specifierFor(this.file, t.file, t.leaf), name: t.leaf, local, value });
+      this.wanted.push({ key, spec: specifierFor(this.file, t.file, t.leaf), name: t.leaf, local, value, file: t.file });
       return this.remember(key, local);
     }
     const ext = s.ext!;
@@ -259,6 +259,11 @@ class Spelling {
    * The imports the code written here needs: a statement per module (another for what's only used as a type),
    * Node's builtins first, then packages, then the project's own files.
    */
+  /** The project's files the imports come from, and what from each: their declarations must be exported. */
+  get importedFrom(): { file: string; leaf: string }[] {
+    return this.wanted.flatMap((w) => (w.file ? [{ file: w.file, leaf: w.name }] : []));
+  }
+
   get imports(): string[] {
     const group = (spec: string) => (spec.startsWith("node:") ? 0 : spec.startsWith(".") ? 2 : 1);
     const out: string[] = [];
@@ -397,6 +402,8 @@ export function syncMirror(cb: Codebase): boolean {
   const renames: { rel: string; from: string; to: string }[] = [];
   // definitions gone from one file's namespace to another's: by hash, where from and what they were called there
   const moves: Move[] = [];
+  // what the files written import from the project's others
+  const imported: { file: string; leaf: string }[] = [];
   const moved = new Map<string, { file: string; leaf: string }>();
   for (const [rel, f] of Object.entries(m.files)) {
     const cur = new Set(Object.values(now.get(f.ns)!));
@@ -476,6 +483,18 @@ export function syncMirror(cb: Codebase): boolean {
       edits.push({ start: at, end: at, text: (at ? "\n" : "") + spelling.imports.join("\n") + (at ? "" : "\n") });
     }
     if (edits.length) fs.writeFileSync(abs(rel), pruneImports(abs(rel), text, applyEdits(text, edits)));
+    imported.push(...spelling.importedFrom);
+  }
+  // in the codebase anything can be imported; in the files, what's imported from another is exported there
+  for (const file of new Set(imported.map((i) => i.file))) {
+    const text = fs.readFileSync(file, "utf8");
+    const decls = declarations(file, text);
+    const edits: Edit[] = [];
+    for (const leaf of new Set(imported.filter((i) => i.file === file).map((i) => i.leaf))) {
+      const d = decls.get(leaf);
+      if (d && !d.exported && !edits.some((e) => e.start === d.start)) edits.push({ start: d.start, end: d.start, text: "export " });
+    }
+    if (edits.length) fs.writeFileSync(file, applyEdits(text, edits));
   }
   // files outside the mirror that a rename reached, as they were
   let outside = new Map<string, string>();
