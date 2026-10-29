@@ -1,17 +1,15 @@
 #!/bin/sh
-# Build tcm's own codebase from packages/, then check the self-hosted build three ways:
+# tcm checks itself, from its own codebase (built from packages/ by `pnpm build`, which also packs tcm-ts from it):
 #   1. every definition re-renders and re-hashes to itself (`tcm verify`, run by the self-hosted tcm)
-#   2. tcm's tests in the codebase pass under the self-hosted `tcm test`, and a second run is all cached; the
-#      test suite passes against the self-hosted CLI and analyzer
+#   2. tcm's test definitions pass under the self-hosted `tcm test`, and a second run is all cached
 #   3. fixed point: the self-hosted tcm imports packages/ and assigns exactly the same hashes
-#   4. `tcm pack` makes tcm's npm package from the codebase, and the installed package works
+#   4. the self-hosted tcm works far from this repository
+#   5. the package packed from the codebase installs, and the whole test suite passes against it: the one run of
+#      the suites a commit needs (it covers the source, the codebase and the packaging at once)
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+sh "$REPO/scripts/build.sh"
 cd "$REPO/selfhost"
-rm -rf .tcm
-node ../packages/cli/bin/tcm.js init > /dev/null
-rm -f scratch.ts
-node ../packages/cli/bin/tcm.js import ../packages --into tcmts --tests
 node tcm.ts verify
 # the tests written as definitions (packages/*/test/*.ts), run from the codebase and cached by hash
 first="$(NO_COLOR=1 node tcm.ts test tcmts)" || { echo "$first"; exit 1; }
@@ -19,18 +17,6 @@ echo "tcm test: $(printf '%s\n' "$first" | tail -1)"
 second="$(NO_COLOR=1 node tcm.ts test tcmts | tail -1)"
 passed="${second%% passed*}"
 case "$second" in *"passed, 0 failed ($passed cached)") echo "tcm test again: $second" ;; *) echo "a second tcm test run wasn't all cached: $second"; exit 1 ;; esac
-
-cd "$REPO"
-# the suites' totals and the names of failing tests; fails if a test did
-suites() {
-  out="$(mktemp)"
-  status=0
-  "$@" > "$out" 2>&1 || status=$?
-  grep -E '^ℹ (tests|pass|fail) ' "$out"
-  grep '^✖ ' "$out" | grep -v '^✖ failing tests' | sort -u
-  return "$status"
-}
-TCM_BIN=selfhost/tcm.ts suites node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts'
 
 FIX="$(mktemp -d)"
 if ! (cd "$FIX" && node "$REPO/selfhost/tcm.ts" init > /dev/null && rm scratch.ts && node "$REPO/selfhost/tcm.ts" import "$REPO/packages" --into tcmts --tests) > "$FIX/import.log" 2>&1; then
@@ -48,11 +34,18 @@ FAR="$(mktemp -d)"
 echo "far away: the self-hosted tcm makes a codebase in $FAR and checks code against @types/node there"
 
 PACK="$(mktemp -d)"
-(cd "$REPO/selfhost" && node tcm.ts pack core=tcmts.core.analyze.analyzeFile core=tcmts.core.analyze.analyzeProject core=tcmts.core.hash.IR_VERSION \
-  --name "tcm-ts@$(node -p 'require("../package.json").version')" --bin tcm=tcmts.cli.main.runCli,tcm-ts=tcmts.cli.main.runCli \
-  --with @types/node@^24 --files ../README.md,../docs --out "$PACK/package")
-(cd "$PACK/package" && npm pack --silent --pack-destination "$PACK" > /dev/null)
+(cd "$REPO/dist/package" && npm pack --silent --pack-destination "$PACK" > /dev/null)
 (cd "$PACK" && npm init -y > /dev/null && npm install ./tcm-ts-*.tgz --no-audit --no-fund --loglevel=error > /dev/null)
-TRY="$(mktemp -d)"
-(cd "$TRY" && node "$PACK/node_modules/.bin/tcm" init > /dev/null && node "$PACK/node_modules/.bin/tcm" add > /dev/null && test "$(node "$PACK/node_modules/.bin/tcm" run square 12)" = 144)
-echo "packed: tcm's package from its own codebase installs and runs (TCM_BIN=$PACK/node_modules/tcm-ts/bin/tcm.js runs the suites against it)"
+echo "installed $(ls "$PACK"/tcm-ts-*.tgz | xargs basename), packed from the codebase, into $PACK"
+
+cd "$REPO"
+# the suites' totals and the names of failing tests; fails if a test did
+suites() {
+  out="$(mktemp)"
+  status=0
+  "$@" > "$out" 2>&1 || status=$?
+  grep -E '^ℹ (tests|pass|fail) ' "$out"
+  grep '^✖ ' "$out" | grep -v '^✖ failing tests' | sort -u
+  return "$status"
+}
+TCM_BIN="$PACK/node_modules/tcm-ts/bin/tcm.js" suites node --test --disable-warning=ExperimentalWarning 'packages/*/test/*.test.ts'

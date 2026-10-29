@@ -23,14 +23,15 @@ the code does *now*.
 
 ## Verifying a change
 
-Run `pnpm verify` before committing (about five minutes). It runs, and names any failing tests of:
+Run `pnpm verify` before committing (about three minutes); it names any failing tests. It runs:
 
 ```sh
 pnpm typecheck
-pnpm test           # every suite
-pnpm selfhost       # tcm-ts imports and verifies its own source, runs the suites from it, checks the fixed point
-pnpm test:package   # the suites against the packed npm package
+pnpm selfhost       # tcm-ts imports and verifies its own source, runs its tests from the codebase, checks the
+                    # fixed point, packs tcm-ts from the codebase and runs every suite against it
 ```
+
+`pnpm test` runs the suites from source: the quick check while working.
 
 New behaviour gets a test in `packages/cli/test/` (end-to-end, through the CLI) or `packages/core/test/`. Tests
 that call code directly rather than the `tcm` binary are written as test definitions (`export const testX`, in a

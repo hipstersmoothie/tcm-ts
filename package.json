@@ -12,8 +12,7 @@
     "verify": "scripts/verify.sh",
     "selfhost": "scripts/selfhost.sh",
     "compare-compilers": "scripts/compare-compilers.sh",
-    "build": "node scripts/build.ts",
-    "test:package": "scripts/test-package.sh",
+    "build": "scripts/build.sh",
     "docs:site": "node scripts/docs-site.ts",
     "docs:dev": "node scripts/docs-dev.ts"
   },
