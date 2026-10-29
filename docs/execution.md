@@ -37,5 +37,7 @@ behaviour of transitive dependencies.
 ## Running code
 
 `tcm run <name> [args]` materializes the definition's closure, writes a small runner and spawns Node on it.
-Functions are called with the arguments; the result is awaited and printed if it isn't `undefined`.
+Functions are called with the arguments; the result is awaited and printed if it isn't `undefined`. What it starts
+can run the codebase's own commands (its packages' `bin`s), named in `<COMMAND>_BIN` (`TCM_BIN` for `tcm`), as
+[suites](testing.md#suites-testing-a-command-as-a-program) do.
 `tcm run … --on <remote>` does the same on another machine ([sync](sync.md)).

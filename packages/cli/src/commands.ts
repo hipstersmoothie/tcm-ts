@@ -111,6 +111,7 @@ export const commands = {
     namespace("only tests under this namespace"),
     fresh,
     toggle(name("definitions"), description("only the test definitions, not the suites")),
+    option(name("bin"), description("run the suites against another build of a command (a package packed from the codebase), comma-separated: cmd=<path>"), schema(list)),
   ),
   lint: command(name("lint"), description("lint definitions with oxlint (configure with a `lint.config` definition)"), namespace("only definitions under this namespace"), fresh),
   fmt: command(name("fmt"), description("reformat stored definitions with oxfmt; no hashes change"), namespace("only definitions under this namespace")),

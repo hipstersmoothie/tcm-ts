@@ -40,6 +40,7 @@ import { runSuites, suitesIn } from "./suites.ts";
 import { isNamespaceImport as ts_isNamespaceImport, isImportDeclaration as ts_isImportDeclaration, isStringLiteral as ts_isStringLiteral } from "typescript/ast";
 import { parse as parse_1, isTypeOnlyImport } from "../../core/src/ts.ts";
 import { declarations } from "./mirror.ts";
+import { commandsIn } from "./suites.ts";
 import { isTypeAliasDeclaration as ts_isTypeAliasDeclaration, isInterfaceDeclaration as ts_isInterfaceDeclaration, isClassDeclaration as ts_isClassDeclaration, isFunctionDeclaration as ts_isFunctionDeclaration, isIdentifier as ts_isIdentifier, isVariableStatement as ts_isVariableStatement } from "typescript/ast";
 import { scratchNamespace } from "@tcm/core";
 
@@ -970,7 +971,12 @@ square(12);
       if (suites.length) {
         console.log(`${names.length ? "\n" : ""}${bold("suites")} ${dim(`(running ${[...new Set(suites.map((s) => s.bin))].join(", ")})`)}`);
         // each as it finishes: a run can take minutes
-        const outcomes = await runSuites(cb, suites, model.fresh, (o) => printOutcomes([o]));
+        const builds = new Map((model.bin ?? []).map((b) => {
+          const at = b.indexOf("=");
+          if (at < 1) throw new UsageError(`--bin takes cmd=<path>, not '${b}'`);
+          return [b.slice(0, at), path.resolve(cwd, b.slice(at + 1))] as const;
+        }));
+        const outcomes = await runSuites(cb, suites, model.fresh, (o) => printOutcomes([o]), builds);
         console.log(`\nsuites: ${summary(outcomes)}`);
         ok &&= outcomes.every((o) => o.result.ok);
       }
@@ -1008,6 +1014,8 @@ square(12);
       const h = cb.lookupOne(name, "value");
       if (cb.store.getDef(h)!.kind === "type") throw new UsageError(`${name} is a type`);
       if (r.model.on !== undefined) return runOn(cb, r.model.on, h, args);
+      // what it starts can run the codebase's commands, as <CMD>_BIN (a script running tcm, say)
+      Object.assign(process.env, commandsIn(cb));
       return run(h, args, cb.source(), cb.lay);
     }
     case "remote": {

@@ -53,7 +53,7 @@ or option a command doesn't take is an error naming it.
 | `tcm releases [package]` | the packages and their releases |
 | `tcm changelog [package] [--out file]` | a package's changelog, from its releases |
 | `tcm resolve <name> <#hash>` | pick one definition for a conflicted name |
-| `tcm test [namespace] [--fresh] [--definitions]` | run tests, cached by hash, then the suites packages declare, cached by the code they ran; `--definitions` skips the suites ([testing](testing.md)) |
+| `tcm test [namespace] [--fresh] [--definitions] [--bin cmd=<path>,...]` | run tests, cached by hash, then the suites packages declare, cached by the code they ran; `--definitions` skips the suites, `--bin` runs them against another build of a command, like a package packed from the codebase ([testing](testing.md)) |
 | `tcm verify` | re-render and re-hash every live definition; must be the identity ([hashing](hashing.md)) |
 
 ## History and branches

@@ -51,7 +51,9 @@ export const testGreets = () => {
 - **`tcm test`** runs them after the other test definitions: each as a program of its own (passing if it returns),
   against the codebase's own build of the command, which it finds in `<COMMAND>_BIN` (`GREET_BIN` here;
   `MY_TOOL_BIN` for `my-tool`). They run side by side, each reported as it finishes; `--definitions` leaves them
-  out. They aren't run with Vitest.
+  out. They aren't run with Vitest. `--bin greet=pkg/bin/greet.js` runs them against another build of the
+  command instead, such as the package `tcm pack` makes: its results are kept apart, and hold until the
+  package's files change or code the test ran in it does (a packed module is named by its component's hash).
 - **Results are cached by the code a test ran.** V8's coverage of each run (every process it starts) says which
   definitions executed, and the result holds until the test changes, or the code of one of those definitions
   does. A definition it didn't run can change without running it again, though everything using it is

@@ -55,3 +55,47 @@ export const testGreets = () => {
   ok("update");
   assert.match(ok("test"), /suites: 1 passed, 0 failed\n/);
 };
+
+/**
+ * Suites run against another build of the command (a package packed from the codebase), kept apart; what tcm runs gets the codebase's commands.
+ */
+export const testSuitesAgainstPackedBuild = () => {
+  const dir = tempDir("suites");
+  const ok = (...args: string[]) => okIn(dir, ...args);
+  const scratch = (ns: string, text: string) => fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace ${ns}\n${text}`);
+  ok("init");
+  scratch(
+    "greeter",
+    `export const greet = (name: string) => \`hello, \${name}\`;
+export const main = (...args: string[]) => console.log(greet(args[0] ?? "world"));
+export const hasCommand = () => (process.env.GREET_BIN ? "yes" : "no");
+export const manifest = { name: "greeter", bin: { greet: "main" }, suites: { greet: ["e2e"] } };
+`,
+  );
+  ok("add");
+  scratch(
+    "greeter.e2e",
+    `import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+export const testGreets = () => {
+  const r = spawnSync(process.execPath, [process.env.GREET_BIN!, "tcm"], { encoding: "utf8" });
+  assert.equal(r.stdout, "hello, tcm\\n");
+};
+`,
+  );
+  ok("add");
+  // what tcm runs can run the codebase's commands
+  assert.equal(ok("run", "greeter.hasCommand").trim(), "yes");
+
+  ok("pack", "greeter", "--out", "pkg");
+  const against = ["test", "--bin", "greet=pkg/bin/greet.js"];
+  assert.match(ok(...against), /✓ greeter\.e2e\.testGreets[\s\S]*suites: 1 passed, 0 failed\n/);
+  assert.match(ok(...against), /suites: 1 passed, 0 failed \(1 cached\)/);
+  // the codebase's own build has results of its own
+  assert.match(ok("test"), /suites: 1 passed, 0 failed\n/);
+  // a package packed again with other code is another build: its results don't carry over
+  scratch("greeter", `export const greet = (name: string) => \`hello, \${name}\`.trim();\n`);
+  ok("update");
+  ok("pack", "greeter", "--out", "pkg");
+  assert.match(ok(...against), /suites: 1 passed, 0 failed\n/);
+}

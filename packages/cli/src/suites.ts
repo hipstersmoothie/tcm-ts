@@ -1,6 +1,5 @@
 import path from "node:path";
 import fs from "node:fs";
-import { pathToFileURL } from "node:url";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import os from "node:os";
@@ -67,7 +66,6 @@ export function evaluatedOnLoad(rec: DefRecord): boolean {
  * value.
  */
 export function executed(cb: Codebase, dir: string): Record<string, string> {
-  const cache = `${pathToFileURL(cb.lay.cacheDir).href}/`;
   const loaded = new Map<string, boolean>();
   for (const f of fs.readdirSync(dir)) {
     let scripts: { url: string; functions: { functionName: string; ranges: { startOffset: number; count: number }[] }[] }[];
@@ -77,8 +75,9 @@ export function executed(cb: Codebase, dir: string): Record<string, string> {
       continue;
     }
     for (const s of scripts) {
-      const component = s.url.startsWith(cache) ? /^([a-z2-7]+)\.tsx?$/.exec(s.url.slice(cache.length))?.[1] : undefined;
-      if (!component) continue;
+      // a component's module, as the codebase runs it (.tcm/cache) or a package packed from it has it (modules/)
+      const component = /\/([a-z2-7]{52})\.(?:tsx?|js)$/.exec(s.url)?.[1];
+      if (!component || !cb.store.componentMembers(component).length) continue;
       // (the first function is the module's own top level)
       const ran = s.functions.some((fn) => !(fn.functionName === "" && fn.ranges[0]!.startOffset === 0) && fn.ranges[0]!.count > 0);
       loaded.set(component, (loaded.get(component) ?? false) || ran);
@@ -153,21 +152,27 @@ export function runSuite(cb: Codebase, s: Suite, entry: string): Promise<{ resul
  * its files change, or the code of a definition it executed does: one it didn't run can't change what it does
  * without one it ran changing too. A suite that executed nothing of the codebase always runs. `fresh` runs them all.
  */
-export async function runSuites(cb: Codebase, suites: Suite[], fresh: boolean, onOutcome?: (o: TestOutcome) => void): Promise<TestOutcome[]> {
-  const key = resultKey(cb);
+export async function runSuites(cb: Codebase, suites: Suite[], fresh: boolean, onOutcome?: (o: TestOutcome) => void, builds = new Map<string, string>()): Promise<TestOutcome[]> {
+  // against another build of a command, results are its own: kept apart, and keyed by what's in it
+  const builtAs = new Map([...builds].map(([cmd, file]) => [cmd, buildOf(file)]));
+  const keyOf = (s: Suite) => `${resultKey(cb)}${builtAs.has(s.bin) ? ` ${s.bin}=${builtAs.get(s.bin)}` : ""}`;
   const runs = JSON.parse(cb.store.getSetting("suites") ?? "{}") as Record<string, SuiteRun>;
   const rel = (s: Suite) => s.test?.path ?? path.relative(cb.lay.root, s.file!);
   const label = (s: Suite, tests: number) => (s.test ? s.test.path : `${rel(s)} (${tests} test${tests === 1 ? "" : "s"})`);
-  const holds = (r: SuiteRun, of: string) =>
+  const slot = (s: Suite) => `${rel(s)}${builds.has(s.bin) ? ` (${s.bin} built)` : ""}`;
+  const holds = (s: Suite, r: SuiteRun, of: string) =>
     r.of === of &&
-    r.key === key &&
+    r.key === keyOf(s) &&
     Object.keys(r.ran).length > 0 &&
     Object.entries(r.ran).every(([name, own]) => {
       const hs = cb.store.hashesAt(name).filter((h) => cb.store.getDef(h)?.kind !== "type");
       return hs.length === 1 && ownCode(cb, cb.store.getDef(hs[0]!)!) === own;
     });
   const entries = new Map<string, string>();
-  const entry = (main: string) => {
+  const entry = (s: Suite) => {
+    const built = builds.get(s.bin);
+    if (built) return built;
+    const main = s.main;
     if (!entries.has(main)) {
       const h = cb.store.hashesAt(main).find((x) => cb.store.getDef(x)?.kind !== "type");
       if (!h) throw new Error(`${main}, a command suites run, isn't in the codebase`);
@@ -179,8 +184,8 @@ export async function runSuites(cb: Codebase, suites: Suite[], fresh: boolean, o
   const todo: { s: Suite; of: string }[] = [];
   for (const s of suites) {
     const of = s.test?.hash ?? suiteFiles(s.file!);
-    const r = runs[rel(s)];
-    if (!fresh && r && holds(r, of)) {
+    const r = runs[slot(s)];
+    if (!fresh && r && holds(s, r, of)) {
       out.set(s, { path: label(s, r.tests), result: r.result, cached: true });
       onOutcome?.(out.get(s)!);
     }
@@ -191,12 +196,12 @@ export async function runSuites(cb: Codebase, suites: Suite[], fresh: boolean, o
   const worker = async () => {
     while (next < todo.length) {
       const { s, of } = todo[next++]!;
-      const { result, tests, ran } = await runSuite(cb, s, entry(s.main));
+      const { result, tests, ran } = await runSuite(cb, s, entry(s));
       out.set(s, { path: label(s, tests), result, cached: false });
       onOutcome?.(out.get(s)!);
       // (a run with no tests in it went wrong before they ran: nothing to keep)
-      if (Object.keys(ran).length && tests) runs[rel(s)] = { of, key, ran, tests, result };
-      else delete runs[rel(s)];
+      if (Object.keys(ran).length && tests) runs[slot(s)] = { of, key: keyOf(s), ran, tests, result };
+      else delete runs[slot(s)];
     }
   };
   await Promise.all(Array.from({ length: Math.min(Math.max(1, os.availableParallelism() - 1), todo.length) }, worker));
@@ -250,4 +255,38 @@ export function suitesIn(cb: Codebase, ns: string): Suite[] {
   }
   const key = (s: Suite) => s.test?.path ?? s.file!;
   return out.sort((a, b) => (key(a) < key(b) ? -1 : 1));
+}
+
+/**
+ * What a build of a command is: a fingerprint of the package it's in (its files, but installed packages), so
+ * results against it are kept until it changes.
+ */
+export function buildOf(file: string): string {
+  let root = path.dirname(file);
+  while (!fs.existsSync(path.join(root, "package.json")) && path.dirname(root) !== root) root = path.dirname(root);
+  const h = crypto.createHash("sha256");
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== "node_modules") walk(p);
+      } else h.update(`${path.relative(root, p)}\0`).update(fs.readFileSync(p)).update("\0");
+    }
+  };
+  walk(root);
+  return h.digest("hex").slice(0, 16);
+}
+
+/**
+ * The codebase's commands (its packages' `bin`s), as the environment variables suites find them in: name → its runner.
+ */
+export function commandsIn(cb: Codebase): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const pkg of packagesIn(cb, cb.store.names())) {
+    for (const [cmd, target] of Object.entries(pkg.manifest.bin)) {
+      const h = cb.store.hashesAt(absolute(pkg.namespace, target)).find((x) => cb.store.getDef(x)?.kind !== "type");
+      if (h) out[binVariable(cmd)] = writeRunner(h, cb.source(), cb.lay);
+    }
+  }
+  return out;
 }
