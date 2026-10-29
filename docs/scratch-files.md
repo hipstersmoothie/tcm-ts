@@ -90,6 +90,10 @@ overwrite a file with something in it; `--file other.ts` picks another, `--force
 `tcm update`. You can edit several at once, from different namespaces: each gets a `// tcm: path a.b.c` comment
 when its path isn't the file's namespace plus its name, so `update` puts it back where it came from.
 
+Definitions that refer to each other (functions calling each other, a class and the functions that take it) are
+hashed together, as one. Editing one brings the rest of them into the scratch file, so they're updated together.
+`tcm update` refuses a file that replaces only some of them, since the others would go on using the old ones.
+
 ## Names
 
 Names are labels; changing them never touches code.

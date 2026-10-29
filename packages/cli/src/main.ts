@@ -158,6 +158,20 @@ function save(cb: Codebase, file: string, mode: "add" | "update", into?: string)
   const a = analyzeScratch(cb, file, into);
   if (!a) return false;
   const rows = classify(cb, a.defs, into ?? a.namespace ?? "");
+  // definitions that refer to each other are hashed as one: replacing some of them alone would leave the others
+  // using the old ones
+  if (mode === "update") {
+    const here = new Set(rows.map((r) => r.path));
+    for (const r of rows.filter((x) => x.status === "update" || x.status === "conflict")) {
+      for (const old of cb.store.hashesAt(r.path, r.def.kind)) {
+        const missing = cb.store.componentMembers(cb.store.getDef(old)!.componentHash).flatMap((m) => (m.hash === old ? [] : cb.store.pathsOf(m.hash).slice(0, 1))).filter((p) => !here.has(p));
+        if (missing.length) {
+          console.log(red(`${r.path} refers to ${missing.join(", ")} and back (they're hashed together), and ${missing.length > 1 ? "they aren't" : "it isn't"} in ${path.basename(file)}: \`tcm edit ${r.path}\` writes them all, to update together`));
+          return false;
+        }
+      }
+    }
+  }
   // lint what's being saved: warnings are shown, errors (rules set to "error" in lint.config) stop the save
   const saving = rows.filter((r) => r.status !== "identical").flatMap((r) => (r.def as ProjectDef).range ?? []);
   if (saving.length && printScratchLint(cb, file, saving)) {
@@ -461,6 +475,17 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
     if (!hs.length) throw new UsageError(`'${t}' not found`);
     for (const h of hs) if (!pathOf.has(h)) pathOf.set(h, t.startsWith("#") ? cb.store.pathsOf(h)[0] : t);
   }
+  // definitions that refer to each other are hashed as one: editing one brings the rest, as in Unison, so they're
+  // changed (and re-hashed) together
+  const cycle: string[] = [];
+  for (const h of [...pathOf.keys()]) {
+    for (const m of cb.store.componentMembers(cb.store.getDef(h)!.componentHash)) {
+      const p = cb.store.pathsOf(m.hash)[0];
+      if (pathOf.has(m.hash) || !p) continue;
+      pathOf.set(m.hash, p);
+      cycle.push(p);
+    }
+  }
   const nsOf = (p: string) => (p.includes(".") ? p.slice(0, p.lastIndexOf(".")) : "");
   const nss = new Set([...pathOf.values()].filter((p) => p !== undefined).map(nsOf));
   const ns = nss.size === 1 ? [...nss][0]! : "";
@@ -480,6 +505,7 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
   }).text;
   fs.writeFileSync(file, (ns ? `// tcm: namespace ${ns}\n` : "") + text);
   console.log(`wrote ${targets.join(", ")} to ${path.basename(file)}`);
+  if (cycle.length) console.log(dim(`  with ${cycle.join(", ")}: ${cycle.length > 1 ? "they refer" : "it refers"} to ${targets.length > 1 ? "them" : "it"} and back, so they're hashed (and updated) together`));
 }
 
 // ---- names --------------------------------------------------------------------------------------------
