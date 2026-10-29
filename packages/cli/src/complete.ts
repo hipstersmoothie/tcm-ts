@@ -33,11 +33,11 @@ class Sources {
     return this.store;
   }
   definitions(complete: Complete, kind?: "value") {
-    for (const n of this.db()?.names() ?? []) if (!kind || n.kind !== "type") complete(n.path, n.kind);
+    for (const n of this.db()?.names(undefined, true) ?? []) if (!kind || n.kind !== "type") complete(n.path, n.kind);
   }
   namespaces(complete: Complete) {
     const seen = new Set<string>();
-    for (const n of this.db()?.names() ?? []) {
+    for (const n of this.db()?.names(undefined, true) ?? []) {
       const parts = n.path.split(".");
       for (let i = 1; i < parts.length; i++) seen.add(parts.slice(0, i).join("."));
     }

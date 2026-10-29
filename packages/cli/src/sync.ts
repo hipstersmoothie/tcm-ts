@@ -103,7 +103,7 @@ export class Peer {
 
   branch(name: string): BranchState | null {
     if (!this.cb.store.hasBranch(name)) return null;
-    return { head: this.cb.store.head(name), names: this.cb.store.names(name) };
+    return { head: this.cb.store.head(name), names: this.cb.store.names(name, true) };
   }
 
   setBranch(name: string, head: string, expect: string | null, command: string) {
@@ -602,7 +602,7 @@ export async function push(cb: Codebase, spec: string, remoteBranch: string | un
   const { remote, name } = openRemote(cb, spec);
   if (!name) throw new Error(`push needs a configured remote: \`tcm remote add <name> ${spec}\``);
   const branch = remoteBranch ?? cb.store.branch().name;
-  const names = cb.store.names();
+  const names = cb.store.names(undefined, true);
   const mine = cb.store.head();
   const theirs = await remote.branch(branch);
   // a push only moves the remote forward: its head must be in this branch's history (an empty branch, on a
@@ -644,10 +644,10 @@ export async function pull(cb: Codebase, spec: string, remoteBranch: string | un
     console.log(dim(`  \`tcm push ${name}\` to publish the merge`));
     return;
   }
-  const before = stateOf(cb.store.names());
+  const before = stateOf(cb.store.names(undefined, true));
   cb.store.setHead(local, theirs.head, `pull ${name}`);
   cb.refreshShim();
-  const after = stateOf(cb.store.names());
+  const after = stateOf(cb.store.names(undefined, true));
   printDiff(cb, diffNamespaces(before, after, (h) => cb.store.getDef(h)!.ir), before, after, `fast-forwarded ${local} to ${tracking}`);
 }
 

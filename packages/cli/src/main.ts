@@ -43,6 +43,9 @@ import { declarations } from "./mirror.ts";
 import { commandsIn } from "./suites.ts";
 import { isTypeAliasDeclaration as ts_isTypeAliasDeclaration, isInterfaceDeclaration as ts_isInterfaceDeclaration, isClassDeclaration as ts_isClassDeclaration, isFunctionDeclaration as ts_isFunctionDeclaration, isIdentifier as ts_isIdentifier, isVariableStatement as ts_isVariableStatement } from "typescript/ast";
 import { scratchNamespace } from "@tcm/core";
+import { fileFormat, followMove, linkingTo, TEXT_FORMATS, fileContent, formatOf, fileDefinition, fileLeaf } from "./files.ts";
+import { exportFiles } from "./files.ts";
+import { isAsset, assetName, assetFiles } from "./mirror.ts";
 
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
@@ -137,6 +140,15 @@ function printIssue(text: string, i: LintIssue, indent = "  ") {
 }
 
 function check(cb: Codebase, file: string, into?: string, fresh = false): boolean {
+  if (fileFormat(file)) {
+    const rows = fileRows(cb, file, into);
+    if (!rows) return false;
+    console.log(bold(path.basename(file)));
+    printRows(rows);
+    const pending = rows.filter((r) => r.status !== "identical");
+    if (pending.length) console.log(dim(`\n  run \`tcm ${pending.some((r) => r.status === "update" || r.status === "conflict") ? "update" : "add"} ${path.relative(process.cwd(), file)}\` to save it`));
+    return true;
+  }
   const whole = withTheirCycles(cb, file, into);
   if (!whole) return false;
   const { a, rows } = whole;
@@ -167,6 +179,11 @@ function check(cb: Codebase, file: string, into?: string, fresh = false): boolea
 }
 
 function save(cb: Codebase, file: string, mode: "add" | "update", into?: string): boolean {
+  // a file kept as written (Markdown, CSS, an image) is a definition of its own
+  if (fileFormat(file)) {
+    const rows = fileRows(cb, file, into);
+    return !!rows && apply(cb, rows, mode, `${mode} ${path.basename(file)}`, false);
+  }
   const whole = withTheirCycles(cb, file, into);
   if (!whole) return false;
   const { a, rows } = whole;
@@ -362,6 +379,11 @@ function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: 
 function importFiles(cb: Codebase, root: string, dir: string, mode: "add" | "update", into: string, verbose: boolean, exclude: string[], tests: boolean, following?: Mirror): Map<string, string> | undefined {
   const files = sourceFiles(root, new Set(exclude.map((e) => path.resolve(root, e))), tests);
   if (!files.length) throw new UsageError(`no .ts files under ${dir}`);
+  // (files that aren't code come after it: a page's links to code need the code)
+  const done = (held: Map<string, string> | undefined) => {
+    const assets = held && importAssets(cb, root, dir, mode, into, verbose, exclude, following);
+    return held && assets && new Map([...held, ...assets]);
+  };
   console.log(dim(`analyzing ${files.length} files under ${dir}…`));
   cb.refreshShim();
   const a = cb.analyzeProject(files, (file, name) => cb.lineageSalt(joinName(into, namespaceForFile(root, file), name)), [], cb.compilerOptions(root, "import"));
@@ -376,7 +398,7 @@ function importFiles(cb: Codebase, root: string, dir: string, mode: "add" | "upd
   checkDistinct(planned, (p) => `${p.path} is defined in more than one file (one of them is ${p.def.file})`);
   cb.lockPackages(a.packages);
   const held = new Map(planned.map((p) => [p.path, p.def.hash]));
-  if (!following) return apply(cb, classifyPaths(cb, planned), mode, `import ${dir}`, !verbose) ? held : undefined;
+  if (!following) return done(apply(cb, classifyPaths(cb, planned), mode, `import ${dir}`, !verbose) ? held : undefined);
   const was = new Map<string, string>();
   for (const f of Object.values(following.files)) for (const [leaf, h] of Object.entries(f.names)) was.set(joinName(f.ns, leaf), h);
   const changed = planned.filter((p) => was.get(p.path) !== p.def.hash);
@@ -384,14 +406,14 @@ function importFiles(cb: Codebase, root: string, dir: string, mode: "add" | "upd
     const w = was.get(p.path);
     if (w && !cb.store.hashesAt(p.path, p.def.kind).includes(w)) console.log(yellow(`  ! ${p.path} changed in the files and in the codebase; the files' change is kept`));
   }
-  const gone = [...was].filter(([p, h]) => !held.has(p) && cb.store.hashesAt(p).includes(h));
+  const gone = [...was].filter(([p, h]) => !held.has(p) && cb.store.getDef(h)?.kind !== "file" && cb.store.hashesAt(p).includes(h));
   if (!changed.length && !gone.length) console.log(dim("nothing to do"));
   const ok = !changed.length || apply(cb, classifyPaths(cb, changed), mode, `import ${dir}`, !verbose);
   for (const [p, h] of gone) {
     cb.store.removeName(p, h, `import ${dir}`);
     console.log(`${red("  - removed  ")} ${bold(p)} ${dim("(gone from the files)")}`);
   }
-  return ok ? held : undefined;
+  return done(ok ? held : undefined);
 }
 
 function verify(cb: Codebase): boolean {
@@ -419,6 +441,14 @@ function view(cb: Codebase, targets: string[]) {
   for (const t of targets) {
     for (const h of cb.lookup(t).length ? cb.lookup(t) : [cb.lookupOne(t)]) {
       const rec = cb.store.getDef(h)!;
+      if (rec.kind === "file") {
+        const format = formatOf(rec);
+        const name = cb.store.pathsOf(h)[0] ?? t;
+        console.log(`${dim("//")} ${bold(cb.store.pathsOf(h).join(", ") || "(unnamed)")} ${dim(shortHash(h))} ${dim(format)}`);
+        const content = fileContent(cb, rec, name.slice(0, Math.max(0, name.lastIndexOf("."))));
+        console.log(TEXT_FORMATS.has(format) ? content.toString("utf8") : dim(`(${format}, ${content.length} bytes)`));
+        continue;
+      }
       console.log(header(cb, h));
       process.stdout.write(render([rec], cb.source(), cb.lay, { style: "scratch", exportDeclarations: true }).text);
       console.log();
@@ -427,7 +457,7 @@ function view(cb: Codebase, targets: string[]) {
 }
 
 function ls(cb: Codebase, ns = "") {
-  const rows = cb.store.names().filter((n) => !ns || n.path === ns || n.path.startsWith(ns + "."));
+  const rows = cb.store.names(undefined, true).filter((n) => !ns || n.path === ns || n.path.startsWith(ns + "."));
   if (!rows.length) return console.log(dim(ns ? `nothing under ${ns}` : "the codebase is empty"));
   const width = Math.max(...rows.map((r) => r.path.length));
   const kindsAt = new Map<string, DefKind[]>();
@@ -444,7 +474,7 @@ function ls(cb: Codebase, ns = "") {
 function find(cb: Codebase, query: string) {
   if (query.trim().startsWith(":")) return findByType(cb, query.trim().slice(1));
   const q = query.trim().toLowerCase();
-  const hits = cb.store.names().filter((n) => n.path.toLowerCase().includes(q) || cb.store.getDef(n.hash)!.signature.toLowerCase().includes(q));
+  const hits = cb.store.names(undefined, true).filter((n) => n.path.toLowerCase().includes(q) || cb.store.getDef(n.hash)!.signature.toLowerCase().includes(q));
   if (!hits.length) return console.log(dim("no matches"));
   for (const n of hits) console.log(`${bold(n.path)}  ${dim(shortHash(n.hash))}  ${dim(cb.store.getDef(n.hash)!.signature)}`);
 }
@@ -472,7 +502,7 @@ function dependents(cb: Codebase, target: string) {
 function todo(cb: Codebase) {
   let n = 0;
   const counts = new Map<string, { hash: string; kind: DefKind }[]>();
-  for (const r of cb.store.names()) counts.set(r.path, [...(counts.get(r.path) ?? []), r]);
+  for (const r of cb.store.names(undefined, true)) counts.set(r.path, [...(counts.get(r.path) ?? []), r]);
   for (const [p, rows] of counts) {
     if (!isConflicted(rows.map((r) => r.kind))) continue;
     const hs = rows.map((r) => r.hash);
@@ -490,6 +520,10 @@ function todo(cb: Codebase) {
 }
 
 function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) => string), force: boolean) {
+  // files kept as written are edited as the files they are
+  if (targets.some((t) => (t.startsWith("#") ? [cb.lookupOne(t)] : cb.lookup(t)).some((h) => cb.store.getDef(h)?.kind === "file"))) {
+    return editFiles(cb, targets, typeof target === "string" ? target : undefined, force);
+  }
   // JSX only parses in a .tsx file: the default scratch file follows what's being edited
   const jsx = targets.some((t) => (t.startsWith("#") ? [cb.lookupOne(t)] : cb.lookup(t)).some((h) => cb.store.getDef(h)?.jsx));
   const file = typeof target === "string" ? target : target(jsx);
@@ -541,10 +575,11 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
 // ---- names --------------------------------------------------------------------------------------------
 
 function mv(cb: Codebase, from: string, to: string) {
-  if (!IDENT_PATH.test(to)) throw new UsageError(`'${to}' is not a valid name`);
-  const exact = cb.store.names().filter((n) => n.path === from);
-  const moves = exact.length ? exact.map((n) => ({ ...n, dest: to })) : cb.store.names().filter((n) => n.path.startsWith(from + ".")).map((n) => ({ ...n, dest: to + n.path.slice(from.length) }));
+  const exact = cb.store.names(undefined, true).filter((n) => n.path === from);
+  const moves = exact.length ? exact.map((n) => ({ ...n, dest: to })) : cb.store.names(undefined, true).filter((n) => n.path.startsWith(from + ".")).map((n) => ({ ...n, dest: to + n.path.slice(from.length) }));
   if (!moves.length) throw new UsageError(`'${from}' not found`);
+  // (a file's own name, like `getting-started`, may have dashes)
+  for (const m of moves) if (!(m.kind === "file" ? FILE_PATH : IDENT_PATH).test(m.dest)) throw new UsageError(`'${m.dest}' is not a valid name`);
   for (const m of moves) if (cb.store.hashesAt(m.dest).length) throw new UsageError(`'${m.dest}' already exists`);
   cb.store.transaction(() => {
     for (const m of moves) {
@@ -552,6 +587,15 @@ function mv(cb: Codebase, from: string, to: string) {
       cb.store.addName(m.dest, m.hash, m.kind, `mv ${from} ${to}`);
     }
   });
+  // pages linking to a file that moved link to where it is now (and one that moved links from there)
+  for (const m of moves.filter((x) => x.kind === "file")) {
+    const relinked = followMove(cb, m.path, m.dest);
+    cb.putDefs([...relinked.values()]);
+    cb.store.transaction(() => {
+      for (const [page, rec] of relinked) for (const old of cb.store.hashesAt(page)) cb.store.replaceName(page, old, rec.hash, "file", `mv ${from} ${to} (links)`);
+    });
+    if (relinked.size) console.log(dim(`  links to it changed in ${[...relinked.keys()].join(", ")}`));
+  }
   cb.refreshShim();
   console.log(`moved ${moves.length} name${moves.length > 1 ? "s" : ""}`);
   const mirror = loadMirror(cb);
@@ -579,7 +623,8 @@ async function rm(cb: Codebase, name: string, force: boolean) {
   if (!hs.length) throw new UsageError(`'${name}' not found`);
   for (const h of hs) {
     const otherNames = cb.store.pathsOf(h).filter((p) => p !== name);
-    const users = cb.store.dependents(h).filter((d) => cb.store.pathsOf(d).length);
+    // what uses it: code, and pages naming it (by hash), or linking to it if it's a file (by its name)
+    const users = [...cb.store.dependents(h).filter((d) => cb.store.pathsOf(d).length), ...(cb.store.getDef(h)?.kind === "file" ? linkingTo(cb, name).flatMap((p) => cb.store.hashesAt(p)) : [])];
     if (users.length && !otherNames.length && !force) {
       const used = `'${name}' is used by ${users.map((u) => cb.displayRef(`#${u}`)).join(", ")}`;
       if (!(await confirm(`${used}. Remove the name anyway? (they keep working)`))) throw new UsageError(`${used}; pass --force to remove the name anyway (they keep working)`);
@@ -626,7 +671,7 @@ const isEntryRef = (ref: string) => /^(\d+|#?[a-z2-7]{4,})$/.test(ref) && (/^\d+
 const stateAt = (cb: Codebase, causal: string) => stateOf(cb.store.namespaceRows(cb.store.causal(causal)!.namespace));
 
 function diff(cb: Codebase, args: string[]) {
-  const now = stateOf(cb.store.names());
+  const now = stateOf(cb.store.names(undefined, true));
   const irOf = (h: string) => cb.store.getDef(h)!.ir;
   if (args.length === 0) {
     const head = cb.store.causal(cb.store.head())!;
@@ -953,7 +998,7 @@ square(12);
       const ns = model.namespace ?? "";
       // test definitions a package runs its command with are run as programs of their own, with the suites
       const declared = suitesIn(cb, ns);
-      const commandTests = new Set(suitesIn(cb, "").flatMap((s) => (s.test ? [s.test.path] : [])));
+      const commandTests = new Set(suitesIn(cb, "").map((s) => s.path));
       const names = cb.store.names().filter((n) => n.kind !== "type" && isTestPath(n.path) && !commandTests.has(n.path) && (!ns || n.path === ns || n.path.startsWith(ns + ".")));
       const suites = model.definitions ? [] : declared;
       if (!names.length && !suites.length) {
@@ -1096,6 +1141,14 @@ square(12);
       const { model } = execute(cmd, parse(commands.edit, { argv: rest }));
       const names = model.names.length ? model.names : [await chooseName(cb, "edit <name>...", "Edit which definition?")];
       edit(cb, names, model.file !== undefined ? scratch(model.file) : (jsx) => scratch(jsx ? "scratch.tsx" : "scratch.ts"), model.force);
+      return 0;
+    }
+    case "export": {
+      const { model } = execute(cmd, parse(commands.export, { argv: rest }));
+      if (!model.namespace || !model.dir) throw new UsageError("usage: tcm export <namespace> <dir>, e.g. `tcm export docs site/docs`");
+      const n = exportFiles(cb, model.namespace, path.resolve(cwd, model.dir));
+      if (!n) throw new UsageError(`no files under ${model.namespace}`);
+      console.log(`wrote ${n} file${n > 1 ? "s" : ""} from ${model.namespace} to ${model.dir}`);
       return 0;
     }
     case "mv": {
@@ -1567,4 +1620,94 @@ export function pathsIn(file: string, text: string, into: string | undefined): s
     else for (const n of names) out.push(joinName(ns, n));
   }
   return out;
+}
+
+/**
+ * A name a file can have: a namespace path, then its own name (letters, digits, `_`, `-`).
+ */
+export const FILE_PATH = /^([A-Za-z_$][\w$]*\.)*[\w$-]+$/;
+
+/**
+ * `tcm edit` of files kept as written: each into a file of its own, named as it is (or `file`). A Markdown
+ * file's first line says where it goes back; another's is saved with `--into`.
+ */
+export function editFiles(cb: Codebase, targets: string[], file: string | undefined, force: boolean) {
+  if (file && targets.length > 1) throw new UsageError("--file names one file: edit files one at a time");
+  for (const t of targets) {
+    const h = cb.lookupOne(t);
+    const rec = cb.store.getDef(h)!;
+    if (rec.kind !== "file") throw new UsageError(`${t} is code, the others files: edit them apart`);
+    const name = cb.store.pathsOf(h)[0] ?? t;
+    const ns = name.slice(0, Math.max(0, name.lastIndexOf(".")));
+    const format = formatOf(rec);
+    const out = file ?? `${name.slice(name.lastIndexOf(".") + 1)}.${format}`;
+    const content = fileContent(cb, rec, ns);
+    const body = format === "md" ? Buffer.concat([Buffer.from(`<!-- tcm: path ${name} -->\n`), content]) : content;
+    if (fs.existsSync(out) && !force && !fs.readFileSync(out).equals(body)) throw new UsageError(`${path.basename(out)} exists; pass --force to overwrite it, or --file <other>`);
+    fs.writeFileSync(out, body);
+    console.log(`wrote ${name} to ${path.basename(out)}${format === "md" ? "" : dim(` (saved with \`tcm update ${path.basename(out)} --into ${ns}\`)`)}`);
+  }
+}
+
+/**
+ * A file kept as written (Markdown, CSS, an image), as `check` and `save` see it: its definition, where it goes
+ * (a Markdown file's first line `<!-- tcm: path a.b.c -->` or `<!-- tcm: namespace a.b -->`, or `--into` and its
+ * name), and whether that's new. Undefined, said why, if it can't be saved.
+ */
+export function fileRows(cb: Codebase, file: string, into: string | undefined): Row[] | undefined {
+  const format = fileFormat(file)!;
+  let content = fs.readFileSync(file);
+  let target: string | undefined;
+  let ns = into;
+  if (format === "md") {
+    const text = content.toString("utf8");
+    const pragma = /^<!--\s*tcm:\s*(path|namespace)\s+(\S+)\s*-->\r?\n/.exec(text);
+    if (pragma) {
+      if (pragma[1] === "path") target = pragma[2];
+      else ns ??= pragma[2];
+      content = Buffer.from(text.slice(pragma[0].length), "utf8");
+    }
+  }
+  const name = target ?? joinName(ns ?? "", fileLeaf(file));
+  const { def, problems, warnings } = fileDefinition(cb, name, format, content);
+  for (const w of warnings) console.log(yellow(`warning: ${w}`));
+  if (problems.length) {
+    for (const p of problems) console.log(red(p));
+    console.log(red(`\n${path.basename(file)} has problems; nothing was saved.`));
+    return undefined;
+  }
+  return classifyPaths(cb, [{ def, path: name }]);
+}
+
+/**
+ * Import the files under `root` that aren't code (Markdown, CSS, images), as files of the codebase: their hashes,
+ * by name, or undefined if they don't import. Following a mirror, one it hasn't changed stays as the codebase
+ * has it, and one gone from the files goes from the codebase.
+ */
+export function importAssets(cb: Codebase, root: string, dir: string, mode: "add" | "update", into: string, verbose: boolean, exclude: string[], following?: Mirror): Map<string, string> | undefined {
+  const files = assetFiles(root, new Set(exclude.map((e) => path.resolve(root, e))));
+  const names = new Set(files.map((f) => assetName(root, into, f)));
+  const planned: { def: DefRecord; path: string; warnings: string[] }[] = [];
+  let failed = false;
+  for (const f of files) {
+    const name = assetName(root, into, f);
+    const { def, problems, warnings } = fileDefinition(cb, name, fileFormat(f)!, fs.readFileSync(f), names);
+    for (const p of problems) console.log(red(`${path.relative(root, f)}: ${p}`));
+    failed ||= problems.length > 0;
+    planned.push({ def, path: name, warnings });
+  }
+  if (failed) return undefined;
+  const held = new Map(planned.map((p) => [p.path, p.def.hash]));
+  const was = new Map<string, string>();
+  if (following) for (const [rel, f] of Object.entries(following.files)) if (isAsset(rel)) for (const [leaf, h] of Object.entries(f.names)) was.set(joinName(f.ns, leaf), h);
+  const changed = planned.filter((p) => was.get(p.path) !== p.def.hash);
+  // what's wrong with the files that changed (the others said so when they did)
+  for (const p of changed) for (const w of p.warnings) console.log(yellow(`warning: ${w}`));
+  if (changed.length && !apply(cb, classifyPaths(cb, changed), mode, `import ${dir}`, !verbose)) return undefined;
+  for (const [p, h] of was) {
+    if (held.has(p) || !cb.store.hashesAt(p).includes(h)) continue;
+    cb.store.removeName(p, h, `import ${dir}`);
+    console.log(`${red("  - removed  ")} ${bold(p)} ${dim("(gone from the files)")}`);
+  }
+  return held;
 }

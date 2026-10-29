@@ -12,6 +12,7 @@ import { createProgram, exportId, ts, type DefKind } from "@tcm/core";
 import { externalsOf, npmAlias, parseModule, render, type DefSource } from "@tcm/loader";
 import type { NameRow } from "@tcm/store";
 import type { Codebase } from "./codebase.ts";
+import { exportFiles, filesIn } from "./files.ts";
 
 export interface PackOptions {
   name: string;
@@ -307,7 +308,12 @@ export function pack(cb: Codebase, opts: PackOptions): { dir: string; modules: n
   if (opts.changelog) fs.writeFileSync(path.join(dir, "CHANGELOG.md"), opts.changelog);
   for (const f of opts.files) {
     const from = path.resolve(cb.lay.root, f);
-    if (!fs.existsSync(from)) throw new Error(`--files: ${f} doesn't exist`);
+    // or a namespace of the codebase's files (pages, images), written out under its last name
+    if (!fs.existsSync(from) && filesIn(cb, f).size) {
+      exportFiles(cb, f, path.join(dir, f.slice(f.lastIndexOf(".") + 1)));
+      continue;
+    }
+    if (!fs.existsSync(from)) throw new Error(`--files: ${f} doesn't exist, and isn't a namespace with files in it`);
     const rel = path.relative(cb.lay.root, from);
     fs.cpSync(from, path.join(dir, rel.startsWith("..") ? path.basename(from) : rel), { recursive: true });
   }

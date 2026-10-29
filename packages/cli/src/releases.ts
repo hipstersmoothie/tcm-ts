@@ -316,7 +316,8 @@ export function packPackage(cb: Codebase, name: string | undefined, version: str
     entries: [...exported].map(([target, sub]) => ({ subpath: sub === "." ? "." : sub.replace(/^\.\//, ""), target })),
     bins: Object.entries(pkg.manifest.bin).map(([command, rel]) => ({ command, target: absolute(pkg.namespace, rel) })),
     with: pkg.manifest.with,
-    files: pkg.manifest.files,
+    // a path, or a namespace of the codebase's files, relative to the package's
+    files: pkg.manifest.files.map((f) => (fs.existsSync(path.resolve(cb.lay.root, f)) ? f : absolute(pkg.namespace, f))),
     out: out ?? path.join(".tcm", "pack", pkg.name.replace(/^@/, "").replace("/", "__")),
     names: rows,
     changelog: release ? changelog(cb, pkg.name, release.version) : hasReleases ? changelog(cb, pkg.name) : undefined,

@@ -78,6 +78,8 @@ export interface LockEntry {
   integrity?: string;
 }
 import { serverApiFiles } from "./server-api.ts";
+import { hashIR } from "@tcm/core";
+import type { IR } from "@tcm/core";
 
 /** A dotted codebase name: `lib.util.sort`. */
 export const IDENT_PATH = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
@@ -326,9 +328,15 @@ export class Codebase {
   verify(): { checked: number; mismatches: { name: string; stored: string; rehashed: string }[]; problems: string[] } {
     const src = this.source();
     const live = this.liveHashes();
-    const r = this.rehash(src, new Set([...live].map((h) => src.get(h)!.componentHash)));
+    // a file kept as written hashes from its content, not as a module
+    const files = [...live].filter((h) => src.get(h)!.kind === "file");
+    const r = this.rehash(src, new Set([...live].filter((h) => src.get(h)!.kind !== "file").map((h) => src.get(h)!.componentHash)));
     const mismatches = r.mismatches.map((m) => ({ name: this.displayRef(`#${m.stored}`), ...m }));
-    return { checked: r.defs.size, mismatches, problems: r.problems };
+    for (const h of files) {
+      const rehashed = hashIR(JSON.parse(src.get(h)!.ir) as IR);
+      if (rehashed !== h) mismatches.push({ name: this.displayRef(`#${h}`), stored: h, rehashed });
+    }
+    return { checked: r.defs.size + files.length, mismatches, problems: r.problems };
   }
 
   /**
@@ -513,7 +521,7 @@ export class Codebase {
   /** Every hash reachable from a name on the current branch. */
   liveHashes(): Set<string> {
     const live = new Set<string>();
-    const queue = this.store.names().map((n) => n.hash);
+    const queue = this.store.names(undefined, true).map((n) => n.hash);
     while (queue.length) {
       const h = queue.pop()!;
       if (live.has(h)) continue;
@@ -555,6 +563,10 @@ export class Codebase {
         }
       }
     }
+
+    // files that name code by hash (a page's {@link}s) aren't checked as code: they're re-derived last, below
+    const files = [...affected].filter((h) => store.getDef(h)!.kind === "file");
+    for (const h of files) affected.delete(h);
 
     const comps = new Map<string, DefRecord[]>();
     for (const h of affected) {
@@ -683,6 +695,24 @@ export class Codebase {
           }
         });
       }
+    }
+    // a file names what replaced what it names; nothing else of it changes
+    const named = (ir: IR): IR => (Array.isArray(ir) ? (ir[0] === "Ref" && typeof ir[1] === "string" ? ["Ref", resolve(ir[1])] : ir.map(named)) : ir);
+    for (const h of files) {
+      const rec = store.getDef(h)!;
+      const ir = named(JSON.parse(rec.ir) as IR);
+      const hash = hashIR(ir);
+      if (hash === h) continue;
+      const spans = rec.spans.map((sp) => (sp.hash ? { ...sp, hash: resolve(sp.hash) } : sp));
+      this.putDefs([{ ...rec, hash, componentHash: hash, ir: JSON.stringify(ir), spans, deps: [...new Set(spans.flatMap((sp) => (sp.hash ? [sp.hash] : [])))].map((d) => ({ ref: `#${d}`, pos: "value" as const, strict: false })) }]);
+      store.transaction(() => {
+        patches.set(h, hash);
+        store.addPatch(h, hash);
+        for (const p of store.pathsOf(h)) {
+          store.replaceName(p, h, hash, "file", repin?.command ?? "update (propagated)");
+          updated.push(p);
+        }
+      });
     }
     return { updated, failed: [...failed] };
   }

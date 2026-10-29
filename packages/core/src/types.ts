@@ -4,7 +4,10 @@ import type { TypeShape } from "./shape.ts";
 /** The module id `#tcm/server` imports get in the IR (`["Ext", "tcm:server", …]`): unversioned, like a Node builtin. */
 export const SERVER_API_MODULE = "tcm:server";
 
-export type DefKind = "term" | "type" | "class";
+/**
+ * A file (`file`: Markdown, CSS, an image) is kept as written: a value, in the space terms and classes share.
+ */
+export type DefKind = "term" | "type" | "class" | "file";
 export type InitKind = "hoisted" | "strict";
 export type RefPos = "value" | "type";
 

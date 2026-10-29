@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { createProgram, ts, SERVER_API_MODULE, type DefRecord, type ExtRef, type Span } from "@tcm/core";
 import type { Codebase } from "./codebase.ts";
 import { dim, red, yellow } from "./style.ts";
+import { filesIn, fileFormat, fileDefinition, fileLeaf, fileContent, formatOf, dirSegment } from "./files.ts";
 
 // ---- what a project's files are, as namespaces ---------------------------------------------------------
 
@@ -107,6 +108,12 @@ export function linkMirror(cb: Codebase, dir: string, into: string, tests: boole
     const names: Record<string, string> = {};
     for (const leaf of declarations(f, text).keys()) if (inCodebase[leaf]) names[leaf] = following?.held.get(joinName(ns, leaf)) ?? inCodebase[leaf];
     files[path.relative(root, f)] = { ns, sha: sha(text), names };
+  }
+  // and the files of the codebase that aren't code: each a name in its directory's namespace
+  for (const f of assetFiles(root, new Set(exclude.map((e) => path.resolve(root, e))))) {
+    const name = assetName(root, into, f);
+    const h = following?.held.get(name) ?? cb.store.hashesAt(name).find((x) => cb.store.getDef(x)?.kind === "file");
+    files[path.relative(root, f)] = { ns: name.slice(0, name.lastIndexOf(".")), sha: sha(fs.readFileSync(f, "utf8")), names: h ? { [fileLeaf(f)]: h } : {} };
   }
   saveMirror(cb, { dir: root, into, tests, exclude, log: following?.log ?? cb.store.logHead(), files });
 }
@@ -375,9 +382,11 @@ export function syncMirror(cb: Codebase): boolean {
     return false;
   }
   const untouched = untextual(cb, m.log);
-  const byNs = new Map(Object.entries(m.files).map(([rel, f]) => [f.ns, rel]));
+  // the files of code (a namespace each); the rest (Markdown, CSS, images) are files of the codebase, below
+  const code = () => Object.entries(m.files).filter(([rel]) => !isAsset(rel));
+  const byNs = new Map(code().map(([rel, f]) => [f.ns, rel]));
   const now = new Map<string, Record<string, string>>();
-  for (const f of Object.values(m.files)) now.set(f.ns, namesIn(cb, f.ns));
+  for (const [, f] of code()) now.set(f.ns, namesIn(cb, f.ns));
   const problems: string[] = [];
   // a definition in a namespace no file is for yet: its file is made, where the namespace says it goes
   const created: string[] = [];
@@ -401,22 +410,22 @@ export function syncMirror(cb: Codebase): boolean {
   // where each definition of the mirror lives now, for references to it
   const home = new Map<string, { file: string; ns: string; leaf: string }>();
   for (const [ns, names] of now) for (const [leaf, h] of Object.entries(names)) home.set(h, { file: abs(byNs.get(ns)!), ns, leaf });
-  const before = new Map(Object.keys(m.files).map((rel) => [rel, fs.readFileSync(abs(rel), "utf8")]));
+  const before = new Map(code().map(([rel]) => [rel, fs.readFileSync(abs(rel), "utf8")]));
   // what each definition the files hold was called when tcm last wrote them
   const named = new Map<string, string>();
-  for (const f of Object.values(m.files)) for (const [leaf, h] of Object.entries(f.names)) named.set(h, joinName(f.ns, leaf));
+  for (const [, f] of code()) for (const [leaf, h] of Object.entries(f.names)) named.set(h, joinName(f.ns, leaf));
   const renames: { rel: string; from: string; to: string }[] = [];
   // definitions gone from one file's namespace to another's: by hash, where from and what they were called there
   const moves: Move[] = [];
   // what the files written import from the project's others
   const imported: { file: string; leaf: string }[] = [];
   const moved = new Map<string, { file: string; leaf: string }>();
-  for (const [rel, f] of Object.entries(m.files)) {
+  for (const [rel, f] of code()) {
     const cur = new Set(Object.values(now.get(f.ns)!));
     for (const [leaf, h] of Object.entries(f.names)) if (!cur.has(h) && home.has(h) && home.get(h)!.file !== abs(rel)) moved.set(h, { file: abs(rel), leaf });
   }
 
-  for (const [rel, f] of Object.entries(m.files)) {
+  for (const [rel, f] of code()) {
     const text = before.get(rel)!;
     const cur = now.get(f.ns)!;
     const decls = declarations(abs(rel), text);
@@ -502,6 +511,36 @@ export function syncMirror(cb: Codebase): boolean {
     }
     if (edits.length) fs.writeFileSync(file, applyEdits(text, edits));
   }
+  // files of the codebase that aren't code: written as it has them now, removed with them, made for new ones
+  const assetsBefore = new Map<string, Buffer>();
+  const createdAssets: string[] = [];
+  const recorded = new Set<string>();
+  for (const [rel, f] of Object.entries(m.files)) {
+    if (!isAsset(rel)) continue;
+    const name = joinName(f.ns, fileLeaf(rel));
+    recorded.add(name);
+    const h = cb.store.hashesAt(name).find((x) => cb.store.getDef(x)?.kind === "file");
+    const was = fs.readFileSync(abs(rel));
+    // (the same file reads differently when what it names was renamed)
+    const content = h && fileContent(cb, cb.store.getDef(h)!, f.ns);
+    if (content && content.equals(was)) continue;
+    assetsBefore.set(rel, was);
+    if (content) fs.writeFileSync(abs(rel), content);
+    else fs.rmSync(abs(rel), { force: true });
+  }
+  for (const [name, rec] of filesIn(cb, m.into)) {
+    if (recorded.has(name)) continue;
+    const rest = (m.into ? name.slice(m.into.length + 1) : name).split(".");
+    const rel = path.join(...rest.slice(0, -1), `${rest.at(-1)}.${formatOf(rec)}`);
+    if (fs.existsSync(abs(rel))) {
+      problems.push(`${name} would be written to ${rel}, which is there already`);
+      continue;
+    }
+    fs.mkdirSync(path.dirname(abs(rel)), { recursive: true });
+    fs.writeFileSync(abs(rel), fileContent(cb, rec, name.slice(0, name.lastIndexOf("."))));
+    m.files[rel] = { ns: name.slice(0, name.lastIndexOf(".")), sha: "", names: {} };
+    createdAssets.push(rel);
+  }
   // files outside the mirror that a rename reached, as they were
   let outside = new Map<string, string>();
   if (moves.length && !problems.length) {
@@ -520,9 +559,14 @@ export function syncMirror(cb: Codebase): boolean {
     for (const [rel, text] of before) if (!created.includes(rel)) fs.writeFileSync(abs(rel), text);
     for (const rel of created) fs.rmSync(abs(rel), { force: true });
     for (const [file, text] of outside) fs.writeFileSync(file, text);
+    for (const [rel, bytes] of assetsBefore) fs.writeFileSync(abs(rel), bytes);
+    for (const rel of createdAssets) {
+      fs.rmSync(abs(rel), { force: true });
+      delete m.files[rel];
+    }
   };
   // nothing written (the codebase's changes left the text alone): the files are as they were
-  const wrote = created.length > 0 || outside.size > 0 || [...before].some(([rel, text]) => fs.readFileSync(abs(rel), "utf8") !== text);
+  const wrote = created.length > 0 || outside.size > 0 || assetsBefore.size > 0 || createdAssets.length > 0 || [...before].some(([rel, text]) => fs.readFileSync(abs(rel), "utf8") !== text);
   if (!problems.length && wrote) {
     // the files must hash to what the codebase holds; a renamed function or class doesn't until the codebase takes
     // the renamed code
@@ -539,9 +583,20 @@ export function syncMirror(cb: Codebase): boolean {
     for (const p of problems.slice(0, 10)) console.log(red(`  ${p}`));
     return false;
   }
-  const changed = [...before].filter(([rel, text]) => fs.readFileSync(abs(rel), "utf8") !== text).map(([rel]) => rel);
+  const changed = [...[...before].filter(([rel, text]) => fs.readFileSync(abs(rel), "utf8") !== text).map(([rel]) => rel), ...assetsBefore.keys(), ...createdAssets];
   if (changed.length) console.log(dim(`mirror: wrote ${changed.join(", ")}${outside.size ? ` (and renamed in ${[...outside.keys()].map((f) => path.relative(m.dir, f)).join(", ")}, outside it)` : ""}`));
-  for (const [rel, f] of Object.entries(m.files)) m.files[rel] = { ...f, sha: sha(fs.readFileSync(abs(rel), "utf8")), names: now.get(f.ns)! };
+  for (const [rel, f] of Object.entries(m.files)) {
+    if (!isAsset(rel)) {
+      m.files[rel] = { ...f, sha: sha(fs.readFileSync(abs(rel), "utf8")), names: now.get(f.ns)! };
+      continue;
+    }
+    if (!fs.existsSync(abs(rel))) {
+      delete m.files[rel];
+      continue;
+    }
+    const h = cb.store.hashesAt(joinName(f.ns, fileLeaf(rel))).find((x) => cb.store.getDef(x)?.kind === "file");
+    m.files[rel] = { ...f, sha: sha(fs.readFileSync(abs(rel), "utf8")), names: h ? { [fileLeaf(rel)]: h } : {} };
+  }
   m.log = cb.store.logHead();
   saveMirror(cb, m);
   return true;
@@ -608,9 +663,19 @@ export function checkMirror(cb: Codebase, m: Mirror, keepText = false): string[]
     const hs = cb.store.hashesAt(p);
     if (!hs.includes(d.hash)) out.push(`${p}: the file's code hashes to #${d.hash.slice(0, 8)}, the codebase has ${hs.length ? hs.map((h) => `#${h.slice(0, 8)}`).join(", ") : "nothing there"}`);
   }
-  for (const f of Object.values(m.files)) for (const leaf of Object.keys(namesIn(cb, f.ns))) {
-    if (!seen.has(joinName(f.ns, leaf))) out.push(`${joinName(f.ns, leaf)} is in the codebase but not in the files`);
+  for (const [rel, f] of Object.entries(m.files)) {
+    if (isAsset(rel)) continue;
+    for (const leaf of Object.keys(namesIn(cb, f.ns))) if (!seen.has(joinName(f.ns, leaf))) out.push(`${joinName(f.ns, leaf)} is in the codebase but not in the files`);
   }
+  // files of the codebase that aren't code: the same content
+  for (const file of assetFiles(m.dir, new Set(m.exclude.map((e) => path.resolve(m.dir, e))))) {
+    const name = assetName(m.dir, m.into, file);
+    seen.add(name);
+    const { def } = fileDefinition(cb, name, fileFormat(file)!, fs.readFileSync(file));
+    const hs = cb.store.hashesAt(name);
+    if (!hs.includes(def.hash)) out.push(`${name}: the file hashes to #${def.hash.slice(0, 8)}, the codebase has ${hs.length ? hs.map((h) => `#${h.slice(0, 8)}`).join(", ") : "nothing there"}`);
+  }
+  for (const name of filesIn(cb, m.into).keys()) if (!seen.has(name)) out.push(`${name} is in the codebase but not in the files`);
   if (keepText && !out.length) {
     for (const d of a.defs) {
       const was = cb.store.getDef(d.hash);
@@ -833,7 +898,8 @@ export function changedFiles(m: Mirror): string[] {
   const out = Object.entries(m.files)
     .filter(([rel, f]) => !fs.existsSync(path.join(m.dir, rel)) || sha(fs.readFileSync(path.join(m.dir, rel), "utf8")) !== f.sha)
     .map(([rel]) => rel);
-  for (const f of sourceFiles(m.dir, new Set(m.exclude.map((e) => path.resolve(m.dir, e))), m.tests)) {
+  const exclude = new Set(m.exclude.map((e) => path.resolve(m.dir, e)));
+  for (const f of [...sourceFiles(m.dir, exclude, m.tests), ...assetFiles(m.dir, exclude)]) {
     if (!(path.relative(m.dir, f) in m.files)) out.push(path.relative(m.dir, f));
   }
   return out;
@@ -978,4 +1044,32 @@ export function mentions(sf: ReturnType<typeof ts.parse>, name: string): boolean
   };
   for (const st of sf.statements) if (!ts.isImportDeclaration(st)) visit(st);
   return found;
+}
+
+/**
+ * The files under a mirrored directory that aren't code (Markdown, CSS, images): files of the codebase.
+ */
+export function assetFiles(dir: string, exclude: Set<string>): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name);
+    if (exclude.has(path.resolve(p)) || e.name.startsWith(".")) return [];
+    if (e.isDirectory()) return ["node_modules", "dist", "build"].includes(e.name) ? [] : assetFiles(p, exclude);
+    return isAsset(e.name) ? [p] : [];
+  });
+}
+
+/**
+ * A file's name in a mirror's codebase: its directory's namespace (as for code), and its own name.
+ */
+export function assetName(root: string, into: string, file: string): string {
+  const dirs = path.relative(root, path.dirname(file)).split(path.sep).filter((d) => d && d !== "src").map(dirSegment);
+  return joinName(into, ...dirs, fileLeaf(file));
+}
+
+/**
+ * Formats a mirror keeps as files of the codebase: all but the project's configuration (JSON, YAML, TOML).
+ */
+export const isAsset = (file: string): boolean => {
+  const format = fileFormat(file);
+  return !!format && !["json", "yaml", "yml", "toml"].includes(format);
 }

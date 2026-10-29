@@ -6,7 +6,7 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS components (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, ir_version INTEGER NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS definitions (
   hash TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('term','type','class')),
+  kind TEXT NOT NULL CHECK (kind IN ('term','type','class','file')),
   component_hash TEXT NOT NULL REFERENCES components(hash),
   component_index INTEGER NOT NULL,
   ir TEXT NOT NULL,
@@ -441,9 +441,10 @@ export class Store {
 
   // ---- names -----------------------------------------------------------------
 
-  names(branch?: string): NameRow[] {
+  /** A branch's names (this one's by default): its code's, and with `files`, the files kept with it too. */
+  names(branch?: string, files = false): NameRow[] {
     const id = branch === undefined ? this.branch().id : this.branchId(branch);
-    return this.db.prepare("SELECT path, hash, kind FROM names WHERE branch_id = ? ORDER BY path, hash").all(id) as unknown as NameRow[];
+    return this.db.prepare(`SELECT path, hash, kind FROM names WHERE branch_id = ?${files ? "" : " AND kind != 'file'"} ORDER BY path, hash`).all(id) as unknown as NameRow[];
   }
 
   private branchId(name: string): number {

@@ -81,8 +81,8 @@ export function planMerge(cb: Codebase, ours: string, theirs: string): MergePlan
   if (cb.store.isAncestor(oursHead, theirsHead)) return { kind: "fast-forward", to: theirsHead };
   const irOf = (h: string) => cb.store.getDef(h)!.ir;
   const base = stateOf(cb.store.namespaceRows(cb.store.causal(cb.store.mergeBase(oursHead, theirsHead))!.namespace));
-  const before = stateOf(cb.store.names(ours));
-  const theirsNow = stateOf(cb.store.names(theirs));
+  const before = stateOf(cb.store.names(ours, true));
+  const theirsNow = stateOf(cb.store.names(theirs, true));
   const propagated = {
     ours: new Set(diffNamespaces(base, before, irOf).propagated.map((c) => c.path)),
     theirs: new Set(diffNamespaces(base, theirsNow, irOf).propagated.map((c) => c.path)),
@@ -99,17 +99,17 @@ export function planMerge(cb: Codebase, ours: string, theirs: string): MergePlan
 export function mergeBranch(cb: Codebase, theirs: string, command = `merge ${theirs}`): MergeResult {
   const ours = cb.store.branch().name;
   const plan = planMerge(cb, ours, theirs);
-  const none: MergeResult = { merged: stateOf(cb.store.names()), conflicts: [], keptOverDelete: [], patches: new Map() };
+  const none: MergeResult = { merged: stateOf(cb.store.names(undefined, true)), conflicts: [], keptOverDelete: [], patches: new Map() };
   if (plan.kind === "up-to-date") {
     console.log(dim(`${ours} already has everything in ${theirs}: no changes`));
     return none;
   }
-  const before = stateOf(cb.store.names());
+  const before = stateOf(cb.store.names(undefined, true));
   const irOf = (h: string) => cb.store.getDef(h)!.ir;
   if (plan.kind === "fast-forward") {
     cb.store.setHead(ours, plan.to, command);
     cb.refreshShim();
-    const after = stateOf(cb.store.names());
+    const after = stateOf(cb.store.names(undefined, true));
     printDiff(cb, diffNamespaces(before, after, irOf), before, after, `fast-forwarded ${ours} to ${theirs}`);
     return { ...none, merged: after };
   }
@@ -126,7 +126,7 @@ export function mergeBranch(cb: Codebase, theirs: string, command = `merge ${the
   const { updated, failed } = result.patches.size ? cb.propagate(new Map(result.patches)) : { updated: [], failed: [] };
   cb.refreshShim();
 
-  const after = stateOf(cb.store.names());
+  const after = stateOf(cb.store.names(undefined, true));
   printDiff(cb, diffNamespaces(before, after, (h) => cb.store.getDef(h)!.ir), before, after, `merged ${theirs} into ${ours}`);
   if (updated.length) console.log(dim(`\n  re-derived against the merged definitions: ${updated.join(", ")}`));
   for (const p of result.keptOverDelete) console.log(`${yellow("  kept")} ${bold(p)} ${dim("(deleted on one side, changed on the other)")}`);

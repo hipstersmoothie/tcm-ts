@@ -100,6 +100,12 @@ export const commands = {
     argument(name("args"), description("arguments for it"), multiple(), schema(words)),
     option(name("on"), description("run on a remote, URL or codebase directory instead"), schema(text(null))),
   ),
+  export: command(
+    name("export"),
+    description("write the files kept under a namespace (Markdown, CSS, images) to a directory, laid out by their names, links and names as they are now"),
+    argument(name("namespace"), description("the namespace, like docs"), schema(text(null))),
+    argument(name("dir"), description("where to write them"), schema(text(null))),
+  ),
   mv: command(name("mv"), description("rename a definition or namespace (no code changes)"), argument(name("from"), description("a name or namespace"), schema(text(null))), argument(name("to"), description("its new name"), schema(text(null)))),
   alias: command(name("alias"), description("add another name for a definition"), definition(), argument(name("to"), description("the new name"), schema(text(null)))),
   rm: command(name("rm"), description("remove a name"), definition("a name"), force("remove it even if named definitions use it (they keep working)")),
