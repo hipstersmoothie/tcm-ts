@@ -77,8 +77,36 @@ export function ensureView(cb: Codebase, hash: string): string {
   return writeView(cb, hash)?.file ?? viewFile(cb, hash);
 }
 
-/** Regenerate .tcm/src for the branch's names, removing files no name has any more. */
-export function writeViews(cb: Codebase) {
+/**
+ * Bring .tcm/src up to date with the branch's names. Only what changed since the last time is rewritten: the
+ * definitions the name log says changed, and what depends on them (their views spell those names, and say where
+ * they run). Everything is, the first time, after switching branches, or when the log can't say.
+ */
+export function writeViews(cb: Codebase, all = false) {
+  const head = cb.store.logHead();
+  const branch = cb.store.branch().name;
+  const at = cb.store.getSetting("views_at");
+  const sep = at?.lastIndexOf("@") ?? -1;
+  const since = at && at.slice(0, sep) === branch ? Number(at.slice(sep + 1)) : undefined;
+  if (all || since === undefined || !(since <= head) || !fs.existsSync(srcDir(cb))) writeAllViews(cb);
+  else if (since < head) {
+    const entries = cb.store.history(Number.MAX_SAFE_INTEGER, since);
+    const changed = new Set(entries.flatMap((e) => [e.oldHash, e.newHash].filter((h): h is string => !!h)));
+    // and everything that uses them, directly or not
+    const queue = [...changed];
+    while (queue.length) for (const d of cb.store.dependents(queue.pop()!)) if (!changed.has(d)) (changed.add(d), queue.push(d));
+    const placement = new Placement(cb);
+    for (const n of cb.store.names()) if (changed.has(n.hash)) writeView(cb, n.hash, placement);
+    // a name that's gone takes its file with it
+    for (const e of entries) {
+      if (cb.store.hashesAt(e.path).length) continue;
+      for (const ext of [".ts", ".tsx"]) fs.rmSync(path.join(srcDir(cb), `${e.path.replaceAll(".", "/")}${ext}`), { force: true });
+    }
+  }
+  cb.store.setSetting("views_at", `${branch}@${head}`);
+}
+
+function writeAllViews(cb: Codebase) {
   const placement = new Placement(cb);
   const keep = new Set<string>();
   for (const n of cb.store.names()) {
