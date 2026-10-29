@@ -6,6 +6,7 @@ import {
   analyzeFile,
   incrementalCompiler,
   type CompilerOptions,
+  type ProjectDef,
   analyzeProject,
   IR_VERSION,
   TS_VERSION,
@@ -559,62 +560,106 @@ export class Codebase {
     };
     const updated: string[] = [];
     const failed = new Set<string>();
+    // components whose dependencies are all re-hashed are re-checked together, in one program: a wave per level
+    // of the dependency graph, rather than a program per component (each of which checks much of the codebase again)
+    const level = new Map<string, number>();
     for (const c of order) {
-      const members = comps.get(c)!;
-      const memberSet = new Set(members.map((m) => m.hash));
-      const blocker = members.flatMap((m) => m.deps).find((d) => d.ref.startsWith("#") && failed.has(d.ref.slice(1)));
-      if (blocker) {
-        for (const m of members) {
-          failed.add(m.hash);
-          store.setTodo(m.hash, `depends on ${this.displayRef(blocker.ref)}, which needs fixing`);
-        }
-        continue;
+      let l = 0;
+      for (const m of comps.get(c)!) for (const d of m.deps) {
+        const dc = d.ref.startsWith("#") ? compOf.get(d.ref.slice(1)) : undefined;
+        if (dc && dc !== c) l = Math.max(l, level.get(dc)! + 1);
       }
+      level.set(c, l);
+    }
+    const waves: string[][] = [];
+    for (const c of order) (waves[level.get(c)!] ??= []).push(c);
+
+    type Item = { c: string; members: DefRecord[]; rendered: ReturnType<typeof render>; tmp: string };
+    for (const wave of waves) {
       const src = this.source();
-      const deps = members.flatMap((m) => m.spans.filter((s) => s.hash && !memberSet.has(s.hash)).map((s) => resolve(s.hash!)));
-      materialize(deps, src, lay);
-      ensureExternals(lay, externalsOf(members));
-      const repinned = !!repin && members.some((m) => repin.hashes.has(m.hash));
-      if (repinned) ensureExternals(lay, externalsOf(members).map((e) => ({ ...e, module: repin.module(e.module) })));
-      const rendered = render(members, src, lay, { style: "internal", remap: resolve, ...(repinned ? { remapPackage: repin.module } : {}) });
-      const tmp = path.join(lay.cacheDir, `_update_${moduleFile(c, src)}`);
-      fs.writeFileSync(tmp, rendered.text);
-      // untyped npm packages are fine here: the definition was already checked against their types when added
-      const salts = this.storedSalts(new Map([[tmp, new Map([...rendered.memberNames].map(([h, n]) => [n, src.get(h)!]))]]));
-      const a = this.analyzeProject([tmp], salts, [7016], this.recheckOptions(members[0]?.checked));
-      fs.rmSync(tmp);
-      const problem = a.errors[0] ?? a.diagnostics[0]?.message;
-      if (problem) {
-        for (const m of members) {
-          failed.add(m.hash);
-          store.setTodo(m.hash, problem);
-        }
-        continue;
-      }
-      const oldByName = new Map([...rendered.memberNames].map(([h, n]) => [n, h]));
-      // a re-derived definition keeps its doc (rendered code has no comments); the doc's references are by hash
-      // and follow patches when rendered
-      this.putDefs(
-        a.defs.map((d) => {
-          const was = src.get(oldByName.get(d.nameHint) ?? "");
-          return was?.doc ? { ...d, doc: was.doc, ...(was.docRefs ? { docRefs: was.docRefs } : {}) } : d;
-        }),
-      );
-      store.transaction(() => {
-        for (const d of a.defs) {
-          const old = oldByName.get(d.nameHint);
-          if (!old) continue;
-          store.clearTodo(old);
-          if (d.hash === old) continue;
-          patches.set(old, d.hash);
-          store.addPatch(old, d.hash);
-          for (const p of store.pathsOf(old)) {
-            // only this hash moves: a conflicted name keeps its other definitions
-            store.replaceName(p, old, d.hash, d.kind, repin?.command ?? "update (propagated)");
-            updated.push(p);
+      const items: Item[] = [];
+      // what the wave's components import, written to the cache once for all of them (their closures overlap)
+      const imported = new Set<string>();
+      for (const c of wave) {
+        const members = comps.get(c)!;
+        const memberSet = new Set(members.map((m) => m.hash));
+        const blocker = members.flatMap((m) => m.deps).find((d) => d.ref.startsWith("#") && failed.has(d.ref.slice(1)));
+        if (blocker) {
+          for (const m of members) {
+            failed.add(m.hash);
+            store.setTodo(m.hash, `depends on ${this.displayRef(blocker.ref)}, which needs fixing`);
           }
+          continue;
         }
-      });
+        for (const m of members) for (const s of m.spans) if (s.hash && !memberSet.has(s.hash)) imported.add(resolve(s.hash));
+        ensureExternals(lay, externalsOf(members));
+        const repinned = !!repin && members.some((m) => repin.hashes.has(m.hash));
+        if (repinned) ensureExternals(lay, externalsOf(members).map((e) => ({ ...e, module: repin.module(e.module) })));
+        const rendered = render(members, src, lay, { style: "internal", remap: resolve, ...(repinned ? { remapPackage: repin.module } : {}) });
+        const tmp = path.join(lay.cacheDir, `_update_${moduleFile(c, src)}`);
+        fs.writeFileSync(tmp, rendered.text);
+        items.push({ c, members, rendered, tmp });
+      }
+      // the re-check only needs the modules to exist: names and source maps are brought up to date afterwards
+      materialize([...imported], src, lay, { keepExisting: true });
+      // checked under the profile each was first checked with; untyped npm packages are fine here (the definitions
+      // were already checked against their types when added)
+      const check = (group: Item[]) => {
+        const salts = this.storedSalts(new Map(group.map((x) => [x.tmp, new Map([...x.rendered.memberNames].map(([h, n]) => [n, src.get(h)!]))])));
+        return this.analyzeProject(group.map((x) => x.tmp), salts, [7016], this.recheckOptions(group[0]!.members[0]?.checked));
+      };
+      const outcome = new Map<string, ProjectDef[] | string>();
+      const byProfile = new Map<string, Item[]>();
+      for (const x of items) {
+        const k = JSON.stringify(x.members[0]?.checked ?? null);
+        byProfile.set(k, [...(byProfile.get(k) ?? []), x]);
+      }
+      for (const group of byProfile.values()) {
+        const a = check(group);
+        const problem = (r: typeof a) => r.errors[0] ?? r.diagnostics[0]?.message;
+        if (!problem(a)) for (const x of group) outcome.set(x.c, a.defs.filter((d) => path.resolve(d.file) === path.resolve(x.tmp)));
+        // a problem somewhere in the group: check each on its own, to say which
+        else for (const x of group) {
+          const b = group.length === 1 ? a : check([x]);
+          outcome.set(x.c, problem(b) ?? b.defs);
+        }
+      }
+      for (const x of items) fs.rmSync(x.tmp, { force: true });
+
+      for (const { c, members, rendered } of items) {
+        const result = outcome.get(c)!;
+        if (typeof result === "string") {
+          for (const m of members) {
+            failed.add(m.hash);
+            store.setTodo(m.hash, result);
+          }
+          continue;
+        }
+        const oldByName = new Map([...rendered.memberNames].map(([h, n]) => [n, h]));
+        // a re-derived definition keeps its doc (rendered code has no comments); the doc's references are by hash
+        // and follow patches when rendered
+        this.putDefs(
+          result.map((d) => {
+            const was = src.get(oldByName.get(d.nameHint) ?? "");
+            return was?.doc ? { ...d, doc: was.doc, ...(was.docRefs ? { docRefs: was.docRefs } : {}) } : d;
+          }),
+        );
+        store.transaction(() => {
+          for (const d of result) {
+            const old = oldByName.get(d.nameHint);
+            if (!old) continue;
+            store.clearTodo(old);
+            if (d.hash === old) continue;
+            patches.set(old, d.hash);
+            store.addPatch(old, d.hash);
+            for (const p of store.pathsOf(old)) {
+              // only this hash moves: a conflicted name keeps its other definitions
+              store.replaceName(p, old, d.hash, d.kind, repin?.command ?? "update (propagated)");
+              updated.push(p);
+            }
+          }
+        });
+      }
     }
     return { updated, failed: [...failed] };
   }

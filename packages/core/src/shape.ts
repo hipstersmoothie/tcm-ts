@@ -73,7 +73,7 @@ export function shapeBuilder(checker: ts.TypeChecker, refOf: (sym: ts.Symbol) =>
     }
     return { k: "fn", params, ...(rest ? { rest } : {}), ret: of(checker.getReturnTypeOfSignature(sig), depth + 1) };
   };
-  const of = (t: ts.Type, depth = 0): Shape => {
+  const build = (t: ts.Type, depth: number): Shape => {
     if (depth > MAX_DEPTH) return { k: "opaque" };
     const f = t.flags;
     if (f & ts.TypeFlags.TypeParameter) {
@@ -131,6 +131,17 @@ export function shapeBuilder(checker: ts.TypeChecker, refOf: (sym: ts.Symbol) =>
       };
     }
     return { k: "opaque" };
+  };
+  // a type is described the same way wherever it's met (at the same depth), and the checker is a process away:
+  // describe each once. Not those with type variables, numbered by the signature they're met in.
+  const memo = new Map<string, Shape>();
+  const of = (t: ts.Type, depth = 0): Shape => {
+    const key = `${t.id}:${depth}`;
+    const hit = memo.get(key);
+    if (hit) return hit;
+    const shape = build(t, depth);
+    if (!JSON.stringify(shape).includes('"k":"var"')) memo.set(key, shape);
+    return shape;
   };
   return {
     /** A value's type: its call signatures if it has them, else the type itself. Type variables restart at 0. */

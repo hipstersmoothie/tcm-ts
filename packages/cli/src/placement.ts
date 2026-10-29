@@ -142,21 +142,37 @@ export class Placement {
 
   constructor(cb: Codebase, get?: (h: string) => DefRecord | undefined) {
     this.cb = cb;
-    this.get = get ?? ((h) => cb.store.getDef(h));
+    // a definition never changes under its hash, and placement asks about the same ones many times over (a large
+    // codebase's closures overlap): read each once
+    const read = get ?? ((h: string) => cb.store.getDef(h));
+    const defs = new Map<string, DefRecord | undefined>();
+    this.get = (h) => {
+      if (!defs.has(h)) defs.set(h, read(h));
+      return defs.get(h);
+    };
   }
+
+  private valueDepsOf = new Map<string, string[]>();
+  private usesCache = new Map<string, string[]>();
 
   private name(h: string): string {
     return this.cb.displayRef(`#${h}`);
   }
 
   private valueDeps(h: string): string[] {
-    return (this.get(h)?.deps ?? []).filter((d) => d.pos === "value" && d.ref.startsWith("#")).map((d) => d.ref.slice(1));
+    let deps = this.valueDepsOf.get(h);
+    if (!deps) this.valueDepsOf.set(h, (deps = (this.get(h)?.deps ?? []).filter((d) => d.pos === "value" && d.ref.startsWith("#")).map((d) => d.ref.slice(1))));
+    return deps;
   }
 
   /** What `h` uses other than by rendering it as an element: these pull their needs into `h`. */
   private usedBy(h: string): string[] {
-    const rec = this.get(h);
-    return rec ? [...usesOf(rec, h)] : [];
+    let uses = this.usesCache.get(h);
+    if (!uses) {
+      const rec = this.get(h);
+      this.usesCache.set(h, (uses = rec ? [...usesOf(rec, h)] : []));
+    }
+    return uses;
   }
 
   /**

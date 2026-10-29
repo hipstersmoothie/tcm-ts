@@ -238,6 +238,7 @@ export class Store {
     } catch (e) {
       this.db.exec("ROLLBACK");
       this.dirty.clear();
+      this.defs.clear();
       throw e;
     } finally {
       this.depth = 0;
@@ -256,6 +257,7 @@ export class Store {
   // ---- content ---------------------------------------------------------------
 
   putDefs(records: DefRecord[], tsVersion: string, irVersion: number) {
+    for (const r of records) this.defs.delete(r.hash);
     const now = Date.now();
     const comp = this.db.prepare("INSERT OR IGNORE INTO components (hash, size, ir_version, created_at) VALUES (?, ?, ?, ?)");
     const def = this.db.prepare(
@@ -300,13 +302,28 @@ export class Store {
 
   setMetadata(hash: string, key: string, value: string) {
     this.db.prepare("INSERT OR REPLACE INTO metadata (hash, key, value) VALUES (?, ?, ?)").run(hash, key, value);
+    this.defs.delete(hash);
   }
 
   hasDef(hash: string): boolean {
     return !!this.db.prepare("SELECT 1 FROM definitions WHERE hash = ?").get(hash);
   }
 
+  /**
+   * Definitions read so far. A definition never changes under its hash (only its metadata, and its text when
+   * reformatted, which drop it from here), and a large codebase reads the same ones many times over in one command.
+   * They're frozen: callers share them.
+   */
+  private defs = new Map<string, DefRecord | undefined>();
+
   getDef(hash: string): DefRecord | undefined {
+    if (this.defs.has(hash)) return this.defs.get(hash);
+    const rec = this.readDef(hash);
+    this.defs.set(hash, rec && deepFreeze(rec));
+    return rec;
+  }
+
+  private readDef(hash: string): DefRecord | undefined {
     const row = this.db
       .prepare(
         `SELECT d.*, c.size, s.display, m.value AS doc, p.value AS params, t.value AS table_schema, x.value AS transform, k.value AS checked, g.value AS globals, sh.value AS shape, dr.value AS doc_refs FROM definitions d
@@ -928,6 +945,7 @@ export class Store {
    */
   replaceSource(hash: string, sourceText: string, spans: Span[], reservedNames: string[]) {
     this.db.prepare("UPDATE definitions SET source_text = ?, ref_spans = ?, reserved_names = ? WHERE hash = ?").run(sourceText, JSON.stringify(spans), JSON.stringify(reservedNames), hash);
+    this.defs.delete(hash);
   }
 
   // ---- lint results --------------------------------------------------------------------------------------------
@@ -1058,4 +1076,13 @@ function contributionOf(r: Row): Contribution {
 export function stateHashOf(rows: { path: string; hash: string }[]): string {
   const lines = rows.map((r) => `${r.path} ${r.hash}\n`).sort();
   return createHash("sha256").update(lines.join("")).digest("hex").slice(0, 32);
+}
+
+/** Freeze a value and everything in it. */
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const v of Object.values(value)) deepFreeze(v);
+  }
+  return value;
 }

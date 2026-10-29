@@ -345,7 +345,12 @@ export function externalsOf(members: DefRecord[]): ExtRef[] {
 }
 
 /** Write cache modules for the transitive closure of `hashes`, and install the npm packages they use. */
-export function materialize(hashes: Iterable<string>, src: DefSource, lay: Layout): void {
+/**
+ * Write the cache modules `hashes` need: their components and everything those import. `keepExisting` leaves a
+ * module that's already there as it is, rather than rendering it again: a component's code never changes, only the
+ * names and source maps it's rendered with, which is all an internal re-check needs.
+ */
+export function materialize(hashes: Iterable<string>, src: DefSource, lay: Layout, opts: { keepExisting?: boolean } = {}): void {
   const seen = new Set<string>();
   const exts = new Map<string, ExtRef>();
   const queue = [...hashes];
@@ -363,7 +368,9 @@ export function materialize(hashes: Iterable<string>, src: DefSource, lay: Layou
       }
       if (m.jsx) exts.set(m.jsx, { module: m.jsx, subpath: "jsx-runtime", export: "*" });
     }
-    writeIfChanged(path.join(lay.cacheDir, moduleFile(rec.componentHash, src)), render(members, src, lay, { style: "cache" }).text);
+    const file = path.join(lay.cacheDir, moduleFile(rec.componentHash, src));
+    if (opts.keepExisting && fs.existsSync(file)) continue;
+    writeIfChanged(file, render(members, src, lay, { style: "cache" }).text);
   }
   ensureExternals(lay, exts.values());
 }
