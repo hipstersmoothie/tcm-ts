@@ -283,7 +283,10 @@ export function parseSpec(spec: string): { name: string; version?: string } {
  * its manifest; what it uses of the codebase's other packages comes from their releases, as dependencies.
  */
 export function packPackage(cb: Codebase, name: string | undefined, version: string | undefined, out: string | undefined) {
-  const release = version === undefined ? undefined : cb.store.release(name ?? "", version);
+  // the branch exactly where a release of it is: that release
+  const head = cb.store.head();
+  const atRelease = version === undefined ? cb.store.releases(name).find((r) => r.causal === head && (!name || r.package === name)) : undefined;
+  const release = atRelease ?? (version === undefined ? undefined : cb.store.release(name ?? "", version));
   if (version !== undefined && !release) throw new ReleaseError(`no release ${name}@${version} (see \`tcm releases\`)`);
   const rows = release ? rowsAt(cb, release.causal) : cb.store.names();
   const all = packagesIn(cb, rows);

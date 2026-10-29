@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { createProgram, ts, SERVER_API_MODULE, type DefRecord, type ExtRef, type Span } from "@tcm/core";
 import type { Codebase } from "./codebase.ts";
 import { dim, red, yellow } from "./style.ts";
@@ -496,4 +497,93 @@ export function checkMirror(cb: Codebase, m: Mirror): string[] {
     if (!seen.has(joinName(f.ns, leaf))) out.push(`${joinName(f.ns, leaf)} is in the codebase but not in the files`);
   }
   return out;
+}
+
+// ---- releases, kept in git ------------------------------------------------------------------------------
+//
+// A release is a point in the codebase's history. A mirrored codebase can be made again from its files, so its
+// releases are kept where the files are: `tcm-releases.json` in the mirrored directory records each one (the
+// git commit its code is in, and its notes), and a codebase linked to the mirror afresh makes them again by
+// importing each one's commit, in order, before the files as they are now.
+
+/** A release as the mirror keeps it. */
+export interface ReleaseRecord {
+  package: string;
+  version: string;
+  /** the git commit holding the mirror's files as released */
+  commit: string;
+  notes: string;
+  author: string;
+  ts: number;
+}
+
+const RECORDS = "tcm-releases.json";
+
+const git = (dir: string, ...args: string[]) => {
+  const r = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim() : undefined;
+};
+
+export function releaseRecords(dir: string): ReleaseRecord[] {
+  const file = path.join(dir, RECORDS);
+  return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as ReleaseRecord[]) : [];
+}
+
+/**
+ * The commit a release of a mirrored codebase is made from: the mirror's files must all be committed, so the
+ * release can be made again from git. Undefined when the mirror isn't in a git repository.
+ */
+export function releaseCommit(m: Mirror): string | undefined {
+  if (git(m.dir, "rev-parse", "--is-inside-work-tree") !== "true") return undefined;
+  const dirty = git(m.dir, "status", "--porcelain", "--", ".", `:!${RECORDS}`);
+  if (dirty === undefined || dirty) {
+    throw new Error(`${path.relative(process.cwd(), m.dir) || "the mirror"} has changes git doesn't have yet; commit them first, so the release can be made again from git`);
+  }
+  return git(m.dir, "rev-parse", "HEAD");
+}
+
+/** Add a release to the mirror's records (for git: commit them with the next change). */
+export function recordRelease(m: Mirror, r: ReleaseRecord) {
+  const records = [...releaseRecords(m.dir).filter((x) => !(x.package === r.package && x.version === r.version)), r];
+  fs.writeFileSync(path.join(m.dir, RECORDS), JSON.stringify(records, null, 2) + "\n");
+}
+
+/**
+ * Make a mirror's recorded releases again, in a codebase that doesn't have them: for each, in order, its commit's
+ * files are imported (`importAt`) and the release is put at the history entry that makes. The files are taken
+ * from git into a directory inside the repository, so packages resolve as they did, and workspace packages
+ * (`@tcm/core`, say) are linked to their copies there rather than to today's.
+ */
+export function replayReleases(cb: Codebase, dir: string, importAt: (root: string) => boolean, namespaceOf: (pkg: string) => string | undefined): number {
+  const records = releaseRecords(dir).filter((r) => !cb.store.release(r.package, r.version));
+  if (!records.length) return 0;
+  const top = git(dir, "rev-parse", "--show-toplevel");
+  if (!top) throw new Error(`${dir} has release records (${RECORDS}) but isn't in a git repository to make them from`);
+  const rel = path.relative(top, dir) || ".";
+  let made = 0;
+  for (const r of records) {
+    const at = fs.mkdtempSync(path.join(top, ".tcm-release-"));
+    try {
+      const tar = spawnSync("sh", ["-c", `git -C "$0" archive "$1" -- "$2" | tar -x -C "$3"`, top, r.commit, rel, at], { encoding: "utf8" });
+      if (tar.status !== 0) throw new Error(`can't take ${r.package}@${r.version}'s files from git (commit ${r.commit.slice(0, 8)}): ${tar.stderr.trim()}`);
+      const root = path.join(at, rel);
+      for (const pkgJson of fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path.join(root, e.name, "package.json"))) {
+        if (!fs.existsSync(pkgJson)) continue;
+        const name = (JSON.parse(fs.readFileSync(pkgJson, "utf8")) as { name?: string }).name;
+        if (!name) continue;
+        const link = path.join(at, "node_modules", name);
+        fs.mkdirSync(path.dirname(link), { recursive: true });
+        fs.symlinkSync(path.dirname(pkgJson), link, "dir");
+      }
+      console.log(dim(`making ${r.package}@${r.version} again from git (${r.commit.slice(0, 8)})…`));
+      if (!importAt(root)) throw new Error(`${r.package}@${r.version}'s files (commit ${r.commit.slice(0, 8)}) didn't import`);
+      const namespace = namespaceOf(r.package);
+      if (namespace === undefined) throw new Error(`${r.package}@${r.version}: its commit has no package ${r.package}`);
+      cb.store.putRelease({ package: r.package, version: r.version, namespace, causal: cb.store.head(), notes: r.notes, author: r.author, ts: r.ts });
+      made++;
+    } finally {
+      fs.rmSync(at, { recursive: true, force: true });
+    }
+  }
+  return made;
 }

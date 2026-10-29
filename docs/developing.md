@@ -91,7 +91,21 @@ URL and export name (a function in a codebase carries its hash at runtime, and t
 
 ## Packaging
 
-`pnpm build` makes `tcm-ts`, the npm package, in `dist/package`, from tcm's own codebase: it imports `packages/`
-into `selfhost/.tcm` and packs it with [`tcm pack`](publishing.md), run by the self-hosted tcm. The `tcm` and
-`tcm-ts` bins run `tcmts.cli.main.runCli`, `tcm-ts/core` exports the analyzer, and dependencies are pinned at the
-codebase's locked versions. What's published is what the codebase holds. Publishing is done by hand.
+`tcm-ts`, the npm package, is a [package](publishing.md#packages) of tcm's own codebase: its manifest is
+`packages/index.ts` (the `tcm` and `tcm-ts` bins run `tcmts.cli.main.runCli`, `tcm-ts/core` exports the
+analyzer). `pnpm build` packs it into `dist/package` from tcm's codebase (built afresh in `selfhost/.tcm`, its
+releases made again from git), with dependencies pinned at the codebase's locked versions. At a release it's that
+release; otherwise it's the code as it is, as `0.0.0`.
+
+Releasing is [`tcm release`](releases.md), in tcm's codebase, from committed files:
+
+```sh
+pnpm tcm release check tcm-ts      # the next version, from the semver checks on tcm-ts's API
+pnpm tcm release tcm-ts --draft    # codebase/release-tcm-ts.md: write a summary above the marker
+pnpm tcm release tcm-ts            # records it in packages/tcm-releases.json
+pnpm tcm changelog tcm-ts --out ../CHANGELOG.md
+git commit -am "tcm-ts 0.1.0" && pnpm build && (cd dist/package && npm publish)
+```
+
+The release is [kept in git](releases.md#releases-kept-in-git): any clone's codebase makes it again. Publishing is
+done by hand.

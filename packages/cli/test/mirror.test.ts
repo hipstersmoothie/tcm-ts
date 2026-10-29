@@ -75,3 +75,62 @@ test("a mirror: edits, additions, removals and renames made in tcm are written b
   assert.match(read("src/math.ts"), /export const halve/, "and write-back resumes");
   assert.match(tcm("mirror", "--check"), /the files hash to what the codebase holds/);
 });
+
+test("a mirror's releases are kept in git with its files, and made again in a fresh codebase", () => {
+  const repo = path.join(root, "repo");
+  const lib = path.join(repo, "lib");
+  const first = path.join(root, "first");
+  const second = path.join(root, "second");
+  const run = (cwd: string, ...args: string[]) => {
+    const r = spawnSync(process.execPath, [BIN, ...args], { cwd, encoding: "utf8", env: { ...env, TCM_AUTHOR: "ada" } });
+    const out = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "");
+    if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} exited ${r.status}:\n${out}`);
+    return out;
+  };
+  const sh = (...args: string[]) => {
+    const r = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  fs.mkdirSync(lib, { recursive: true });
+  fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ type: "module" }));
+  fs.writeFileSync(path.join(lib, "index.ts"), `/** Shapes. */\nexport const manifest = { name: "shapes" };\n`);
+  fs.writeFileSync(path.join(lib, "area.ts"), `export const square = (s: number): number => s * s;\n`);
+  sh("init", "-q");
+  sh("add", ".");
+  sh("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "shapes");
+  for (const d of [first, second]) {
+    fs.mkdirSync(d);
+    run(d, "init");
+    fs.rmSync(path.join(d, "scratch.ts"));
+  }
+  run(first, "import", lib, "--into", "geo", "--mirror");
+
+  // a release is made from a commit, and recorded with the files
+  const commit = sh("rev-parse", "HEAD");
+  assert.match(run(first, "release", "shapes"), /recorded in .*tcm-releases\.json, from commit/);
+  const records = JSON.parse(fs.readFileSync(path.join(lib, "tcm-releases.json"), "utf8")) as { version: string; commit: string }[];
+  assert.deepEqual(records.map((r) => [r.version, r.commit]), [["0.1.0", commit]]);
+  sh("add", ".");
+  sh("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "shapes 0.1.0");
+
+  // the next one, after a change made through tcm; a change git doesn't have yet stops it
+  fs.writeFileSync(path.join(first, "scratch.ts"), `// tcm: namespace geo.area\nexport const cube = (s: number): number => s * s * s;\n`);
+  run(first, "add");
+  assert.throws(() => run(first, "release", "shapes"), /has changes git doesn't have yet; commit them first/);
+  sh("add", ".");
+  sh("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "cube");
+  assert.match(run(first, "release", "shapes"), /released shapes@0\.1\.1/);
+  sh("add", ".");
+  sh("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "shapes 0.1.1");
+
+  // a codebase linked to the mirror afresh has both releases, with their notes, at the same code
+  assert.match(run(second, "import", lib, "--into", "geo", "--mirror"), /made 2 releases again from git/);
+  const releases = (d: string) => run(d, "releases").replace(/#\w+/g, "");
+  assert.equal(releases(second), releases(first));
+  assert.equal(run(second, "changelog", "shapes"), run(first, "changelog", "shapes"));
+  assert.equal(run(second, "release", "check", "shapes"), run(first, "release", "check", "shapes"));
+  assert.match(run(second, "release", "check", "shapes"), /after 0\.1\.1\): no API changes/);
+  // and packs as the release it's at
+  assert.match(run(second, "pack", "shapes", "--out", path.join(root, "packed")), /packed shapes@0\.1\.1/);
+});

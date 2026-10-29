@@ -25,7 +25,7 @@ or option a command doesn't take is an error naming it.
 | `tcm check [file] [--fresh]` | one-shot version of watch. Reports each definition as `new` / `identical` / `update` / `alias` / `conflict` |
 | `tcm add [file] [--into ns]` | save new definitions from a scratch file (default `scratch.ts`) |
 | `tcm update [file] [--into ns]` | save, re-point changed names, and re-hash every dependent. Dependents that stop typechecking keep their old hash and go to `todo`. Also checks stored table rows against changed row types ([data](data.md)) |
-| `tcm import <dir> [--into ns] [--update] [--exclude a,b] [--tests] [--mirror] [--verbose]` | add an existing project, one namespace per file; `--mirror` keeps its files in step with the codebase ([importing](importing.md#mirrors)) |
+| `tcm import <dir> [--into ns] [--update] [--exclude a,b] [--tests] [--mirror] [--verbose]` | add an existing project, one namespace per file; `--mirror` keeps its files in step with the codebase, and makes the releases recorded with them again ([importing](importing.md#mirrors)) |
 | `tcm mirror [--check] [--unlink]` | the directory changes are written back to; `--check` re-analyzes its files, which must hash to what the codebase holds ([mirrors](importing.md#mirrors)) |
 | `tcm edit <name>... [--file f] [--force]` | write definitions to a scratch file for editing (`scratch.ts`, or `scratch.tsx` for JSX), with references following any updates |
 | `tcm view <name\|#hash>...` | show definitions, rendered with current names, with their placement for app code |
@@ -46,7 +46,7 @@ or option a command doesn't take is an error naming it.
 | `tcm upgrade <pkg>@<range\|latest> [namespace]` | re-pin code to another range: re-hashed, dependents follow |
 | `tcm pack <package>[@version] [--out dir]` | an npm package of a package (a `manifest` definition's namespace): a release of it, or the branch as it is ([publishing](publishing.md)) |
 | `tcm pack [[subpath=]<namespace\|name>...] --name <pkg>[@version] [--bin cmd=<name>,...] [--with pkg,...] [--files a,b] [--out dir]` | an npm package of the definitions given ([publishing](publishing.md#packing-definitions-directly)) |
-| `tcm release [<package>][@version] [--draft] [--notes file] [--remote r] [--force]` | release a package at the version its API's changes call for (or a further one), with notes whose list of changes tcm writes ([releases](releases.md)) |
+| `tcm release [<package>][@version] [--draft] [--notes file] [--remote r] [--force]` | release a package at the version its API's changes call for (or a further one), with notes whose list of changes tcm writes; a mirrored codebase's are recorded with its files, for git ([releases](releases.md#releases-kept-in-git)) |
 | `tcm release check [package]` | what the next release would be, and each semver finding behind it |
 | `tcm release view <package>@<version>` | a release's notes |
 | `tcm releases [package]` | the packages and their releases |

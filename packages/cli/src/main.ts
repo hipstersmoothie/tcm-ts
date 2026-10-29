@@ -14,7 +14,7 @@ import { checkDocExamples, renderDoc } from "./docs.ts";
 import { build, dev, listBuilds, migrateTable, parseHttpFlag, pruneBuilds, start } from "./web.ts";
 import { Placement } from "./placement.ts";
 import { mergeBranch } from "./merge.ts";
-import { checkMirror, joinName, linkMirror, loadMirror, namespaceForFile, sourceFiles, unlinkMirror } from "./mirror.ts";
+import { checkMirror, joinName, linkMirror, loadMirror, namespaceForFile, recordRelease, releaseCommit, replayReleases, sourceFiles, unlinkMirror } from "./mirror.ts";
 import { evaluateCached, isTestPath, printOutcomes, runCached, summary } from "./testing.ts";
 import { listPackages, upgradeTo, upgradeWithin } from "./upgrade.ts";
 import { pack } from "./pack.ts";
@@ -309,6 +309,16 @@ function importProject(cb: Codebase, dir: string, mode: "add" | "update", into: 
   const relink = mirror || linked?.dir === root;
   if (relink) cb.syncsMirror = false;
   try {
+    // linking a mirror into a codebase: its releases, kept with its files in git, are made again first
+    if (mirror) {
+      const made = replayReleases(
+        cb,
+        root,
+        (at) => importFiles(cb, at, path.relative(process.cwd(), at), "update", into, false, exclude, tests),
+        (pkg) => packagesIn(cb, cb.store.names()).find((p) => p.name === pkg)?.namespace,
+      );
+      if (made) console.log(dim(`made ${made} release${made > 1 ? "s" : ""} again from git`));
+    }
     const ok = importFiles(cb, root, dir, mode, into, verbose, exclude, tests);
     if (ok && relink) {
       linkMirror(cb, root, into, tests, exclude);
@@ -1057,9 +1067,21 @@ square(12);
         console.log(`wrote ${path.relative(cwd, file)} (${plan.pkg.name}'s next release, ${plan.version} as things stand): write what it's about above the marker, then \`tcm release ${plan.pkg.name}\`; the changes below the marker are regenerated`);
         return 0;
       }
+      // a mirrored codebase's releases are kept with its files, in git: made from a commit, so they can be made again
+      const mirror = loadMirror(cb);
+      let commit: string | undefined;
+      try {
+        commit = mirror && releaseCommit(mirror);
+      } catch (e) {
+        throw new UsageError((e as Error).message);
+      }
       const { release: rel, plan } = await releasePackage(cb, { name, version, notesFile: m.notes === undefined ? undefined : path.resolve(cwd, m.notes), remote: m.remote, force: m.force, author: author() });
       console.log(`${green("released")} ${bold(`${rel.package}@${rel.version}`)} ${dim(`as ${shortHash(rel.causal)}${plan.prev ? `, after ${plan.prev.version}` : ""}: ${reasonFor(plan)}`)}\n`);
       console.log(rel.notes.replace(`${MARKER}\n\n`, "").trimEnd());
+      if (mirror && commit) {
+        recordRelease(mirror, { package: rel.package, version: rel.version, commit, notes: rel.notes, author: rel.author, ts: rel.ts });
+        console.log(dim(`\n  recorded in ${path.relative(cwd, path.join(mirror.dir, "tcm-releases.json"))}, from commit ${commit.slice(0, 8)}: commit it, and the release can be made again from git`));
+      }
       if (listRemotes(cb).length) console.log(dim(`\n  \`tcm push\` publishes it`));
       return 0;
     }

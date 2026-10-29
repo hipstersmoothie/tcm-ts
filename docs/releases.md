@@ -45,7 +45,21 @@ released geo@0.2.0 as #nbbd6qqu, after 0.1.0: breaking changes
   codebase that has a different one under the same version.
 - **Releases sync** with [`tcm push` and `tcm pull`](sync.md), with the history they name.
 - `tcm diff` and `tcm reset` take a release (`tcm diff geo@0.1.0`) wherever they take a history entry, and
-  `tcm pack geo@0.2.0` packs one ([publishing](publishing.md)).
+  `tcm pack geo@0.2.0` packs one ([publishing](publishing.md)); `tcm pack geo` on a branch exactly at a release
+  packs it as that release.
+
+## Releases kept in git
+
+A codebase that [mirrors](importing.md#mirrors) a directory in a git repository can be made again from its
+files, so its releases are kept with them. Releasing records the release in `tcm-releases.json` in the mirrored
+directory (its version, notes, author and date, and the commit holding the files as released), and is refused
+while the mirror has changes git doesn't have yet. Commit the record with the files.
+
+A codebase linked to the mirror afresh (`tcm import <dir> --into ns --mirror`) makes the recorded releases again
+before importing the files as they are: each one's commit is taken from git and imported, in order, and the
+release is put at the history entry that makes, with its notes as they were. Hashes don't depend on where or when
+code is imported, so the releases name the same definitions they did, and the next release's semver checks
+compare against them.
 
 ## Release notes
 
