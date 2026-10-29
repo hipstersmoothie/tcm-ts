@@ -54,6 +54,9 @@ const tls = [
 ] as const;
 
 /** `tcm` alone: watch. */
+const remote = option(name("remote"), description("the remote it's on"), schema(text("origin")));
+const contributionId = argument(name("id"), description("its number (see tcm contribution)"), schema(count(null)));
+
 export const root = command(name("tcm"), description("a content-addressed codebase manager for TypeScript"), version(`hash format v${IR_VERSION}, TypeScript ${TS_VERSION}`), fresh, into);
 
 /**
@@ -172,6 +175,33 @@ export const commands = {
     force("push even if the remote moved"),
   ),
   pull: command(name("pull"), description("fetch the remote branch's history into <remote>/<branch>; fast-forward this branch, or merge"), argument(name("remote"), description("a remote"), schema(text("origin"))), argument(name("branch"), description("the remote's branch"), schema(text(null)))),
+  contribute: command(
+    name("contribute"),
+    description("propose this branch for merging: push it, and open a contribution on the remote (pushing again updates it)"),
+    argument(name("remote"), description("a remote"), schema(text("origin"))),
+    option(name("to"), description("the branch to merge into"), schema(text("main"))),
+    option(name("as"), description("the name to push this branch as (default: its own)"), schema(text(null))),
+    option(name("title"), description("what it's about (default: the branch's name)"), schema(text(null))),
+    option(name("description"), description("more about it"), schema(text(null))),
+  ),
+  contribution: command(
+    name("contribution"),
+    description("contributions on a remote: list them (view, comment, merge or close one)"),
+    remote,
+    toggle(name("all"), description("merged and closed ones too")),
+    command(name("view"), description("a contribution's changes (as definitions), whether it merges, and its comments"), contributionId, remote),
+    command(
+      name("comment"),
+      description("comment on a contribution"),
+      contributionId,
+      argument(name("text"), description("the comment"), multiple(), schema(words)),
+      option(name("about"), description("the definition it's about"), schema(text(null))),
+      remote,
+    ),
+    command(name("merge"), description("merge it into its target, on the remote: a fast-forward or a clean merge (refused on conflicts)"), contributionId, remote),
+    command(name("close"), description("close it without merging"), contributionId, remote),
+    command(name("reopen"), description("reopen a closed one"), contributionId, remote),
+  ),
   serve: command(
     name("serve"),
     description("serve this codebase: clients with the token can push, pull and run code"),
@@ -193,5 +223,5 @@ export const SECTIONS: [string, string[]][] = [
   ["Packages", ["packages", "upgrade", "pack"]],
   ["History and branches", ["diff", "history", "reset", "branch", "switch", "merge"]],
   ["Apps, data and jobs", ["dev", "build", "start", "apps", "data", "jobs"]],
-  ["Sync and remote execution", ["remote", "push", "pull", "serve"]],
+  ["Sync, review and remote execution", ["remote", "push", "pull", "contribute", "contribution", "serve"]],
 ];

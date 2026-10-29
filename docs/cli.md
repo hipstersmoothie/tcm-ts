@@ -72,6 +72,9 @@ See [sync](sync.md).
 | `tcm push [remote] [--as branch] [--force]` | send this branch's history (what the remote lacks) and move the remote branch to it. Refuses if the remote has history you don't, unless `--force` |
 | `tcm pull [remote] [branch]` | fetch the remote branch's history into `<remote>/<branch>`; fast-forward this branch if it can, merge from the common ancestor otherwise |
 | `tcm run <name> [args] --on <remote\|url\|dir>` | send what the remote lacks, run there, stream stdout/stderr back |
+| `tcm contribute [remote] [--to main] [--as name] [--title t] [--description d]` | push this branch and open a contribution of it on the remote (pushing again updates it) ([contributions](contributions.md)) |
+| `tcm contribution [--remote origin] [--all]` | the remote's contributions |
+| `tcm contribution view\|comment\|merge\|close\|reopen <id>` | a contribution's changes, whether it merges, and comments; comment (`--about <name>`); merge it on the remote by history (refused on conflicts); close or reopen it |
 | `tcm serve [--port 7737] [--host 127.0.0.1] [--token t] [--no-run] [--tls [--tls-cert f --tls-key f]] [--insecure]` | serve this codebase over HTTP(S) |
 
 ## Apps, data and jobs

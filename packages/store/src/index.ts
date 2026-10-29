@@ -35,6 +35,15 @@ CREATE TABLE IF NOT EXISTS namespaces (hash TEXT PRIMARY KEY, body TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS causals (hash TEXT PRIMARY KEY, namespace TEXT NOT NULL, ts INTEGER NOT NULL, command TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS causal_parents (child TEXT NOT NULL, parent TEXT NOT NULL, PRIMARY KEY (child, parent));
 CREATE INDEX IF NOT EXISTS causal_children ON causal_parents(parent);
+-- contributions: a branch proposed for merging into another, with its review (Unison Share's, on tcm serve)
+CREATE TABLE IF NOT EXISTS contributions (
+  id INTEGER PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL,
+  author TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('open','merged','closed')), created INTEGER NOT NULL,
+  updated INTEGER NOT NULL, merged_from TEXT, merged_as TEXT
+);
+CREATE TABLE IF NOT EXISTS contribution_comments (
+  id INTEGER PRIMARY KEY, contribution INTEGER NOT NULL, author TEXT NOT NULL, body TEXT NOT NULL, about TEXT, ts INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS names (branch_id INTEGER NOT NULL, path TEXT NOT NULL, hash TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (branch_id, path, hash));
 CREATE INDEX IF NOT EXISTS names_by_hash ON names(branch_id, hash);
 CREATE TABLE IF NOT EXISTS name_log (
@@ -99,6 +108,32 @@ export interface Causal {
   parents: string[];
   ts: number;
   command: string;
+}
+
+/** A branch proposed for merging into another. */
+export interface Contribution {
+  id: number;
+  title: string;
+  description: string;
+  /** the branch with the changes, and the one they're proposed for */
+  source: string;
+  target: string;
+  author: string;
+  status: "open" | "merged" | "closed";
+  created: number;
+  updated: number;
+  /** once merged: the target's head before, and the history entry the merge made it */
+  mergedFrom: string | null;
+  mergedAs: string | null;
+}
+
+export interface Comment {
+  id: number;
+  author: string;
+  body: string;
+  /** the definition (name) it's about, if any */
+  about: string | null;
+  ts: number;
 }
 
 /** A namespace node: `["ns", [[name, [hashes]]...], [[child, nodeHash]...]]`, both lists sorted by name. */
@@ -805,6 +840,51 @@ export class Store {
     }
   }
 
+  // ---- contributions -------------------------------------------------------
+
+  createContribution(c: { title: string; description: string; source: string; target: string; author: string }): number {
+    const now = Date.now();
+    return Number(
+      this.db
+        .prepare("INSERT INTO contributions (title, description, source, target, author, status, created, updated) VALUES (?, ?, ?, ?, ?, 'open', ?, ?)")
+        .run(c.title, c.description, c.source, c.target, c.author, now, now).lastInsertRowid,
+    );
+  }
+
+  contribution(id: number): Contribution | undefined {
+    const r = this.db.prepare("SELECT * FROM contributions WHERE id = ?").get(id) as Row | undefined;
+    return r && contributionOf(r);
+  }
+
+  /** Contributions, newest first; by status if given. */
+  contributions(status?: Contribution["status"]): Contribution[] {
+    const rows = (status ? this.db.prepare("SELECT * FROM contributions WHERE status = ? ORDER BY id DESC").all(status) : this.db.prepare("SELECT * FROM contributions ORDER BY id DESC").all()) as Row[];
+    return rows.map(contributionOf);
+  }
+
+  /** The open contribution of `source` into `target`, if there is one. */
+  openContribution(source: string, target: string): Contribution | undefined {
+    const r = this.db.prepare("SELECT * FROM contributions WHERE source = ? AND target = ? AND status = 'open'").get(source, target) as Row | undefined;
+    return r && contributionOf(r);
+  }
+
+  setContributionStatus(id: number, status: Contribution["status"], merged?: { from: string; as: string }) {
+    this.db.prepare("UPDATE contributions SET status = ?, merged_from = ?, merged_as = ?, updated = ? WHERE id = ?").run(status, merged?.from ?? null, merged?.as ?? null, Date.now(), id);
+  }
+
+  touchContribution(id: number) {
+    this.db.prepare("UPDATE contributions SET updated = ? WHERE id = ?").run(Date.now(), id);
+  }
+
+  addComment(contribution: number, c: { author: string; body: string; about?: string | null }): number {
+    this.touchContribution(contribution);
+    return Number(this.db.prepare("INSERT INTO contribution_comments (contribution, author, body, about, ts) VALUES (?, ?, ?, ?, ?)").run(contribution, c.author, c.body, c.about ?? null, Date.now()).lastInsertRowid);
+  }
+
+  comments(contribution: number): Comment[] {
+    return this.db.prepare("SELECT id, author, body, about, ts FROM contribution_comments WHERE contribution = ? ORDER BY id").all(contribution) as unknown as Comment[];
+  }
+
   /** The most recent batch of changes on this branch: its first entry and the command that made it. */
   lastBatch(): { firstId: number; command: string } | undefined {
     const b = this.branch().id;
@@ -976,6 +1056,22 @@ export class Store {
   todos(): { hash: string; message: string }[] {
     return this.db.prepare("SELECT hash, message FROM todo WHERE branch_id = ?").all(this.branch().id) as { hash: string; message: string }[];
   }
+}
+
+function contributionOf(r: Row): Contribution {
+  return {
+    id: r.id as number,
+    title: r.title as string,
+    description: r.description as string,
+    source: r.source as string,
+    target: r.target as string,
+    author: r.author as string,
+    status: r.status as Contribution["status"],
+    created: r.created as number,
+    updated: r.updated as number,
+    mergedFrom: r.merged_from as string | null,
+    mergedAs: r.merged_as as string | null,
+  };
 }
 
 export function stateHashOf(rows: { path: string; hash: string }[]): string {

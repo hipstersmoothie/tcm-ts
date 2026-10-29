@@ -6,8 +6,8 @@ hashes. So renames are free, nothing gets rebuilt,
 and two versions of a dependency can live side by side. You don't need new syntax: any erasable TypeScript
 file works as input, and Node runs the result directly through its built-in type stripping.
 
-Requires Node ≥ 22.18 (tested on 24.15). The only dependency is `typescript@6`, which is used for parsing
-and typechecking.
+Requires Node ≥ 22.18 (tested on 24.15). Everything else comes with it, or is installed when your code first
+needs it.
 
 ```sh
 # from a checkout: build the npm package and install it globally
@@ -41,8 +41,11 @@ tcm add           # save new definitions from scratch.ts
   arguments, `async` results, and more general or specific types. [Search](docs/search.md)
 - **Real projects import as they are.** neverthrow, ts-pattern and valibot import, verify and run.
   [Importing](docs/importing.md)
-- **History by meaning.** Diffs ignore renames and reformatting; three-way merge of names; undo anything.
+- **History by meaning, as Unison keeps it.** History entries are hashed namespaces with parents, the same in
+  every codebase; diffs ignore renames and reformatting; merges go by history; undo anything.
   [History and merging](docs/history.md)
+- **Contributions.** Propose a branch with `tcm contribute`, review it as a diff of definitions (in the terminal
+  or on `tcm serve`'s review page), comment, and merge it on the server. [Contributions](docs/contributions.md)
 - **Sync and remote execution by hash.** Push, pull and `run --on` send only missing hashes, and received
   code is re-verified, never trusted. [Sync](docs/sync.md)
 - **Browser apps with no network boundary to write.** Placement is inferred from what code uses; server

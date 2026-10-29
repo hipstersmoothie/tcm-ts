@@ -27,4 +27,7 @@ What isn't done yet, or is deliberately out of scope:
   current ones, and each is re-verified on arrival, so a first sync of a long history takes a while.
 - **Criss-cross merges** (two branches that merged each other) have several best common ancestors; tcm merges
   from the newest one, where git would merge the candidates first.
+- **Contributions trust names.** A `tcm serve` server has one token, so who commented or merged is what the
+  client says (`$TCM_AUTHOR` or the OS user), not checked; there are no per-person permissions. Merging one on
+  the server briefly makes its target the server's current branch.
 - **Transactions lock per process** ([data](data.md#transactions)).

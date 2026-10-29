@@ -21,6 +21,8 @@ directory. `tcm remote` lists them; `tcm remote rm <name>` removes one.
   It only moves a remote forward: if the remote has history you don't, it refuses (pull first) unless `--force`,
   which replaces the remote branch's head.
 - **Pushing to a server running `tcm start` deploys** ([production](production.md)).
+- **Proposing changes for review** is a contribution: `tcm contribute` pushes a branch and opens one on the
+  remote ([contributions](contributions.md)).
 
 ## Serving a codebase
 
@@ -32,6 +34,7 @@ directory. `tcm remote` lists them; `tcm remote rm <name>` removes one.
   fingerprint. Clients pin it with `tcm remote add … --fingerprint`, and the token is only written after the pin
   checks out.
 - Serving beyond localhost without TLS is refused unless `--insecure`.
+- `/contributions` is the [review page](contributions.md#the-review-page) for contributions pushed to it.
 
 ## Running remotely
 

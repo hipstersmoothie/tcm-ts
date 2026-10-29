@@ -23,7 +23,8 @@ import { formatStored, formatText } from "./fmt.ts";
 import { LINT_CONFIG, lintDefinitions, lintScratch, locate, type LintIssue } from "./lint.ts";
 import { diffNamespaces, keyPath, printDiff, stateOf, type NameState } from "./diff.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
-import { addRemote, listRemotes, newToken, pull, push, runOn, serve, tlsMaterial } from "./sync.ts";
+import { addRemote, contribute, listRemotes, newToken, openRemote, pull, push, reviewUrl, runOn, serve, tlsMaterial } from "./sync.ts";
+import { author, printContribution, printContributions } from "./contributions.ts";
 import { commands, root } from "./commands.ts";
 import { helpText, suggest, usageError } from "./help.ts";
 import { complete } from "./complete.ts";
@@ -920,6 +921,47 @@ square(12);
     case "pull": {
       const { model } = execute(cmd, parse(commands.pull, { argv: rest }));
       await pull(cb, model.remote, model.branch);
+      return 0;
+    }
+    case "contribute": {
+      const { model } = execute(cmd, parse(commands.contribute, { argv: rest }));
+      const title = model.title ?? (interactive() ? await ask("contribute [remote] --title <title>", "What's the change?", cb.store.branch().name) : undefined);
+      const r = await contribute(cb, model.remote, { to: model.to, as: model.as, title, description: model.description, author: author() });
+      console.log(`${green(r.created ? "opened" : "updated")} contribution ${bold(`#${r.id}`)} on ${model.remote}`);
+      const url = reviewUrl(cb, model.remote, r.id);
+      console.log(dim(`  review: tcm contribution view ${r.id}${url ? ` · ${url}` : ""}`));
+      return 0;
+    }
+    case "contribution": {
+      const r = execute(cmd, parse(commands.contribution, { argv: rest }));
+      const { remote } = openRemote(cb, r.model.remote);
+      if (r.route === "/") {
+        printContributions(await remote.contributions(r.model.all), r.model.remote);
+        const url = reviewUrl(cb, r.model.remote);
+        if (url) console.log(dim(`\n  ${url}`));
+        return 0;
+      }
+      const id =
+        r.model.id ??
+        (await choose(
+          `contribution ${r.route.slice(1)} <id>`,
+          "Which contribution?",
+          (await remote.contributions(false)).map((c) => ({ value: c.id, label: `#${c.id} ${c.title}`, hint: `${c.source} → ${c.target}, ${c.author}` })),
+          false,
+        ));
+      if (r.route === "/view") printContribution(await remote.contribution(id));
+      else if (r.route === "/comment") {
+        const body = r.model.text.length ? r.model.text.join(" ") : await ask(`contribution comment ${id} <text>`, "Comment");
+        await remote.comment(id, { author: author(), body, about: r.model.about ?? null });
+        console.log(`commented on #${id}`);
+      } else if (r.route === "/merge") {
+        const m = await remote.mergeContribution(id, author());
+        console.log(`${green("merged")} #${id} on ${r.model.remote} as ${shortHash(m.mergedAs)}${m.todo ? yellow(` (${m.todo} definition(s) to fix there: tcm todo)`) : ""}`);
+        console.log(dim(`  \`tcm pull ${r.model.remote}\` brings it here`));
+      } else {
+        await remote.closeContribution(id, author(), r.route === "/reopen");
+        console.log(`${r.route === "/reopen" ? "reopened" : "closed"} #${id}`);
+      }
       return 0;
     }
     case "serve": {

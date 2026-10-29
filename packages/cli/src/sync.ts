@@ -7,11 +7,12 @@ import os from "node:os";
 import path from "node:path";
 import { randomBytes, timingSafeEqual, X509Certificate } from "node:crypto";
 import { shortHash, type DefRecord } from "@tcm/core";
-import type { Causal, NameRow } from "@tcm/store";
+import type { Causal, Contribution, NameRow } from "@tcm/store";
 import { runStreaming } from "@tcm/loader";
 import { Codebase, IDENT_PATH, type LockEntry } from "./codebase.ts";
 import { diffNamespaces, printDiff, stateOf } from "./diff.ts";
 import { mergeBranch } from "./merge.ts";
+import { closeContribution, commentOn, mergeContribution, openContribution, reviewPage, viewContribution, type ContributionView } from "./contributions.ts";
 import { bold, dim, green, red, yellow } from "./style.ts";
 
 
@@ -24,6 +25,7 @@ export interface BranchState {
 }
 
 export type NamespaceNode = { hash: string; body: string };
+export type NewContribution = { title: string; description: string; source: string; target: string; author: string };
 
 /** What one codebase can ask of another. */
 export interface Remote {
@@ -49,6 +51,13 @@ export interface Remote {
   missingNamespaces(hashes: string[]): Promise<string[]>;
   getNamespaces(hashes: string[]): Promise<NamespaceNode[]>;
   putNamespaces(nodes: NamespaceNode[]): Promise<void>;
+  /** contributions: branches proposed for merging, reviewed and merged there */
+  contributions(all: boolean): Promise<Contribution[]>;
+  contribution(id: number): Promise<ContributionView>;
+  openContribution(c: NewContribution): Promise<{ id: number; created: boolean }>;
+  comment(id: number, c: { author: string; body: string; about?: string | null }): Promise<void>;
+  mergeContribution(id: number, author: string): Promise<{ mergedAs: string; todo: number }>;
+  closeContribution(id: number, author: string, reopen?: boolean): Promise<void>;
   run(hash: string, args: string[], out: Output): Promise<number>;
 }
 
@@ -125,6 +134,24 @@ export class Peer {
   putNamespaces(nodes: NamespaceNode[]) {
     this.cb.store.putNamespaces(nodes);
   }
+  contributions(all: boolean): Contribution[] {
+    return this.cb.store.contributions(all ? undefined : "open");
+  }
+  contribution(id: number): ContributionView {
+    return viewContribution(this.cb, id);
+  }
+  openContribution(c: NewContribution) {
+    return openContribution(this.cb, c);
+  }
+  comment(id: number, c: { author: string; body: string; about?: string | null }) {
+    commentOn(this.cb, id, c);
+  }
+  mergeContribution(id: number, author: string) {
+    return mergeContribution(this.cb, id, author);
+  }
+  closeContribution(id: number, author: string, reopen = false) {
+    closeContribution(this.cb, id, author, reopen);
+  }
 
   run(hash: string, args: string[], out: Output): Promise<number> {
     if (!this.allowRun) throw new Error("this server does not run code (started with --no-run)");
@@ -196,6 +223,24 @@ class DirectoryRemote implements Remote {
   }
   async putNamespaces(n: NamespaceNode[]) {
     this.peer.putNamespaces(n);
+  }
+  async contributions(all: boolean) {
+    return this.peer.contributions(all);
+  }
+  async contribution(id: number) {
+    return this.peer.contribution(id);
+  }
+  async openContribution(c: NewContribution) {
+    return this.peer.openContribution(c);
+  }
+  async comment(id: number, c: { author: string; body: string; about?: string | null }) {
+    this.peer.comment(id, c);
+  }
+  async mergeContribution(id: number, author: string) {
+    return this.peer.mergeContribution(id, author);
+  }
+  async closeContribution(id: number, author: string, reopen = false) {
+    this.peer.closeContribution(id, author, reopen);
   }
   run(h: string, args: string[], out: Output) {
     return this.peer.run(h, args, out);
@@ -310,6 +355,24 @@ class HttpRemote implements Remote {
   async putNamespaces(nodes: NamespaceNode[]) {
     await this.call("put-namespaces", { nodes });
   }
+  async contributions(all: boolean) {
+    return (await this.call<{ contributions: Contribution[] }>("contributions", { all })).contributions;
+  }
+  contribution(id: number) {
+    return this.call<ContributionView>("contribution", { id });
+  }
+  openContribution(c: NewContribution) {
+    return this.call<{ id: number; created: boolean }>("open-contribution", c);
+  }
+  async comment(id: number, c: { author: string; body: string; about?: string | null }) {
+    await this.call("comment", { id, ...c });
+  }
+  mergeContribution(id: number, author: string) {
+    return this.call<{ mergedAs: string; todo: number }>("merge-contribution", { id, author });
+  }
+  async closeContribution(id: number, author: string, reopen = false) {
+    await this.call(reopen ? "reopen-contribution" : "close-contribution", { id, author });
+  }
 
   /** Output streams back as NDJSON: `{"o":"stdout","d":"..."}` lines, then `{"exit":0}`. */
   async run(hash: string, args: string[], out: Output) {
@@ -349,6 +412,15 @@ export function addRemote(cb: Codebase, name: string, url: string, token?: strin
   const resolved = /^https?:\/\//.test(url) ? url : path.resolve(url);
   if (fingerprint && !resolved.startsWith("https://")) throw new Error("--fingerprint needs an https:// URL");
   cb.store.setSetting(`remote.${name}`, JSON.stringify({ url: resolved, token, fingerprint } satisfies RemoteConfig));
+}
+
+/** The review page for a contribution on an HTTP remote (with the token in its fragment), if it is one. */
+export function reviewUrl(cb: Codebase, remote: string, id?: number): string | undefined {
+  const configured = cb.store.getSetting(`remote.${remote}`);
+  if (!configured) return undefined;
+  const c = JSON.parse(configured) as RemoteConfig;
+  if (!c.url.startsWith("http")) return undefined;
+  return `${c.url.replace(/\/$/, "")}/contributions${id === undefined ? "" : `/${id}`}${c.token ? `#token=${encodeURIComponent(c.token)}` : ""}`;
 }
 
 export function listRemotes(cb: Codebase): [string, RemoteConfig][] {
@@ -518,6 +590,15 @@ export async function pull(cb: Codebase, spec: string, remoteBranch: string | un
   printDiff(cb, diffNamespaces(before, after, (h) => cb.store.getDef(h)!.ir), before, after, `fast-forwarded ${local} to ${tracking}`);
 }
 
+/** Push this branch to a remote and open (or update) a contribution of it into `to` there. */
+export async function contribute(cb: Codebase, spec: string, o: { to: string; as?: string; title?: string; description?: string; author: string }): Promise<{ id: number; created: boolean }> {
+  const source = o.as ?? cb.store.branch().name;
+  if (source === o.to) throw new Error(`this is ${o.to}: make a branch for the change (\`tcm branch <name>\`, \`tcm switch <name>\`), or push it under another name with --as <name>`);
+  await push(cb, spec, source, false);
+  const { remote } = openRemote(cb, spec);
+  return remote.openContribution({ title: o.title ?? source, description: o.description ?? "", source, target: o.to, author: o.author });
+}
+
 export async function runOn(cb: Codebase, spec: string, hash: string, args: string[]): Promise<number> {
   const { remote } = openRemote(cb, spec);
   const sent = await sendClosure(cb, remote, [hash]);
@@ -578,6 +659,11 @@ export function serve(cb: Codebase, opts: ServeOptions, insecure = false): http.
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(body));
     };
+    // the review page holds no data (it calls the routes below with the token from its URL's fragment)
+    if (req.method === "GET" && /^\/contributions(\/\d+)?\/?$/.test(req.url?.split("?")[0] ?? "")) {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'" });
+      return res.end(reviewPage());
+    }
     if (!authorized(req)) return reply(401, { error: "missing or wrong token" });
     if (req.method !== "POST") return reply(405, { error: "use POST" });
     let size = 0;
@@ -631,6 +717,27 @@ export function serve(cb: Codebase, opts: ServeOptions, insecure = false): http.
           return reply(200, { nodes: peer.getNamespaces(body.hashes ?? []) });
         case "put-namespaces":
           peer.putNamespaces(body.nodes ?? []);
+          return reply(200, {});
+        case "contributions":
+          return reply(200, { contributions: peer.contributions(!!body.all) });
+        case "contribution":
+          return reply(200, peer.contribution(Number(body.id)));
+        case "open-contribution": {
+          const r = peer.openContribution({ title: String(body.title ?? ""), description: String(body.description ?? ""), source: String(body.source), target: String(body.target), author: String(body.author ?? "") });
+          console.log(`${green(r.created ? "opened" : "updated")} contribution #${r.id} ${dim(`(${body.source} → ${body.target})`)}`);
+          return reply(200, r);
+        }
+        case "comment":
+          peer.comment(Number(body.id), { author: String(body.author ?? ""), body: String(body.body ?? ""), about: body.about ? String(body.about) : null });
+          return reply(200, {});
+        case "merge-contribution": {
+          const r = peer.mergeContribution(Number(body.id), String(body.author ?? ""));
+          console.log(`${green("merged")} contribution #${body.id} ${dim(`as ${shortHash(r.mergedAs)}`)}`);
+          return reply(200, r);
+        }
+        case "close-contribution":
+        case "reopen-contribution":
+          peer.closeContribution(Number(body.id), String(body.author ?? ""), route === "reopen-contribution");
           return reply(200, {});
         case "run": {
           const hash = String(body.hash);

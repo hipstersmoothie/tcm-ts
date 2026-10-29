@@ -67,6 +67,29 @@ export function mergeStates(
   return { merged, conflicts, keptOverDelete, patches };
 }
 
+/** What merging `theirs` into `ours` would do, without doing it. */
+export type MergePlan =
+  | { kind: "up-to-date" }
+  | { kind: "fast-forward"; to: string }
+  | { kind: "merge"; theirsHead: string; before: NameState; result: MergeResult };
+
+export function planMerge(cb: Codebase, ours: string, theirs: string): MergePlan {
+  if (theirs === ours) throw new Error("can't merge a branch into itself");
+  for (const b of [ours, theirs]) if (!cb.store.hasBranch(b)) throw new Error(`no branch named '${b}'`);
+  const [oursHead, theirsHead] = [cb.store.head(ours), cb.store.head(theirs)];
+  if (cb.store.isAncestor(theirsHead, oursHead)) return { kind: "up-to-date" };
+  if (cb.store.isAncestor(oursHead, theirsHead)) return { kind: "fast-forward", to: theirsHead };
+  const irOf = (h: string) => cb.store.getDef(h)!.ir;
+  const base = stateOf(cb.store.namespaceRows(cb.store.causal(cb.store.mergeBase(oursHead, theirsHead))!.namespace));
+  const before = stateOf(cb.store.names(ours));
+  const theirsNow = stateOf(cb.store.names(theirs));
+  const propagated = {
+    ours: new Set(diffNamespaces(base, before, irOf).propagated.map((c) => c.path)),
+    theirs: new Set(diffNamespaces(base, theirsNow, irOf).propagated.map((c) => c.path)),
+  };
+  return { kind: "merge", theirsHead, before, result: mergeStates(base, before, theirsNow, propagated) };
+}
+
 /**
  * Merge another branch into the current one, Unison's way: by history. If this branch already has the other's
  * history there's nothing to do; if the other has this branch's, it fast-forwards; otherwise it's a three-way
@@ -75,30 +98,22 @@ export function mergeStates(
  */
 export function mergeBranch(cb: Codebase, theirs: string, command = `merge ${theirs}`): MergeResult {
   const ours = cb.store.branch().name;
-  if (theirs === ours) throw new Error("can't merge a branch into itself");
-  if (!cb.store.hasBranch(theirs)) throw new Error(`no branch named '${theirs}'`);
-  const [oursHead, theirsHead] = [cb.store.head(), cb.store.head(theirs)];
+  const plan = planMerge(cb, ours, theirs);
   const none: MergeResult = { merged: stateOf(cb.store.names()), conflicts: [], keptOverDelete: [], patches: new Map() };
-  if (cb.store.isAncestor(theirsHead, oursHead)) {
+  if (plan.kind === "up-to-date") {
     console.log(dim(`${ours} already has everything in ${theirs}: no changes`));
     return none;
   }
   const before = stateOf(cb.store.names());
   const irOf = (h: string) => cb.store.getDef(h)!.ir;
-  if (cb.store.isAncestor(oursHead, theirsHead)) {
-    cb.store.setHead(ours, theirsHead, command);
+  if (plan.kind === "fast-forward") {
+    cb.store.setHead(ours, plan.to, command);
     cb.refreshShim();
     const after = stateOf(cb.store.names());
     printDiff(cb, diffNamespaces(before, after, irOf), before, after, `fast-forwarded ${ours} to ${theirs}`);
     return { ...none, merged: after };
   }
-  const base = stateOf(cb.store.namespaceRows(cb.store.causal(cb.store.mergeBase(oursHead, theirsHead))!.namespace));
-  const theirsNow = stateOf(cb.store.names(theirs));
-  const propagated = {
-    ours: new Set(diffNamespaces(base, before, irOf).propagated.map((c) => c.path)),
-    theirs: new Set(diffNamespaces(base, theirsNow, irOf).propagated.map((c) => c.path)),
-  };
-  const result = mergeStates(base, before, theirsNow, propagated);
+  const { result, theirsHead } = plan;
 
   const rows: NameRow[] = [...result.merged].flatMap(([key, hs]) => [...hs].map((hash) => ({ path: keyPath(key), hash, kind: cb.store.getDef(hash)!.kind })));
   cb.store.transaction(() => {

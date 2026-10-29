@@ -98,6 +98,7 @@ function sourceFor(command: string, param: string, s: Sources): ((complete: Comp
     "import dir": dirs,
     "pull branch": () => {},
     "branch branch": () => {},
+    "contribute to": (c) => s.branches(c),
     "complete shell": (c) => ["zsh", "bash", "fish", "powershell"].forEach((sh) => c(sh, "")),
   };
   const byName: Record<string, (c: Complete) => void> = {
@@ -111,6 +112,7 @@ function sourceFor(command: string, param: string, s: Sources): ((complete: Comp
     on: (c) => s.remotes(c),
     table: (c) => s.tables(c),
     file: (c) => s.scratchFiles(c),
+    about: definitions,
   };
   return byCommand[`${command} ${param}`] ?? byName[param];
 }

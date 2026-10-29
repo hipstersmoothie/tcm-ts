@@ -118,42 +118,58 @@ function namesIn(state: NameState): (hash: string) => string | undefined {
   return (h) => byHash.get(h);
 }
 
-export function printDiff(cb: Codebase, d: NamespaceDiff, before: NameState, after: NameState, title: string) {
-  console.log(bold(title));
-  if (isEmpty(d)) return console.log(dim("  no changes"));
+/** How a piece of a diff report looks: the terminal colours it, the review page styles it. */
+export type Tone = "plain" | "bold" | "dim" | "red" | "green" | "yellow" | "cyan";
+/** A line of a diff report: pieces of text, each with its tone. */
+export type ReportLine = [Tone, string][];
+
+/** A diff as lines of text: what `tcm diff` prints and the review page shows. */
+export function diffReport(cb: Codebase, d: NamespaceDiff, before: NameState, after: NameState, title: string): ReportLine[] {
+  const out: ReportLine[] = [[["bold", title]]];
+  if (isEmpty(d)) return [...out, [["dim", "  no changes"]]];
   const src = cb.source();
   const [oldNames, newNames] = [namesIn(before), namesIn(after)];
   const body = (hash: string, nameOf: (h: string) => string | undefined) =>
     render([src.get(hash)!], src, cb.lay, { style: "scratch", omitImports: true, nameOf, exportDeclarations: true }).text.trimEnd().split("\n");
   const name = (hash: string) => newNames(hash) ?? shortHash(hash);
-  const section = (label: string, n: number) => n && console.log(`\n  ${dim(label)}`);
+  const section = (label: string, n: number) => n && out.push([], [["plain", "  "], ["dim", label]]);
 
   section("edited", d.edited.length);
   for (const c of d.edited) {
-    console.log(`    ${yellow("~")} ${bold(c.path)}  ${dim(`${shortHash(c.old)} → ${shortHash(c.new)}`)}`);
+    out.push([["plain", "    "], ["yellow", "~"], ["plain", " "], ["bold", c.path], ["plain", "  "], ["dim", `${shortHash(c.old)} → ${shortHash(c.new)}`]]);
     const lines = lineDiff(body(c.old, oldNames), body(c.new, newNames));
     lines.forEach(([op, line], k) => {
       // keep two lines of context around changes in long definitions
       const near = lines.slice(Math.max(0, k - 2), k + 3).some(([o]) => o !== " ");
       if (op === " " && !near && lines.length > 12) {
-        if (lines[k - 1]?.[0] !== " " || k === 0) console.log(dim("        ⋮"));
+        if (lines[k - 1]?.[0] !== " " || k === 0) out.push([["dim", "        ⋮"]]);
         return;
       }
-      console.log(op === "-" ? red(`      - ${line}`) : op === "+" ? green(`      + ${line}`) : dim(`        ${line}`));
+      out.push([op === "-" ? ["red", `      - ${line}`] : op === "+" ? ["green", `      + ${line}`] : ["dim", `        ${line}`]]);
     });
   }
   section("updated because a dependency changed (code unchanged)", d.propagated.length);
-  for (const c of d.propagated) {
-    console.log(`    ${yellow("~")} ${c.path}  ${dim(`${shortHash(c.old)} → ${shortHash(c.new)}  via ${c.because.map(name).join(", ")}`)}`);
-  }
+  for (const c of d.propagated) out.push([["plain", "    "], ["yellow", "~"], ["plain", ` ${c.path}  `], ["dim", `${shortHash(c.old)} → ${shortHash(c.new)}  via ${c.because.map(name).join(", ")}`]]);
   section("added", d.added.length);
-  for (const a of d.added) console.log(`    ${green("+")} ${bold(a.path)}  ${dim(`${shortHash(a.hash)} : ${src.get(a.hash)!.signature}`)}`);
+  for (const a of d.added) out.push([["plain", "    "], ["green", "+"], ["plain", " "], ["bold", a.path], ["plain", "  "], ["dim", `${shortHash(a.hash)} : ${src.get(a.hash)!.signature}`]]);
   section("removed", d.removed.length);
-  for (const r of d.removed) console.log(`    ${red("-")} ${r.path}  ${dim(shortHash(r.hash))}`);
+  for (const r of d.removed) out.push([["plain", "    "], ["red", "-"], ["plain", ` ${r.path}  `], ["dim", shortHash(r.hash)]]);
   section("renamed", d.renamed.length);
-  for (const r of d.renamed) console.log(`    ${cyan(">")} ${r.from} → ${bold(r.to)}  ${dim(shortHash(r.hash))}`);
+  for (const r of d.renamed) out.push([["plain", "    "], ["cyan", ">"], ["plain", ` ${r.from} → `], ["bold", r.to], ["plain", "  "], ["dim", shortHash(r.hash)]]);
   section("aliased", d.aliased.length);
-  for (const a of d.aliased) console.log(`    ${cyan("&")} ${bold(a.path)}  ${dim(`same as ${a.existing.join(", ")}`)}`);
+  for (const a of d.aliased) out.push([["plain", "    "], ["cyan", "&"], ["plain", " "], ["bold", a.path], ["plain", "  "], ["dim", `same as ${a.existing.join(", ")}`]]);
   section("conflicted", d.conflicted.length);
-  for (const c of d.conflicted) console.log(`    ${red("!")} ${bold(c.path)}  ${dim(c.hashes.map((h) => shortHash(h)).join(", "))}`);
+  for (const c of d.conflicted) out.push([["plain", "    "], ["red", "!"], ["plain", " "], ["bold", c.path], ["plain", "  "], ["dim", c.hashes.map((h) => shortHash(h)).join(", ")]]);
+  return out;
+}
+
+const TONES: Record<Tone, (s: string) => string> = { plain: (s) => s, bold, dim, red, green, yellow, cyan };
+
+/** Report lines for the terminal. */
+export function printReport(lines: ReportLine[]) {
+  for (const l of lines) console.log(l.map(([t, s]) => TONES[t](s)).join(""));
+}
+
+export function printDiff(cb: Codebase, d: NamespaceDiff, before: NameState, after: NameState, title: string) {
+  printReport(diffReport(cb, d, before, after, title));
 }
