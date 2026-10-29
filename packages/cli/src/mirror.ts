@@ -390,11 +390,18 @@ export function syncMirror(cb: Codebase): boolean {
   // where each definition of the mirror lives now, for references to it
   const home = new Map<string, { file: string; ns: string; leaf: string }>();
   for (const [ns, names] of now) for (const [leaf, h] of Object.entries(names)) home.set(h, { file: abs(byNs.get(ns)!), ns, leaf });
-  const before = new Map(Object.entries(m.files).map(([rel, f]) => [rel, fs.readFileSync(abs(rel), "utf8")]));
+  const before = new Map(Object.keys(m.files).map((rel) => [rel, fs.readFileSync(abs(rel), "utf8")]));
   // what each definition the files hold was called when tcm last wrote them
   const named = new Map<string, string>();
   for (const f of Object.values(m.files)) for (const [leaf, h] of Object.entries(f.names)) named.set(h, joinName(f.ns, leaf));
   const renames: { rel: string; from: string; to: string }[] = [];
+  // definitions gone from one file's namespace to another's: by hash, where from and what they were called there
+  const moves: Move[] = [];
+  const moved = new Map<string, { file: string; leaf: string }>();
+  for (const [rel, f] of Object.entries(m.files)) {
+    const cur = new Set(Object.values(now.get(f.ns)!));
+    for (const [leaf, h] of Object.entries(f.names)) if (!cur.has(h) && home.has(h) && home.get(h)!.file !== abs(rel)) moved.set(h, { file: abs(rel), leaf });
+  }
 
   for (const [rel, f] of Object.entries(m.files)) {
     const text = before.get(rel)!;
@@ -418,6 +425,8 @@ export function syncMirror(cb: Codebase): boolean {
       if (!d) continue;
       const next = cur[leaf];
       if (!next) {
+        // moved to another file's namespace: imports of it follow it, below
+        if (moved.has(h)) moves.push({ from: abs(rel), to: home.get(h)!.file, leaf, as: leaf });
         // gone from the namespace: its declaration and doc go too, with the blank line after
         const from = d.doc?.start ?? d.start;
         let end = d.end;
@@ -447,8 +456,14 @@ export function syncMirror(cb: Codebase): boolean {
     for (const [leaf, h] of Object.entries(cur)) {
       if (leaf in f.names || renamedTo.has(leaf)) continue;
       const rec = cb.store.getDef(h)!;
+      // moved here and renamed: written as it was called, then renamed at every reference like any rename
+      const was = moved.get(h)?.leaf;
+      if (was && was !== leaf) {
+        renames.push({ rel, from: was, to: leaf });
+        renamedTo.add(leaf);
+      }
       try {
-        const code = codeFor(rec, leaf, spelling, true);
+        const code = codeFor(rec, was ?? leaf, spelling, true);
         added += `\n${rec.doc ? docComment(rec.doc) : ""}${terminated(code, /^(export )?(const|let|var|type) /.test(code))}\n`;
       } catch (e) {
         problems.push(`${joinName(f.ns, leaf)}: ${(e as Error).message}`);
@@ -464,9 +479,13 @@ export function syncMirror(cb: Codebase): boolean {
   }
   // files outside the mirror that a rename reached, as they were
   let outside = new Map<string, string>();
+  if (moves.length && !problems.length) {
+    const files = [...Object.keys(m.files).map(abs), ...nearbyFiles(m, moves.map((v) => v.leaf))];
+    outside = followMoves(files, new Set(Object.keys(m.files).map(abs)), moves, problems);
+  }
   if (renames.length && !problems.length) {
     try {
-      outside = renameEverywhere(cb, m, renames);
+      for (const [file, text] of renameEverywhere(cb, m, renames)) if (!outside.has(file)) outside.set(file, text);
     } catch (e) {
       problems.push(`renaming: ${(e as Error).message}`);
     }
@@ -848,4 +867,90 @@ export function specifierFor(from: string, to: string, leaf: string): string {
     if (exportsFrom(path.resolve(theirs, target), to, leaf, new Set())) return sub === "." ? name : `${name}${sub.slice(1)}`;
   }
   return relative;
+}
+
+/**
+ * A definition moved from one mirrored file's namespace to another's (as `as` there, if renamed too).
+ */
+export interface Move {
+  from: string;
+  to: string;
+  leaf: string;
+  as: string;
+}
+
+/**
+ * Imports and re-exports of moved definitions, pointed at the files they're in now: `{ x }` from the old file
+ * becomes an import from the new one (`{ y as x }` if renamed too, so the code using it reads the same), the new
+ * file stops importing it, and the old file imports it if its other code still uses it. A namespace import
+ * (`a.x`) can't follow: that's a problem. Returns the text of the files outside `mirrored` it changed, as they
+ * were.
+ */
+export function followMoves(files: string[], mirrored: Set<string>, moves: Move[], problems: string[]): Map<string, string> {
+  const outside = new Map<string, string>();
+  for (const file of new Set(files)) {
+    const text = fs.readFileSync(file, "utf8");
+    const sf = ts.parse(file, text);
+    const edits: Edit[] = [];
+    const added: string[] = [];
+    for (const st of sf.statements) {
+      const spec = (ts.isImportDeclaration(st) || ts.isExportDeclaration(st)) && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier) ? st.moduleSpecifier.text : undefined;
+      if (!spec?.startsWith(".")) continue;
+      const target = path.resolve(path.dirname(file), spec);
+      const here = moves.filter((v) => v.from === target);
+      if (!here.length) continue;
+      const clause = ts.isImportDeclaration(st) ? st.importClause : undefined;
+      const bindings = clause?.namedBindings ?? (ts.isExportDeclaration(st) && st.exportClause && ts.isNamedExports(st.exportClause) ? st.exportClause : undefined);
+      if (bindings && ts.isNamespaceImport(bindings)) {
+        for (const v of here) if (new RegExp(`\\b${bindings.name.text}\\.${v.leaf}\\b`).test(text)) problems.push(`${path.relative(process.cwd(), file)} uses ${bindings.name.text}.${v.leaf}, which moved to ${path.relative(path.dirname(file), v.to)}; change it there by hand`);
+        continue;
+      }
+      if (!bindings) continue;
+      const elements = bindings.elements as readonly (ts.ImportSpecifier | ts.ExportSpecifier)[];
+      const moving = (e: ts.ImportSpecifier | ts.ExportSpecifier) => here.find((v) => (e.propertyName ?? e.name).text === v.leaf);
+      if (!elements.some(moving)) continue;
+      const keep = elements.filter((e) => !moving(e));
+      const kw = ts.isImportDeclaration(st) ? "import" : "export";
+      const type = (ts.isImportDeclaration(st) ? ts.isTypeOnlyImport(clause) : ts.isExportDeclaration(st) && st.isTypeOnly) ? " type" : "";
+      // what stays imported from the old file
+      const dflt = clause?.name ? `${clause.name.text}${keep.length ? ", " : ""}` : "";
+      const end = text[st.end] === "\n" ? st.end + 1 : st.end;
+      edits.push({ start: st.getStart(sf), end, text: keep.length || dflt ? `${kw}${type} ${dflt}${keep.length ? `{ ${keep.map((e) => e.getText(sf)).join(", ")} }` : ""} from ${JSON.stringify(spec)};\n` : "" });
+      // and what's imported from the new ones (nothing, in the file it's in now)
+      for (const e of elements) {
+        const v = moving(e);
+        if (!v || v.to === file) continue;
+        const local = e.name.text;
+        const name = v.as === local && !e.propertyName ? local : `${v.as} as ${local}`;
+        added.push(`${kw}${type} { ${e.isTypeOnly ? "type " : ""}${name} } from ${JSON.stringify(specifierFor(file, v.to, v.as))};`);
+      }
+    }
+    // the old file's code that still uses what moved imports it
+    for (const v of moves) {
+      if (v.from !== file || importedNames(file, text).includes(v.leaf) || !mentions(sf, v.leaf)) continue;
+      added.push(`import { ${v.as === v.leaf ? v.leaf : `${v.as} as ${v.leaf}`} } from ${JSON.stringify(specifierFor(file, v.to, v.as))};`);
+    }
+    if (added.length) {
+      const at = importsAt(file, text);
+      edits.push({ start: at, end: at, text: (at ? "\n" : "") + added.join("\n") + (at ? "" : "\n") });
+    }
+    if (!edits.length) continue;
+    if (!mirrored.has(file)) outside.set(file, text);
+    fs.writeFileSync(file, applyEdits(text, edits));
+  }
+  return outside;
+}
+
+/**
+ * Whether a file's code (not its imports) uses a name.
+ */
+export function mentions(sf: ReturnType<typeof ts.parse>, name: string): boolean {
+  let found = false;
+  const visit = (n: Parameters<typeof ts.isIdentifier>[0]) => {
+    if (found) return;
+    if (ts.isIdentifier(n) && n.text === name) found = true;
+    else n.forEachChild(visit);
+  };
+  for (const st of sf.statements) if (!ts.isImportDeclaration(st)) visit(st);
+  return found;
 }

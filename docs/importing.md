@@ -38,6 +38,11 @@ and the rest of each file stays as written (comments, import style, barrels):
   mirror that use the name too (the rest of its git repository: scripts, tests, an editor extension), though
   only the mirror's files are checked. A function's or class's name is part of its hash (code sees it as
   `.name`), so the codebase then takes the renamed code.
+- **A move to another namespace** (`tcm mv app.math.half app.extra.half`) moves the declaration to that
+  namespace's file. Imports of it follow (one that brought others too is split), there and in the files near the
+  mirror; the file it left imports it if its code still uses it, and the file it went to stops. Moved and renamed
+  at once, it's moved, then renamed like any rename. A namespace import (`math.half`) can't follow: tcm says so,
+  and the files stay as they were.
 - **Dependents re-hashed** by an update, and packages upgraded, don't change any text: their files stay as they are.
 - **The files' style is kept:** a mirrored codebase stores code as written (not reformatted), and `tcm edit`
   gives it back that way. Code edited in a scratch file is stored as its file spells it once it's written back,

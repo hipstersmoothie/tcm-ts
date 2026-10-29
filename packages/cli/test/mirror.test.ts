@@ -236,3 +236,44 @@ test("a mirror makes files for new namespaces, and renames reach files near it",
   assert.match(fs.readFileSync(path.join(repo, "src", "paths.ts"), "utf8"), / path\.basename\(p\)\.toUpperCase\(\)/);
   assert.match(run("view", "app.paths.base"), / path\.basename\(p\)\.toUpperCase\(\)/);
 });
+
+test("a definition moved to another namespace moves to its file, and what imports it follows", () => {
+  const repo = path.join(root, "moves");
+  const cbDir = path.join(root, "moves-cb");
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "scripts"));
+  fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ type: "module" }));
+  fs.writeFileSync(path.join(repo, "src", "math.ts"), `export function double(x: number): number {\n  return x * 2;\n}\n\nexport const half = (x: number): number => x / 2;\n\nexport const halfDouble = (x: number): number => half(double(x));\n`);
+  fs.writeFileSync(path.join(repo, "src", "use.ts"), `import { double, half } from "./math.ts";\n\nexport const quarter = (x: number): number => half(half(x));\nexport const quad = (x: number): number => double(double(x));\n`);
+  fs.writeFileSync(path.join(repo, "src", "extra.ts"), `export const one = 1;\n`);
+  const report = `import { half } from "../src/math.ts";\n\nconsole.log(half(8));\n`;
+  fs.writeFileSync(path.join(repo, "scripts", "report.ts"), report);
+  assert.equal(spawnSync("git", ["-C", repo, "init", "-q"]).status, 0);
+  fs.mkdirSync(cbDir);
+  const run = (...args: string[]) => {
+    const r = spawnSync(process.execPath, [BIN, ...args], { cwd: cbDir, encoding: "utf8", env });
+    const out = (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, "");
+    if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} exited ${r.status}:\n${out}`);
+    return out;
+  };
+  const read = (f: string) => fs.readFileSync(path.join(repo, f), "utf8");
+  run("init");
+  run("import", path.join(repo, "src"), "--into", "app", "--mirror");
+
+  assert.match(run("mv", "app.math.half", "app.extra.half"), /mirror: wrote/);
+  // its declaration moves; the file it left imports it for the code there that still uses it
+  assert.equal(read("src/math.ts"), `import { half } from "./extra.ts";\nexport function double(x: number): number {\n  return x * 2;\n}\n\nexport const halfDouble = (x: number): number => half(double(x));\n`);
+  assert.equal(read("src/extra.ts"), `export const one = 1;\n\nexport const half = (x: number): number => x / 2;\n`);
+  // imports of it follow it, splitting one that brought others too, outside the mirror as well
+  assert.equal(read("src/use.ts"), `import { double } from "./math.ts";\nimport { half } from "./extra.ts";\n\nexport const quarter = (x: number): number => half(half(x));\nexport const quad = (x: number): number => double(double(x));\n`);
+  assert.equal(read("scripts/report.ts"), `import { half } from "../src/extra.ts";\n\nconsole.log(half(8));\n`);
+  assert.match(run("mirror", "--check"), /the files hash to what the codebase holds/);
+
+  // moved back and renamed at once
+  run("mv", "app.extra.half", "app.math.halve");
+  assert.doesNotMatch(read("src/extra.ts"), /half/);
+  assert.match(read("src/math.ts"), /export const halfDouble = \(x: number\): number => halve\(double\(x\)\);/);
+  assert.match(read("src/use.ts"), /import \{ double, halve \} from "\.\/math\.ts";|import \{ double \} from "\.\/math\.ts";\nimport \{ halve \} from "\.\/math\.ts";/);
+  assert.match(read("scripts/report.ts"), /import \{ halve \} from "\.\.\/src\/math\.ts";\n\nconsole\.log\(halve\(8\)\);/);
+  assert.match(run("mirror", "--check"), /the files hash to what the codebase holds/);
+});
