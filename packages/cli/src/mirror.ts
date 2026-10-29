@@ -168,7 +168,8 @@ class Spelling {
   private byName = new Map<string, string>();
   /** a module (codebase file or package entry) → the namespace prefix it's reached through, `ts.` */
   private prefix = new Map<string, string>();
-  readonly imports: string[] = [];
+  /** imports the code written here needs: what each brings in, and whether any use of it is a value's */
+  private wanted: { key: string; spec: string; name: string; local: string; value: boolean }[] = [];
   private taken: Set<string>;
   private cb: Codebase;
   private file: string;
@@ -227,7 +228,11 @@ class Spelling {
     const key = this.keyOf(s);
     if (!key) return written;
     const known = this.exact.get(key);
-    if (known) return known;
+    if (known) {
+      const w = this.wanted.find((x) => x.key === key);
+      if (w && s.pos !== "type") w.value = true;
+      return known;
+    }
     if (s.hash) {
       const t = this.fileOf(s.hash);
       if (!t) throw new Error(`refers to #${s.hash.slice(0, 8)}, which isn't in the mirror`);
@@ -237,9 +242,8 @@ class Spelling {
       const pre = this.prefix.get(t.file);
       if (pre) return this.remember(key, pre + t.leaf);
       const local = this.local(t.leaf);
-      const rel = path.relative(path.dirname(this.file), t.file).split(path.sep).join("/");
-      const kind = this.cb.store.getDef(s.hash)?.kind === "type" ? "type " : "";
-      this.imports.push(`import ${kind}{ ${local === t.leaf ? local : `${t.leaf} as ${local}`} } from "${rel.startsWith(".") ? rel : `./${rel}`}";`);
+      const value = s.pos !== "type" && this.cb.store.getDef(s.hash)?.kind !== "type";
+      this.wanted.push({ key, spec: specifierFor(this.file, t.file, t.leaf), name: t.leaf, local, value });
       return this.remember(key, local);
     }
     const ext = s.ext!;
@@ -247,14 +251,35 @@ class Spelling {
     if (pre && ext.export !== "default" && ext.export !== "*") return this.remember(key, pre + ext.export);
     const wanted = /^[A-Za-z_$][\w$]*$/.test(written) ? written : ext.export === "default" || ext.export === "*" ? "imported" : ext.export;
     const local = this.local(wanted);
-    const type = s.pos === "type" ? "type " : "";
-    const spec = JSON.stringify(specifierOf(ext));
-    this.imports.push(
-      ext.export === "default" ? `import ${type}${local} from ${spec};`
-      : ext.export === "*" ? `import ${type}* as ${local} from ${spec};`
-      : `import ${type}{ ${local === ext.export ? local : `${ext.export} as ${local}`} } from ${spec};`,
-    );
+    this.wanted.push({ key, spec: specifierOf(ext), name: ext.export, local, value: s.pos !== "type" });
     return this.remember(key, local);
+  }
+
+  /**
+   * The imports the code written here needs: a statement per module (another for what's only used as a type),
+   * Node's builtins first, then packages, then the project's own files.
+   */
+  get imports(): string[] {
+    const group = (spec: string) => (spec.startsWith("node:") ? 0 : spec.startsWith(".") ? 2 : 1);
+    const out: string[] = [];
+    for (const spec of [...new Set(this.wanted.map((w) => w.spec))].sort((a, b) => group(a) - group(b))) {
+      const from = JSON.stringify(spec);
+      for (const value of [true, false]) {
+        const ws = this.wanted.filter((w) => w.spec === spec && w.value === value);
+        const type = value ? "" : "type ";
+        const star = ws.find((w) => w.name === "*");
+        const dflt = ws.find((w) => w.name === "default");
+        const named = ws.filter((w) => w.name !== "*" && w.name !== "default").map((w) => (w.local === w.name ? w.local : `${w.name} as ${w.local}`));
+        if (star) out.push(`import ${type}* as ${star.local} from ${from};`);
+        // (a type-only import has a default or named bindings, not both)
+        if (dflt && (value || !named.length)) out.push(`import ${type}${dflt.local}${named.length ? `, { ${named.join(", ")} }` : ""} from ${from};`);
+        else {
+          if (dflt) out.push(`import type ${dflt.local} from ${from};`);
+          if (named.length) out.push(`import ${type}{ ${named.join(", ")} } from ${from};`);
+        }
+      }
+    }
+    return out;
   }
 
   private remember(key: string, text: string): string {
@@ -768,4 +793,59 @@ export function changedFiles(m: Mirror): string[] {
     if (!(path.relative(m.dir, f) in m.files)) out.push(path.relative(m.dir, f));
   }
   return out;
+}
+
+/**
+ * Whether module `entry` exports `leaf` from `file`, under that name: it is the file, or re-exports it (`export * from`, `export { leaf } from`).
+ */
+export function exportsFrom(entry: string, file: string, leaf: string, seen: Set<string>): boolean {
+  if (entry === file) return true;
+  if (seen.has(entry) || !fs.existsSync(entry)) return false;
+  seen.add(entry);
+  for (const m of fs.readFileSync(entry, "utf8").matchAll(/export\s+(?:type\s+)?(\*|\{([^}]*)\})\s+from\s+["'](\.{1,2}\/[^"']+)["']/g)) {
+    const named = m[2]?.split(",").map((e) => e.trim().replace(/^type\s+/, "").split(/\s+as\s+/));
+    if (m[1] !== "*" && !named?.some(([a, b]) => a === leaf && (b ?? a) === leaf)) continue;
+    if (exportsFrom(path.resolve(path.dirname(entry), m[3]!), file, leaf, seen)) return true;
+  }
+  return false;
+}
+
+/**
+ * The directory of the package a file is in: the nearest with a package.json.
+ */
+export function packageDirOf(file: string): string | undefined {
+  for (let d = path.dirname(file); ; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, "package.json"))) return d;
+    if (path.dirname(d) === d) return undefined;
+  }
+}
+
+/**
+ * How a file imports `leaf` from the project's file `to`: by path, or from another package (the nearest
+ * package.json isn't the same, and it's a dependency) by that package's name, when an entry of its `exports`
+ * exports it (re-exporting it through barrels counts).
+ */
+export function specifierFor(from: string, to: string, leaf: string): string {
+  const rel = path.relative(path.dirname(from), to).split(path.sep).join("/");
+  const relative = rel.startsWith(".") ? rel : `./${rel}`;
+  const theirs = packageDirOf(to);
+  const ours = packageDirOf(from);
+  if (!theirs || !ours || theirs === ours) return relative;
+  const read = (dir: string) => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  };
+  const pkg = read(theirs);
+  const deps = read(ours);
+  const name = typeof pkg.name === "string" ? pkg.name : undefined;
+  if (!name || !["dependencies", "devDependencies", "peerDependencies"].some((k) => typeof deps[k] === "object" && deps[k] && name in (deps[k] as object))) return relative;
+  const entries: Record<string, unknown> = typeof pkg.exports === "string" ? { ".": pkg.exports } : pkg.exports && typeof pkg.exports === "object" ? (pkg.exports as Record<string, unknown>) : typeof pkg.main === "string" ? { ".": pkg.main } : {};
+  for (const [sub, target] of Object.entries(entries)) {
+    if (typeof target !== "string" || sub.includes("*")) continue;
+    if (exportsFrom(path.resolve(theirs, target), to, leaf, new Set())) return sub === "." ? name : `${name}${sub.slice(1)}`;
+  }
+  return relative;
 }
