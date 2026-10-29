@@ -147,3 +147,15 @@ test("on a terminal, a missing argument is asked for", { skip: !hasPty && "no py
   assert.match(await onTerminal(["rm", "lib.echo"], [[/Remove the name anyway\?/, "y"]]), /removed lib\.echo/);
   assert.match(tcm("run", "lib.shout", "hi"), /hi !/);
 });
+
+test("a codebase made by a tcm that stores codebases differently is refused, with what to do", async () => {
+  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "tcm layout ")));
+  assert.equal(spawnSync(process.execPath, [BIN, "init"], { cwd: other, env }).status, 0);
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(path.join(other, ".tcm", "codebase.sqlite"));
+  db.prepare("UPDATE settings SET value = 'another' WHERE key = 'layout'").run();
+  db.close();
+  const r = spawnSync(process.execPath, [BIN, "ls"], { cwd: other, encoding: "utf8", env });
+  assert.equal(r.status, 1);
+  assert.match(strip(r.stdout + r.stderr), /was made by a tcm that stores codebases differently, and this one can't read it; make the codebase again with this tcm/);
+});

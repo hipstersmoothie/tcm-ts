@@ -207,7 +207,20 @@ export class Store {
   constructor(file: string) {
     this.db = new DatabaseSync(file);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+    // a codebase whose tables another tcm laid out differently can't be read (tcm is v0: there are no
+    // migrations): say so, rather than fail on a missing column later
+    if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'definitions'").get()) {
+      let was: string | undefined;
+      try {
+        was = (this.db.prepare("SELECT value FROM settings WHERE key = 'layout'").get() as { value: string } | undefined)?.value;
+      } catch {}
+      if (was !== LAYOUT) {
+        this.db.close();
+        throw new Error(`${file} was made by a tcm that stores codebases differently, and this one can't read it; make the codebase again with this tcm (\`tcm import\` its files, or \`tcm pull\` it)`);
+      }
+    }
     this.db.exec(SCHEMA);
+    this.db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('layout', ?)").run(LAYOUT);
     this.db.prepare("INSERT OR IGNORE INTO namespaces (hash, body) VALUES (?, ?)").run(EMPTY_NAMESPACE, EMPTY_BODY);
     this.db.prepare("INSERT OR IGNORE INTO causals (hash, namespace, ts, command) VALUES (?, ?, 0, 'init')").run(ROOT_CAUSAL, EMPTY_NAMESPACE);
     this.db.prepare("INSERT OR IGNORE INTO branches (name, head) VALUES ('main', ?)").run(ROOT_CAUSAL);
@@ -1086,3 +1099,8 @@ function deepFreeze<T>(value: T): T {
   }
   return value;
 }
+
+/**
+ * The codebase's table layout, as a fingerprint of its schema: a codebase records the one it was made with.
+ */
+export const LAYOUT = createHash("sha256").update(SCHEMA.replace(/\s+/g, " ").trim()).digest("hex").slice(0, 16);

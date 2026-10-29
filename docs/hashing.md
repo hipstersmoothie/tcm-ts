@@ -57,7 +57,9 @@ never skipped, so two different programs can't collide.
 
 - **The format is versioned** (`tcm --version` says which: v1). `packages/core/test/golden.test.ts` pins the
   hashes of a corpus that covers most syntax, so a change to them is deliberate. A codebase written with
-  another format is refused rather than mixed with this one's hashes.
+  another format is refused rather than mixed with this one's hashes. So is one whose tables another tcm laid out
+  differently: tcm is v0, with no migrations, so such a codebase is made again (imported from its files, or
+  pulled).
 - **Hashes don't depend on the compiler or its version.** The IR visits each node's children in an order that's
   tcm's own (`packages/core/src/slots.ts`, generated from TypeScript 7.1's), so a TypeScript release that adds
   or reorders children changes no hash until that table does. `pnpm compare-compilers` hashes this repo and
