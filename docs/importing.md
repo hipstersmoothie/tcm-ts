@@ -52,6 +52,11 @@ and the rest of each file stays as written (comments, import style, barrels):
   files of the codebase, all of it, `.ts` files too (examples, fixtures): kept as written, not read as code; the
   mark's lines are patterns of what to leave out (`*.vsix`). A file whose name can't be a name (a dot before its
   extension) is reported, and nothing is imported until it's renamed or left out.
+- **Code that imports a file** (a page, an image) is written importing it as tcm does, from `#codebase/…`
+  ([files are values](pages.md#files-are-values)). Plain TypeScript can't import a page, so such files work
+  through tcm: the project's `package.json` maps `#codebase` to the codebase's shim (`"#codebase/*":
+  "./codebase/.tcm/codebase/*.ts"`), with the codebase in the project, as tcm's own repository has it. Without
+  that, the files don't check, and the change isn't written to them.
 - **Dependents re-hashed** by an update, and packages upgraded, don't change any text: their files stay as they are.
 - **The files are one branch's:** the branch the mirror was linked on (`main`, usually). A
   [session](agents.md#several-agents-at-once-sessions) on another branch neither writes to them nor takes their

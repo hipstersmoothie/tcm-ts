@@ -29,7 +29,7 @@ or option a command doesn't take is an error naming it.
 | `tcm export <namespace> <dir>` | write a namespace's [files](pages.md) (pages, stylesheets, images), or one file, to a directory, links and names as they are now |
 | `tcm import <dir> [--into ns] [--update] [--exclude a,b] [--tests] [--mirror] [--verbose]` | add an existing project, one namespace per file; `--mirror` keeps its files in step with the codebase, and makes the releases recorded with them again ([importing](importing.md#mirrors)) |
 | `tcm mirror [--check] [--unlink]` | the directory changes are written back to; `--check` re-analyzes its files, which must hash to what the codebase holds ([mirrors](importing.md#mirrors)) |
-| `tcm edit <name>... [--file f] [--force]` | write definitions to a scratch file for editing (`scratch.ts`, or `scratch.tsx` for JSX), with references following any updates |
+| `tcm edit <name>... [--file f] [--force]` | write definitions to a scratch file for editing (`scratch.ts`, or `scratch.tsx` for JSX), with references following any updates; never over the codebase's own `package.json` or `tsconfig.json` |
 | `tcm view <name\|#hash>...` | show definitions, rendered with current names, with their placement for app code |
 | `tcm ls [namespace]` | list names |
 | `tcm find <query>` | search names and signature text |

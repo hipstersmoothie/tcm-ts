@@ -53,7 +53,8 @@ import { logo } from "#codebase/media";      // media.logo, a .png
 export const page = () => `<style>${app}</style>${logo.length} bytes of logo`;
 ```
 
-A file whose own name isn't an identifier (`getting-started`) can't be imported by it. A file is data: what it
+A file whose own name isn't an identifier is imported by its name in quotes:
+`import { "getting-started" as gettingStarted } from "#codebase/docs"`. A file is data: what it
 links to doesn't make the code using it run on the server or in the browser.
 
 ## Writing them out

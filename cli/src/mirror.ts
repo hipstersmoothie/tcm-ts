@@ -238,6 +238,19 @@ class Spelling {
     if (s.hash === selfHash) return selfLeaf;
     const key = this.keyOf(s);
     if (!key) return written;
+    // a file of the codebase (a page, an image) isn't in the mirror's code: it's imported from the codebase, as a
+    // scratch file does, by its name in quotes when that isn't an identifier
+    if (s.hash && this.cb.store.getDef(s.hash)?.kind === "file") {
+      const known = this.exact.get(key);
+      if (known) return known;
+      const name = this.cb.store.pathsOf(s.hash)[0];
+      if (!name) throw new Error(`refers to the file #${s.hash.slice(0, 8)}, which has no name`);
+      const ns = name.slice(0, Math.max(0, name.lastIndexOf(".")));
+      const leaf = name.slice(name.lastIndexOf(".") + 1);
+      const local = this.local(/^[A-Za-z_$][\w$]*$/.test(leaf) ? leaf : leaf.replace(/[^\w$]/g, "_"));
+      this.wanted.push({ key, spec: `#codebase${ns ? `/${ns.replaceAll(".", "/")}` : ""}`, name: leaf, local, value: true });
+      return this.remember(key, local);
+    }
     // a definition this file's namespace has a name for reads as that name, here: an identical one elsewhere (one
     // hash, two names) mustn't bring in its other name
     if (s.hash) {
@@ -292,7 +305,7 @@ class Spelling {
         const type = value ? "" : "type ";
         const star = ws.find((w) => w.name === "*");
         const dflt = ws.find((w) => w.name === "default");
-        const named = ws.filter((w) => w.name !== "*" && w.name !== "default").map((w) => (w.local === w.name ? w.local : `${w.name} as ${w.local}`));
+        const named = ws.filter((w) => w.name !== "*" && w.name !== "default").map((w) => (w.local === w.name ? w.local : `${/^[A-Za-z_$][\w$]*$/.test(w.name) ? w.name : JSON.stringify(w.name)} as ${w.local}`));
         if (star) out.push(`import ${type}* as ${star.local} from ${from};`);
         // (a type-only import has a default or named bindings, not both)
         if (dflt && (value || !named.length)) out.push(`import ${type}${dflt.local}${named.length ? `, { ${named.join(", ")} }` : ""} from ${from};`);

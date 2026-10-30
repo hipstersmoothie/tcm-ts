@@ -1701,6 +1701,8 @@ export function editFiles(cb: Codebase, targets: string[], file: string | undefi
     const out = file ?? path.join(cb.sessionDir ?? process.cwd(), fileName(name.slice(name.lastIndexOf(".") + 1), rec));
     const content = fileContent(cb, rec, ns);
     const body = format === "md" ? Buffer.concat([Buffer.from(`<!-- tcm: path ${name} -->\n`), content]) : content;
+    // the codebase's own config, where `tcm edit` writes: never over it, --force or not
+    if (["package.json", "tsconfig.json"].some((f) => path.resolve(out) === path.join(cb.lay.root, f))) throw new UsageError(`${path.basename(out)} here is the codebase's own: edit ${name} with --file <other>`);
     if (fs.existsSync(out) && !force && !fs.readFileSync(out).equals(body)) throw new UsageError(`${path.basename(out)} exists; pass --force to overwrite it, or --file <other>`);
     fs.writeFileSync(out, body);
     const shown = path.relative(process.cwd(), out);

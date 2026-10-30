@@ -2,6 +2,10 @@
   "name": "tcm-ts",
   "private": true,
   "type": "module",
+  "imports": {
+    "#codebase": "./codebase/.tcm/codebase/index.ts",
+    "#codebase/*": "./codebase/.tcm/codebase/*.ts"
+  },
   "engines": {
     "node": ">=22.18"
   },

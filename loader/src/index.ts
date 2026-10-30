@@ -92,7 +92,9 @@ function importLine(local: string, exported: string, from: string, typeOnly: boo
   const t = typeOnly ? "type " : "";
   if (exported === "default") return `import ${t}${local} from ${JSON.stringify(from)};`;
   if (exported === "*") return `import ${t}* as ${local} from ${JSON.stringify(from)};`;
-  return `import ${t}{ ${exported === local ? local : `${exported} as ${local}`} } from ${JSON.stringify(from)};`;
+  // a name that isn't an identifier (a file's: `getting-started`) is imported by its name in quotes
+  const name = /^[A-Za-z_$][\w$]*$/.test(exported) ? exported : JSON.stringify(exported);
+  return `import ${t}{ ${exported === local ? local : `${name} as ${local}`} } from ${JSON.stringify(from)};`;
 }
 
 /** Order component members so module-init-time references are already initialized. */
@@ -393,8 +395,9 @@ export function writeShim(names: ShimName[], src: DefSource, lay: Layout): void 
   const files = new Map<string, string[]>();
   const hashes: string[] = [];
   for (const [name, hs] of byPath) {
-    // (a file whose own name isn't an identifier, `getting-started`, can't be imported by it)
-    if (!/^[A-Za-z_$][\w$]*$/.test(lastSegment(name))) continue;
+    // a file whose own name isn't an identifier (`getting-started`) is exported by its name in quotes
+    const leaf = lastSegment(name);
+    const exported = /^[A-Za-z_$][\w$]*$/.test(leaf) ? leaf : JSON.stringify(leaf);
     const ns = name.includes(".") ? name.slice(0, name.lastIndexOf(".")) : "";
     const file = path.join(lay.shimDir, ns ? `${ns.replaceAll(".", "/")}.ts` : "index.ts");
     const lines = files.get(file) ?? [];
@@ -409,12 +412,12 @@ export function writeShim(names: ShimName[], src: DefSource, lay: Layout): void 
       continue;
     }
     hashes.push(...hs);
-    if (recs.length === 2) {
+    if (recs.length === 2 && exported === leaf) {
       lines.push(`export { ${lastSegment(name)} } from "${relTo(writePairModule(lastSegment(name), recs, src, lay))}";`);
       continue;
     }
     const rec = recs[0]!;
-    lines.push(`export ${rec.kind === "type" ? "type " : ""}{ ${exportId(rec.hash)} as ${lastSegment(name)} } from "${relTo(moduleFile(rec.componentHash, src))}";`);
+    lines.push(`export ${rec.kind === "type" ? "type " : ""}{ ${exportId(rec.hash)} as ${exported} } from "${relTo(moduleFile(rec.componentHash, src))}";`);
   }
   materialize(hashes, src, lay);
   files.set(path.join(lay.shimDir, "index.ts"), files.get(path.join(lay.shimDir, "index.ts")) ?? []);

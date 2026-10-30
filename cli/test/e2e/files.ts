@@ -99,3 +99,64 @@ export const testPagesAreDefinitions = () => {
   assert.ok(fs.existsSync(path.join(dir, "site", "questions.md")));
   assert.match(ok("verify"), /verified 3 definitions/);
 }
+
+/**
+ * A file whose name isn't an identifier (`getting-started`) is imported by its name in quotes, and edited back so.
+ */
+export const testFileNamedWithADashIsImported = () => {
+  const dir = tempDir("files dash");
+  const ok = (...args: string[]) => okIn(dir, ...args);
+  ok("init");
+  fs.mkdirSync(path.join(dir, "pages"));
+  fs.writeFileSync(path.join(dir, "pages", "getting-started.md"), "# Getting started\n\nHello.\n");
+  ok("add", "pages/getting-started.md", "--into", "docs");
+  fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace site\nimport { "getting-started" as gettingStarted } from "#codebase/docs";\n\nexport const intro = (): string => gettingStarted.split("\\n")[0]!;\n`);
+  ok("add");
+  assert.match(ok("run", "site.intro"), /^# Getting started$/m);
+  assert.match(ok("view", "site.intro"), /import \{ "getting-started" as \w+ \} from "#codebase\/docs";/);
+  ok("edit", "site.intro", "--force");
+  assert.match(ok("check"), /= identical +site\.intro/);
+}
+
+/**
+ * Code importing a page is mirrored with the import tcm writes (`#codebase/…`), and the files still hash to it.
+ */
+export const testMirroredCodeImportsAPage = () => {
+  const root = tempDir("files mirror import");
+  const proj = path.join(root, "proj");
+  // inside the project, which maps `#codebase` to it (as this repository does)
+  const cbDir = path.join(proj, "codebase");
+  fs.mkdirSync(path.join(proj, "docs"), { recursive: true });
+  fs.mkdirSync(cbDir);
+  fs.writeFileSync(path.join(proj, ".gitignore"), "codebase/\n");
+  fs.writeFileSync(path.join(proj, "package.json"), JSON.stringify({ type: "module", imports: { "#codebase": "./codebase/.tcm/codebase/index.ts", "#codebase/*": "./codebase/.tcm/codebase/*.ts" } }));
+  fs.writeFileSync(path.join(proj, "math.ts"), "export const square = (x: number): number => x * x;\n");
+  fs.writeFileSync(path.join(proj, "docs", "getting-started.md"), "# Getting started\n\nHello.\n");
+  assert.equal(spawnSync("git", ["-C", proj, "init", "-q"]).status, 0);
+  const ok = (...args: string[]) => okIn(cbDir, ...args);
+  ok("init");
+  ok("import", "..", "--into", "app", "--mirror");
+  fs.writeFileSync(path.join(cbDir, "scratch.ts"), `// tcm: namespace app.site\nimport { "getting-started" as gettingStarted } from "#codebase/app/docs";\n\nexport const intro = (): string => gettingStarted.split("\\n")[0]!;\n`);
+  ok("add");
+  assert.match(fs.readFileSync(path.join(proj, "site.ts"), "utf8"), /import \{ "getting-started" as \w+ \} from "#codebase\/app\/docs";/);
+  assert.match(ok("mirror", "--check"), /the files hash to what the codebase holds/);
+  assert.match(ok("run", "app.site.intro"), /^# Getting started$/m);
+}
+
+/**
+ * `tcm edit` of a `package.json` or `tsconfig.json` doesn't write over the codebase's own, even with `--force`.
+ */
+export const testEditDoesNotOverwriteTheCodebasesConfig = () => {
+  const dir = tempDir("files config");
+  okIn(dir, "init");
+  fs.mkdirSync(path.join(dir, "app"));
+  fs.writeFileSync(path.join(dir, "app", "tsconfig.json"), "{}\n");
+  okIn(dir, "add", "app/tsconfig.json", "--into", "site");
+  const own = fs.readFileSync(path.join(dir, "tsconfig.json"), "utf8");
+  const r = tcmIn(dir, "edit", "site.tsconfig", "--force");
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /tsconfig\.json here is the codebase's own: edit site\.tsconfig with --file <other>/);
+  assert.equal(fs.readFileSync(path.join(dir, "tsconfig.json"), "utf8"), own);
+  okIn(dir, "edit", "site.tsconfig", "--file", "edit.json");
+  assert.equal(fs.readFileSync(path.join(dir, "edit.json"), "utf8"), "{}\n");
+}
