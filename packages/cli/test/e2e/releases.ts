@@ -164,6 +164,16 @@ export const testPackagesDependThroughReleases = () => {
   assert.match(a.tcm("releases"), /^atlas {2}atlas\n {2}0\.1\.0 [\s\S]*geo {2}geo\n {2}0\.1\.1 [\s\S]* {2}0\.1\.0 /m);
 };
 
+/** what a package has its own name for is its own, even where another package has the same definition */
+export const testPackCarriesItsOwnCopy = () => {
+  const a = codebase("copies");
+  a.save(`// tcm: namespace geo\nexport const manifest = { name: "geo" };\nexport type Unit = "m" | "km";\n`, "add");
+  a.save(`// tcm: namespace atlas\nexport const manifest = { name: "atlas" };\nexport type Unit = "m" | "km";\nexport const label = (u: Unit): string => \`in \${u}\`;\n`, "add");
+  assert.doesNotMatch(a.tcm("pack", "atlas"), /depends on/);
+  const dir = path.join(a.dir, ".tcm", "pack", "atlas");
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).dependencies, {});
+};
+
 /** releases travel with push and pull, list the contributions that touched them, and never change */
 export const testReleasesTravelAndNeverChange = () => {
   const server = codebase("server");

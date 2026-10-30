@@ -292,11 +292,13 @@ export function packPackage(cb: Codebase, name: string | undefined, version: str
   const all = packagesIn(cb, rows);
   const pkg = findPackage(all, name);
   const exported = exportsOf(pkg, all, rows);
+  // a definition the package has a name for is its own, even if another package has the same one (same hash)
+  const mine = new Set(rows.filter((r) => owns(pkg, all, r.path)).map((r) => r.hash));
   const siblings: Sibling[] = all
     .filter((o) => o !== pkg)
     .map((o) => ({
       name: o.name,
-      owned: new Map(rows.filter((r) => owns(o, all, r.path)).map((r) => [r.hash, r.path])),
+      owned: new Map(rows.filter((r) => owns(o, all, r.path) && !mine.has(r.hash)).map((r) => [r.hash, r.path])),
       releases: cb.store.releases(o.name).flatMap((r) => {
         const st = packageState(cb, rowsAt(cb, r.causal), o.name);
         if (!st) return [];
