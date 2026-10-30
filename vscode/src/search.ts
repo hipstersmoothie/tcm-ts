@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { Request } from "./releases.ts";
+import type { PageFind } from "./pages-panel.ts";
 
 /**
  * A definition or page with matching lines; `uri` is its document's (a page has none: it opens as a page).
@@ -39,14 +40,14 @@ export interface SearchQuery {
  */
 export class SearchView implements vscode.WebviewViewProvider {
   request: Request;
-  openPage: (hash: string) => unknown;
+  openPage: (hash: string, find?: PageFind) => unknown;
   view: vscode.WebviewView | undefined;
   last: SearchQuery | undefined;
   hits: SearchHit[] = [];
   /** the latest search: answers to earlier ones are dropped */
   seq = 0;
 
-  constructor(request: Request, openPage: (hash: string) => unknown) {
+  constructor(request: Request, openPage: (hash: string, find?: PageFind) => unknown) {
     this.request = request;
     this.openPage = openPage;
   }
@@ -55,14 +56,16 @@ export class SearchView implements vscode.WebviewViewProvider {
     this.view = view;
     view.webview.options = { enableScripts: true };
     view.webview.html = searchHtml(view.webview);
-    view.webview.onDidReceiveMessage((m: { type: string; query?: SearchQuery; hit?: number; line?: number }) => {
+    view.webview.onDidReceiveMessage((m: { type: string; query?: SearchQuery; hit?: number; line?: number; source?: boolean }) => {
       if (m.type === "search") return this.search(m.query!);
       const hit = this.hits[m.hit ?? -1];
       if (!hit) return;
-      if (m.type === "page" || !hit.uri) return this.openPage(hit.hash);
+      if (m.type === "page") return this.openPage(hit.hash);
       const line = hit.lines[m.line ?? 0]!;
-      const length = line.ranges[0] ? line.ranges[0][1] - line.ranges[0][0] : 0;
-      return vscode.window.showTextDocument(vscode.Uri.parse(hit.uri), { selection: new vscode.Range(line.line, line.column, line.line, line.column + length), preview: true });
+      const [start, end] = line.ranges[0] ?? [0, 0];
+      // a line opens the page, at the match; with Alt (Option), the definition's document there
+      if (!m.source || !hit.uri) return this.openPage(hit.hash, { text: line.text.slice(start, end), line: line.text, offset: start, caseSensitive: !!this.last?.caseSensitive });
+      return vscode.window.showTextDocument(vscode.Uri.parse(hit.uri), { selection: new vscode.Range(line.line, line.column, line.line, line.column + end - start), preview: true });
     });
   }
 
@@ -191,7 +194,7 @@ export function searchHtml(webview: vscode.Webview): string {
     results.innerHTML = m.hits.map((h, i) => {
       const dot = h.path.lastIndexOf(".");
       const open = !closed.has(h.path);
-      const lines = h.lines.map((l, j) => '<div class="row line" data-hit="' + i + '" data-line="' + j + '" title="' + esc(h.path + ":" + (l.line + 1)) + '"><span class="text">' + marked(l) + '</span></div>').join("");
+      const lines = h.lines.map((l, j) => '<div class="row line" data-hit="' + i + '" data-line="' + j + '" title="' + esc(h.path + ":" + (l.line + 1)) + ' (Alt-click for the source)"><span class="text">' + marked(l) + '</span></div>').join("");
       return '<div class="hit"><div class="row head" data-hit="' + i + '" title="' + esc(h.path) + '"><span class="twistie" data-toggle="' + esc(h.path) + '">' + (open ? "▾" : "▸") + '</span>'
         + '<span class="kind ' + esc(h.kind) + '">' + (kinds[h.kind] || "·") + '</span><span class="name">' + esc(h.path.slice(dot + 1)) + '</span><span class="ns">' + esc(h.path.slice(0, Math.max(dot, 0))) + '</span>'
         + '<span class="count">' + h.lines.reduce((n, l) => n + l.ranges.length, 0) + '</span></div><div class="' + (open ? "" : "hidden") + '">' + lines + "</div></div>";
@@ -213,7 +216,7 @@ export function searchHtml(webview: vscode.Webview): string {
     if (!row) return;
     for (const r of results.querySelectorAll(".selected")) r.classList.remove("selected");
     row.classList.add("selected");
-    vscode.postMessage(row.classList.contains("head") ? { type: "page", hit: Number(row.dataset.hit) } : { type: "line", hit: Number(row.dataset.hit), line: Number(row.dataset.line) });
+    vscode.postMessage(row.classList.contains("head") ? { type: "page", hit: Number(row.dataset.hit) } : { type: "line", hit: Number(row.dataset.hit), line: Number(row.dataset.line), source: e.altKey });
   });
   if (state.query) search();
 </script>

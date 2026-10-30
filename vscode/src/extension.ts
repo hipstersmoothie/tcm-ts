@@ -357,7 +357,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   const views = new vscode.EventEmitter<vscode.Uri>();
   const apps = new AppsTree(running);
-  const search = new SearchView(request, (hash) => pages.open({ hash }));
+  const search = new SearchView(request, (hash, find) => pages.open({ hash }, find));
   const changes = new ChangesTree(request);
   const data = new DataTree();
   const packages = new PackagesTree();

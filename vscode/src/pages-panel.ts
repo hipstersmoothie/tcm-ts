@@ -42,11 +42,13 @@ export class Pages {
     this.icon = icon;
   }
 
-  async open(target: PageTarget): Promise<void> {
+  /** Open a page (focusing it if it's open), showing `find` in it if given: the page scrolls to it, marked. */
+  async open(target: PageTarget, find?: PageFind): Promise<void> {
     const key = target.release ? `rel:${target.release.name}` : target.package ? `pkg:${target.package.name}@${target.package.range}` : target.hash ? `def:${target.hash}` : `ns:${target.namespace}`;
     const open = this.panels.get(key);
     if (open) {
       open.panel.reveal();
+      if (find) open.panel.webview.postMessage({ type: "find", ...find });
       return;
     }
     const panel = vscode.window.createWebviewPanel("tcm.page", target.title ?? "…", vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, enableCommandUris: false });
@@ -60,6 +62,7 @@ export class Pages {
     });
     panel.webview.html = html(panel.webview);
     await this.render(key);
+    if (find) panel.webview.postMessage({ type: "find", ...find });
   }
 
   /** Fetch a page (cheap: examples are cached by hash) and draw it; the tab is named after it. */
@@ -137,6 +140,7 @@ export function html(webview: vscode.Webview): string {
   .doc blockquote { margin: 6px 0; padding: 2px 10px; border-left: 3px solid var(--vscode-editorWarning-foreground); }
   .doc table { border-collapse: collapse; } .doc th, .doc td { border: 1px solid var(--vscode-panel-border); padding: 3px 8px; }
   .src { margin: 0 14px 10px; white-space: pre; }
+  ::highlight(tcm-find) { background-color: var(--vscode-editor-findMatchBackground); color: inherit; }
   .file-image { display: block; margin: 8px 14px 12px; max-width: calc(100% - 28px); max-height: 60vh; }
   /* VS Code doesn't give webviews the theme's syntax colours, so these are its default themes' (Dark+, Light+,
      High Contrast), picked by the theme's kind. Code in rendered docs (highlight.js classes) uses the same. */
@@ -349,8 +353,46 @@ function namespaceCard(c) {
   return h;
 }
 
+// the text from offset start to end in an element, as a range (across the spans highlighting makes)
+const rangeIn = (el, start, end) => {
+  const range = document.createRange();
+  const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let at = 0;
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    const len = n.textContent.length;
+    if (at <= start && start <= at + len) range.setStart(n, start - at);
+    if (at <= end && end <= at + len) { range.setEnd(n, end - at); break; }
+    at += len;
+  }
+  return range;
+};
+// a search's match: in the line it was found on (in the code, or the doc), else wherever the text first is
+const find = (f) => {
+  const scopes = [...document.querySelectorAll(".src, .doc")];
+  const fold = (s) => (f.caseSensitive ? s : s.toLowerCase());
+  let hit;
+  const line = f.line.replace(/^\\*\\s?/, "");
+  const offset = f.offset - (f.line.length - line.length);
+  for (const el of scopes) {
+    const i = line.trim() ? el.textContent.indexOf(line) : -1;
+    if (i >= 0 && offset >= 0) { hit = [el, i + offset]; break; }
+  }
+  for (const el of hit ? [] : scopes) {
+    const i = fold(el.textContent).indexOf(fold(f.text));
+    if (i >= 0) { hit = [el, i]; break; }
+  }
+  if (!hit || !window.CSS?.highlights) return;
+  const range = rangeIn(hit[0], hit[1], hit[1] + f.text.length);
+  CSS.highlights.set("tcm-find", new Highlight(range));
+  const box = range.getBoundingClientRect();
+  window.scrollBy({ top: box.top - window.innerHeight / 3 });
+  // (and across, in a wide line)
+  const pre = hit[0].closest(".src");
+  if (pre) pre.scrollLeft = Math.max(0, box.left - pre.getBoundingClientRect().left + pre.scrollLeft - 80);
+};
 window.addEventListener("message", (e) => {
   const m = e.data;
+  if (m.type === "find") return find(m);
   if (m.type !== "page") return;
   const c = m.card;
   const root = document.getElementById("cards");
@@ -375,4 +417,15 @@ window.addEventListener("message", (e) => {
   });
 });
 </script></body></html>`;
+}
+
+/**
+ * Something to show on a page, found by a search: `text`, as it was matched (case-sensitively or not), in `line`
+ * (the part of its line the search shows), at `offset` there.
+ */
+export interface PageFind {
+  text: string;
+  line: string;
+  offset: number;
+  caseSensitive?: boolean;
 }

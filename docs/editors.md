@@ -110,8 +110,8 @@ and open as pages.
 searches for the selection) is find in files for the codebase: every line of its definitions and pages with the
 text in it, grouped by definition, with **Match Case**, **Match Whole Word** and **Use Regular Expression** as in
 VS Code's own search. Definitions are searched as they read now, with current names (a rename is in the next
-search), and the header line of their documents isn't. Click a definition to open its page, a line to open its
-document there. The mirror's files and `.tcm` aren't part of it.
+search), and the header line of their documents isn't. Click a definition to open its page, or a line to open the page at
+it, the match marked (Alt/Option-click for the definition's document there). The mirror's files and `.tcm` aren't part of it.
 
 ## VS Code
 
