@@ -42,7 +42,7 @@ const on = valid<boolean>((v) => ({ value: v === undefined ? true : Boolean(v) }
 const into = option(name("into"), description("the namespace to save into (default: the file's `// tcm: namespace` pragma)"), schema(text(null)));
 const fresh = toggle(name("fresh"), description("re-run watch expressions and tests even when their results are cached"));
 const force = (what: string) => toggle(name("force"), description(what));
-const file = argument(name("file"), description("a scratch file"), schema(text("scratch.ts")));
+const file = argument(name("file"), description("a scratch file (default: the codebase's scratch.ts)"), schema(text(null)));
 const namespace = (what: string) => argument(name("namespace"), description(what), schema(text(null)));
 const definition = (what = "a name or #hash") => argument(name("name"), description(what), schema(text(null)));
 const port = (n: number) => option(name("port"), description("port to listen on"), schema(count(n)));
@@ -60,15 +60,21 @@ const contributionId = argument(name("id"), description("its number (see tcm con
 export const root = command(name("tcm"), description("a content-addressed codebase manager for TypeScript"), version(`hash format v${IR_VERSION}, TypeScript ${TS_VERSION}`), fresh, into);
 
 /**
+ * Scratch files a command takes (none: the codebase's scratch.ts).
+ */
+export const files = argument(name("files"), description("scratch files (default: the codebase's scratch.ts)"), multiple(), schema(words));
+
+/**
  * Every command, by name, each its own route tree: parsing one command's arguments has a type TypeScript can
  * work out (the union of every route's intents, for all of tcm at once, is too deep for it).
  */
 export const commands = {
   init: command(name("init"), description("set up a codebase in this directory")),
   watch: command(name("watch"), description("watch scratch files: typecheck, hash, evaluate watch expressions and tests (the default command)"), fresh, into),
-  check: command(name("check"), description("one-shot version of watch"), file, fresh, into),
-  add: command(name("add"), description("save new definitions from a scratch file"), file, into),
-  update: command(name("update"), description("save, and replace changed definitions; dependents are re-hashed"), file, into),
+  check: command(name("check"), description("one-shot version of watch"), files, fresh, into),
+  add: command(name("add"), description("save new definitions from scratch files"), files, into),
+  update: command(name("update"), description("save, and replace changed definitions; dependents are re-hashed"), files, into),
+  status: command(name("status"), description("where things stand: the branch, the codebase by namespace, unsaved scratch work, todo, the mirror")),
   import: command(
     name("import"),
     description("add an existing project: one namespace per file"),
@@ -87,6 +93,16 @@ export const commands = {
     toggle(name("unlink"), description("stop writing back; the files stay as they are")),
   ),
   edit: command(name("edit"), description("write definitions to a scratch file for editing"), argument(name("names"), description("names or #hashes"), multiple(), schema(words)), option(name("file"), description("the scratch file (default scratch.ts, or scratch.tsx for JSX)"), schema(text(null))), force("replace what a scratch file holds, unsaved definitions too, instead of adding to it")),
+  at: command(name("at"), description("the definition at a line of a file (a scratch file, a definition's document, a generated module, a mirrored file), or all of them in it"), argument(name("place"), description("<file>[:<line>]"), schema(text(null)))),
+  patch: command(
+    name("patch"),
+    description("change a definition by find-and-replace on its code (as `tcm view` shows it), and save it as update does"),
+    definition("the definition to change"),
+    option(name("old"), description("text to find in it, once"), schema(text(null))),
+    option(name("new"), description("what replaces it"), schema(text(null))),
+    option(name("edits"), description('several edits, as JSON: [{"old": "…", "new": "…"}, …]'), schema(text(null))),
+    toggle(name("all"), description("replace every place the text is, not just the one")),
+  ),
   view: command(name("view"), description("show definitions with current names"), argument(name("names"), description("names or #hashes"), multiple(), schema(words))),
   ls: command(name("ls"), description("list names"), namespace("a namespace (default: everything)")),
   find: command(name("find"), description("search names and signatures; ':<type>' searches by type, e.g. ':(xs: T[]) => T'"), argument(name("query"), description("words, or :<type>"), multiple(), schema(words))),
@@ -114,7 +130,7 @@ export const commands = {
   test: command(
     name("test"),
     description("run tests (definitions named test… or under `tests`), and the suites packages declare; results are cached by hash, and by the code a suite ran"),
-    namespace("only tests under this namespace"),
+    argument(name("names"), description("only these tests, or the tests under these namespaces"), multiple(), schema(words)),
     fresh,
     toggle(name("definitions"), description("only the test definitions, not the suites")),
     option(name("bin"), description("run the suites against another build of a command (a package packed from the codebase), comma-separated: cmd=<path>"), schema(list)),

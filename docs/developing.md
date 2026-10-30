@@ -61,9 +61,10 @@ against the codebase's own tcm and cached by the code it ran.
 
 ## Working on tcm in tcm
 
-`pnpm tcm <command>` runs tcm on tcm's own codebase, in `codebase/` (not in git). The first run imports
-the repository into it as a [mirror](importing.md#mirrors), with the tests, so changes made through tcm are written
-back to its files, and those edits are what's committed:
+`pnpm tcm <command>` runs tcm on tcm's own codebase, in `codebase/` (not in git), from wherever you run it, so
+paths you give it are yours (`TCM_CODEBASE` names the codebase; tcm doesn't pass it on to what it runs). The first
+run imports the repository into it as a [mirror](importing.md#mirrors), with the tests, so changes made through
+tcm are written back to its files, and those edits are what's committed:
 
 ```sh
 pnpm tcm edit tcmts.core.semver.compatRange    # into codebase/scratch.ts
@@ -86,7 +87,9 @@ known-good tcm can't open it).
 The tcm doing the work isn't the one being changed. `pnpm tcm` (and so the MCP server) runs the build the last
 passing `pnpm verify` tested, kept in `dist/known-good` (`VERIFIED` there says what it was made from). A change
 that breaks tcm, even its mirror, can't break the tcm writing it to the files, and a git checkout doesn't change
-the tcm that's running. `pnpm verify` replaces it when everything passes.
+the tcm that's running. `pnpm verify` replaces it when everything passes, and a running `tcm mcp` picks the new one
+up by itself ([agents](agents.md#a-new-tcm-without-restarting)). To keep working while verify runs, work in a
+session (`TCM_BRANCH=agent/x pnpm tcm …`, or an agent's `tcm mcp --session` beside another): verify reads `main`.
 
 The code being changed is what runs everywhere else: `tcm test tcmts` runs the codebase's own test definitions,
 and its end-to-end tests as [suites](testing.md#suites-testing-a-command-as-a-program) against the codebase's own

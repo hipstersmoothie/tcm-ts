@@ -57,6 +57,9 @@ import { groupImports } from "@tcm/loader";
 import { isNamedImports } from "typescript/ast";
 import type { ImportDeclaration } from "typescript/ast";
 import { pruneImports } from "./mirror.ts";
+import { lineDiff } from "./diff.ts";
+import { hashesOfViewFile, srcDir } from "./views.ts";
+import { superviseMcp, registerMcpServer, liveMcpServers } from "./mcp.ts";
 
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
@@ -111,12 +114,16 @@ const STATUS_LABEL: Record<Status, string> = {
 };
 
 function printRows(rows: Row[]) {
+  // what's identical says nothing new: more than a few are one line
+  const same = rows.filter((r) => r.status === "identical");
+  const quiet = same.length > 3;
   for (const r of rows) {
+    if (quiet && r.status === "identical") continue;
     // a report line per definition: a type too long for one is cut (`tcm view` has all of it)
-    const full = r.def.kind === "type" ? r.def.signature : `: ${r.def.signature}`;
-    const sig = dim(full.length > SIGNATURE_WIDTH ? `${full.slice(0, SIGNATURE_WIDTH - 1)}…` : full);
+    const sig = dim(cutSignature(r.def.kind === "type" ? r.def.signature : `: ${r.def.signature}`));
     console.log(`${STATUS_LABEL[r.status]} ${bold(r.path)} ${sig}${r.note ? dim(`  (${r.note})`) : ""}`);
   }
+  if (quiet) console.log(dim(`  = identical ${same.length}: ${listed(same.map((r) => r.path), 4)}`));
 }
 
 function analyzeScratch(cb: Codebase, file: string, into?: string, text?: string) {
@@ -265,7 +272,7 @@ function apply(cb: Codebase, rows: Row[], mode: "add" | "update", command: strin
   checkStoredRows(cb, rows.map((r) => r.def));
   if (patches.size) {
     const { updated, failed } = cb.propagate(patches);
-    for (const p of updated) console.log(`${yellow("  ~ updated  ")} ${bold(p)} ${dim("(dependent)")}`);
+    printDependents(updated);
     if (failed.length) console.log(red(`\n  ${failed.length} dependent definition(s) no longer typecheck; see \`tcm todo\``));
   }
   cb.refreshShim();
@@ -441,7 +448,7 @@ function verify(cb: Codebase): boolean {
 function header(cb: Codebase, hash: string): string {
   const rec = cb.store.getDef(hash)!;
   const names = cb.store.pathsOf(hash);
-  const line = `${dim("//")} ${bold(names.join(", ") || "(unnamed)")} ${dim(shortHash(hash))} ${dim(rec.kind === "type" ? rec.signature : ": " + rec.signature)}`;
+  const line = `${dim("//")} ${bold(names.join(", ") || "(unnamed)")} ${dim(shortHash(hash))} ${dim(cutSignature(rec.kind === "type" ? rec.signature : ": " + rec.signature))}`;
   if (rec.kind === "type") return line;
   const placement = new Placement(cb);
   return `${line}
@@ -475,7 +482,7 @@ function ls(cb: Codebase, ns = "") {
   for (const r of rows) kindsAt.set(r.path, [...(kindsAt.get(r.path) ?? []), r.kind]);
   for (const r of rows) {
     const rec = cb.store.getDef(r.hash)!;
-    const sig = rec.kind === "type" ? rec.signature : `: ${rec.signature}`;
+    const sig = cutSignature(rec.kind === "type" ? rec.signature : `: ${rec.signature}`, Math.max(40, SIGNATURE_WIDTH - width));
     // conflicted only with definitions in its own space: a type isn't part of a clash between two values
     const conflict = kindsAt.get(r.path)!.filter((k) => sameSpace(k, r.kind)).length > 1 ? red(" (conflicted)") : "";
     console.log(`${r.path.padEnd(width)}  ${dim(shortHash(r.hash))}  ${dim(sig)}${conflict}`);
@@ -487,7 +494,7 @@ function find(cb: Codebase, query: string) {
   const q = query.trim().toLowerCase();
   const hits = cb.store.names(undefined, true).filter((n) => n.path.toLowerCase().includes(q) || cb.store.getDef(n.hash)!.signature.toLowerCase().includes(q));
   if (!hits.length) return console.log(dim("no matches"));
-  for (const n of hits) console.log(`${bold(n.path)}  ${dim(shortHash(n.hash))}  ${dim(cb.store.getDef(n.hash)!.signature)}`);
+  for (const n of hits) console.log(`${bold(n.path)}  ${dim(shortHash(n.hash))}  ${dim(cutSignature(cb.store.getDef(n.hash)!.signature, Math.max(40, SIGNATURE_WIDTH - n.path.length)))}`);
 }
 
 /** `tcm find ':<type>'`: terms whose type has that shape (see search.ts). */
@@ -495,7 +502,7 @@ function findByType(cb: Codebase, text: string) {
   const r = searchByType(cb, text);
   if (r.variables.length) console.log(dim(`type variables: ${r.variables.join(", ")}`));
   if (!r.hits.length) return console.log(dim("no matches"));
-  for (const h of r.hits) console.log(`${bold(h.path)}  ${dim(shortHash(h.hash))}  ${dim(h.signature)}${h.cost ? `  ${yellow(h.notes.join(", "))}` : ""}`);
+  for (const h of r.hits) console.log(`${bold(h.path)}  ${dim(shortHash(h.hash))}  ${dim(cutSignature(h.signature, Math.max(40, SIGNATURE_WIDTH - h.path.length)))}${h.cost ? `  ${yellow(h.notes.join(", "))}` : ""}`);
 }
 
 function deps(cb: Codebase, target: string) {
@@ -841,7 +848,16 @@ async function dispatch(argv: string[]): Promise<number> {
   const cwd = process.cwd();
   // a session's scratch files are its own, in its directory (`tcm mcp --branch`, TCM_BRANCH): a file named by
   // itself is there, and one with a path is where the path says
-  const scratch = (f = "scratch.ts") => path.resolve(process.env.TCM_BRANCH && !/[\\/]/.test(f) ? sessionDirFor(Codebase.findRoot(cwd), process.env.TCM_BRANCH) : cwd, f);
+  // a file given is where the caller says; the default one is the codebase's (or its session's), wherever tcm runs
+  const scratch = (f?: string, fallback = "scratch.ts") => {
+    if (process.env.TCM_BRANCH && !/[\\/]/.test(f ?? "")) return path.resolve(sessionDirFor(Codebase.findRoot(cwd), process.env.TCM_BRANCH), f ?? fallback);
+    if (f !== undefined) return path.resolve(cwd, f);
+    try {
+      return path.join(Codebase.findRoot(cwd), fallback);
+    } catch {
+      return path.resolve(cwd, fallback);
+    }
+  };
   // the test runner's child process (see vitest.ts), not a command anyone types
   if (argv[0] === "internal-vitest") return (await vitestChild(argv[1]!), 0);
 
@@ -889,16 +905,27 @@ square(12);
     const { model } = execute(cmd, parse(commands.mcp, { argv: rest }));
     // a session: every command it runs works on its own branch, made from the codebase's own if it's new (with
     // --session, a new one for each server: every agent sharing one .mcp.json gets its own)
-    const branch = model.branch ?? (model.session ? `session/${new Date().toISOString().slice(0, 10)}-${randomBytes(3).toString("hex")}` : undefined);
+    const root = Codebase.findRoot(cwd);
+    // (its tools run tcm in the codebase's directory: paths they're given are the codebase's)
+    if (process.env.TCM_MCP_SERVER) {
+      await serveMcp(root, [process.execPath, ...process.execArgv, process.argv[1]!], `TypeScript ${TS_VERSION}`, process.env.TCM_BRANCH || undefined);
+      return 0;
+    }
+    // with --session, an agent works on its own branch while another's server is running on this codebase, and on
+    // the codebase's own when it's the only one (nothing to keep apart, nothing to merge)
+    const alone = model.session && !model.branch && !liveMcpServers(root).length;
+    const branch = model.branch ?? (model.session && !alone ? `session/${new Date().toISOString().slice(0, 10)}-${randomBytes(3).toString("hex")}` : undefined);
+    if (branch || alone) delete process.env.TCM_BRANCH;
     if (branch) {
-      delete process.env.TCM_BRANCH;
       const cb = Codebase.find(cwd);
       if (!cb.store.hasBranch(branch)) cb.store.createBranch(branch);
       cb.store.close();
       process.env.TCM_BRANCH = branch;
     }
-    await serveMcp(cwd, [process.execPath, ...process.execArgv, process.argv[1]!], `TypeScript ${TS_VERSION}`, process.env.TCM_BRANCH || undefined);
-    return 0;
+    registerMcpServer(root, process.env.TCM_BRANCH || undefined);
+    // the server proper, under a supervisor that starts it again when this tcm is replaced
+    const env = { ...process.env, TCM_MCP_SERVER: "1", ...(alone ? { TCM_MCP_ALONE: "1" } : {}) };
+    return await superviseMcp([process.execPath, ...process.execArgv, process.argv[1]!, "mcp"], env, root, process.argv[1]!);
   }
   if (cmd === "lsp") {
     execute(cmd, parse(commands.lsp, { argv: rest }));
@@ -929,14 +956,24 @@ square(12);
       watch(cb, checkInto(model.into), model.fresh);
       return -1; // keep running
     }
+    case "status": {
+      execute(cmd, parse(commands.status, { argv: rest }));
+      status(cb);
+      return 0;
+    }
     case "check": {
       const { model } = execute(cmd, parse(commands.check, { argv: rest }));
-      return check(cb, scratch(model.file), checkInto(model.into), model.fresh) ? 0 : 1;
+      // each file in turn (none: the codebase's scratch.ts)
+      let ok = true;
+      for (const f of model.files.length ? model.files : [undefined]) ok = check(cb, scratch(f), checkInto(model.into), model.fresh) && ok;
+      return ok ? 0 : 1;
     }
     case "add":
     case "update": {
       const { model } = execute(cmd, parse(commands[cmd], { argv: rest }));
-      return save(cb, scratch(model.file), cmd, checkInto(model.into)) ? 0 : 1;
+      let ok = true;
+      for (const f of model.files.length ? model.files : [undefined]) ok = save(cb, scratch(f), cmd, checkInto(model.into)) && ok;
+      return ok ? 0 : 1;
     }
     case "import": {
       const { model } = execute(cmd, parse(commands.import, { argv: rest }));
@@ -1041,11 +1078,14 @@ square(12);
     }
     case "test": {
       const { model } = execute(cmd, parse(commands.test, { argv: rest }));
-      const ns = model.namespace ?? "";
+      // the tests named, or under the namespaces named (all of them, with none)
+      const wanted = model.names.length ? model.names : [""];
+      const ns = wanted.join(", ");
+      const under = (p: string) => wanted.some((w) => !w || p === w || p.startsWith(w + "."));
       // test definitions a package runs its command with are run as programs of their own, with the suites
-      const declared = suitesIn(cb, ns);
+      const declared = [...new Map(wanted.flatMap((w) => suitesIn(cb, w)).map((s) => [s.path, s])).values()];
       const commandTests = new Set(suitesIn(cb, "").map((s) => s.path));
-      const names = cb.store.names().filter((n) => n.kind !== "type" && isTestPath(n.path) && !commandTests.has(n.path) && (!ns || n.path === ns || n.path.startsWith(ns + ".")));
+      const names = cb.store.names().filter((n) => n.kind !== "type" && isTestPath(n.path) && !commandTests.has(n.path) && under(n.path));
       const suites = model.definitions ? [] : declared;
       if (!names.length && !suites.length) {
         console.log(dim(`no tests${ns ? ` under ${ns}` : ""} (tests are definitions named test… or under a \`tests\` namespace)`));
@@ -1186,10 +1226,31 @@ square(12);
       serve(cb, { host: model.host, port: model.port, token, allowRun: model.run, tls, showToken: !given, ...(site ? { site } : {}) }, model.insecure);
       return -1; // keep running
     }
+    case "at": {
+      const { model } = execute(cmd, parse(commands.at, { argv: rest }));
+      if (!model.place) throw new UsageError("usage: tcm at <file>[:<line>], e.g. `tcm at scratch.ts:12`");
+      at(cb, model.place);
+      return 0;
+    }
+    case "patch": {
+      const { model } = execute(cmd, parse(commands.patch, { argv: rest }));
+      if (!model.name) throw new UsageError('usage: tcm patch <name> --old <text> --new <text> (or --edits \'[{"old": "…", "new": "…"}]\')');
+      let edits: PatchEdit[] = [];
+      if (model.edits !== undefined) {
+        try {
+          edits = (JSON.parse(model.edits) as PatchEdit[]).map((e) => ({ old: String(e.old ?? ""), new: String(e.new ?? "") }));
+        } catch (e) {
+          throw new UsageError(`--edits isn't JSON: ${(e as Error).message}`);
+        }
+      }
+      if (model.old !== undefined) edits.push({ old: model.old, new: model.new ?? "" });
+      if (!edits.length) throw new UsageError("tcm patch needs --old and --new, or --edits");
+      return patch(cb, model.name, edits, model.all) ? 0 : 1;
+    }
     case "edit": {
       const { model } = execute(cmd, parse(commands.edit, { argv: rest }));
       const names = model.names.length ? model.names : [await chooseName(cb, "edit <name>...", "Edit which definition?")];
-      edit(cb, names, model.file !== undefined ? scratch(model.file) : (jsx) => scratch(jsx ? "scratch.tsx" : "scratch.ts"), model.force);
+      edit(cb, names, model.file !== undefined ? scratch(model.file) : (jsx) => scratch(undefined, jsx ? "scratch.tsx" : "scratch.ts"), model.force);
       return 0;
     }
     case "export": {
@@ -1920,4 +1981,240 @@ export function importedLocals(st: ImportDeclaration): string[] {
   if (!c) return [];
   const b = c.namedBindings;
   return [...(c.name ? [c.name.text] : []), ...(b && ts_isNamespaceImport(b) ? [b.name.text] : b && isNamedImports(b) ? b.elements.map((e) => e.name.text) : [])];
+}
+
+/**
+ * A signature on one line, cut at `width` (`tcm view` shows all of it): a long literal type, or an object type
+ * written over lines, doesn't flood a listing.
+ */
+export function cutSignature(sig: string, width = SIGNATURE_WIDTH): string {
+  const one = sig.replace(/\s*\n\s*/g, " ");
+  return one.length > width ? `${one.slice(0, width - 1)}…` : one;
+}
+
+/**
+ * Names, the first `n` of them and how many more.
+ */
+export function listed(names: string[], n: number): string {
+  return names.length > n ? `${names.slice(0, n).join(", ")}, and ${names.length - n} more` : names.join(", ");
+}
+
+/**
+ * Dependents re-hashed by an update: a line each when there are a few, else by namespace, with how many and the
+ * first of them (`tcm diff` lists them all).
+ */
+export function printDependents(paths: string[]) {
+  if (!paths.length) return;
+  if (paths.length <= 6) {
+    for (const p of paths) console.log(`${yellow("  ~ updated  ")} ${bold(p)} ${dim("(dependent)")}`);
+    return;
+  }
+  const byNs = new Map<string, string[]>();
+  for (const p of paths) {
+    const ns = p.slice(0, Math.max(0, p.lastIndexOf(".")));
+    byNs.set(ns, [...(byNs.get(ns) ?? []), p.slice(ns ? ns.length + 1 : 0)]);
+  }
+  console.log(`${yellow("  ~ updated  ")} ${paths.length} dependents ${dim("(re-hashed: what they use changed; `tcm diff` lists them)")}`);
+  for (const [ns, leaves] of [...byNs].sort((a, b) => b[1].length - a[1].length)) console.log(`      ${bold(ns || "(root)")} ${dim(`${leaves.length}: ${listed(leaves, 5)}`)}`);
+}
+
+/**
+ * Listings cut long signatures to one line; reports say a lot of sameness in a line.
+ */
+export const testOutputIsShort = () => {
+  assert.equal(cutSignature(": { a: number;\n  b: string }"), ": { a: number; b: string }");
+  assert.equal(cutSignature("x".repeat(200), 10), "xxxxxxxxx…");
+  assert.equal(listed(["a", "b", "c"], 2), "a, b, and 1 more");
+  const lines: string[] = [];
+  const log = console.log;
+  const colour = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+  console.log = (s: string) => void lines.push(s.replace(colour, ""));
+  try {
+    printDependents(["lib.a", "lib.b", "lib.c", "lib.d", "lib.e", "lib.f", "app.g"]);
+  } finally {
+    console.log = log;
+  }
+  assert.match(lines[0]!, /~ updated +7 dependents/);
+  assert.equal(lines[1]!.trim(), "lib 6: a, b, c, d, e, and 1 more");
+  assert.equal(lines[2]!.trim(), "app 1: g");
+}
+
+/**
+ * A change `tcm patch` makes: text to find, and what replaces it.
+ */
+export interface PatchEdit {
+  old: string;
+  new: string;
+}
+
+/**
+ * The edits made to `text`: each `old` must be in it exactly once (every one, with `all`), else why not.
+ */
+export function applyPatch(text: string, edits: PatchEdit[], all = false): { text: string } | { problem: string } {
+  let out = text;
+  for (const e of edits) {
+    if (!e.old) return { problem: "an edit has no old text to find" };
+    const n = out.split(e.old).length - 1;
+    if (!n) return { problem: `not found: ${JSON.stringify(e.old.length > 80 ? `${e.old.slice(0, 79)}…` : e.old)}` };
+    if (n > 1 && !all) return { problem: `found ${n} times: ${JSON.stringify(e.old.length > 80 ? `${e.old.slice(0, 79)}…` : e.old)} (give more of the text around it, or --all)` };
+    out = all ? out.split(e.old).join(e.new) : out.replace(e.old, () => e.new);
+  }
+  return { text: out };
+}
+
+/**
+ * `tcm patch <name>`: change a definition by find-and-replace on its code as `tcm view` shows it (current names),
+ * then save it as `tcm update` does: checked, its dependents re-hashed. Nothing is saved if an edit doesn't apply
+ * or the result doesn't typecheck. The change is shown as lines removed and added.
+ */
+export function patch(cb: Codebase, name: string, edits: PatchEdit[], all: boolean): boolean {
+  const jsx = cb.lookup(name).some((h) => cb.store.getDef(h)?.jsx);
+  // a scratch file of its own, where the codebase's are (so `#codebase` resolves), gone afterwards
+  const file = path.join(cb.sessionDir ?? cb.lay.root, `patch-${process.pid}${jsx ? ".tsx" : ".ts"}`);
+  const log = console.log;
+  try {
+    console.log = () => {};
+    try {
+      edit(cb, [name], file, true);
+    } finally {
+      console.log = log;
+    }
+    const before = fs.readFileSync(file, "utf8");
+    const r = applyPatch(before, edits, all);
+    if ("problem" in r) throw new UsageError(`${name}: ${r.problem}; nothing was changed (\`tcm view ${name}\` shows its code)`);
+    if (r.text === before) {
+      console.log(dim(`${name}: no change`));
+      return true;
+    }
+    fs.writeFileSync(file, r.text);
+    console.log(dim(`${name}:`));
+    for (const [op, line] of lineDiff(before.split("\n"), r.text.split("\n"))) {
+      if (op === "-") console.log(red(`  - ${line}`));
+      else if (op === "+") console.log(green(`  + ${line}`));
+    }
+    console.log();
+    return save(cb, file, "update");
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+}
+
+/**
+ * A patch's edits apply where their text is, once each unless every one is asked for; else nothing changes.
+ */
+export const testApplyPatch = () => {
+  assert.deepEqual(applyPatch("a + b", [{ old: "b", new: "c" }]), { text: "a + c" });
+  assert.deepEqual(applyPatch("x = 1; y = 1", [{ old: "1", new: "2" }], true), { text: "x = 2; y = 2" });
+  assert.match((applyPatch("x = 1; y = 1", [{ old: "1", new: "2" }]) as { problem: string }).problem, /found 2 times/);
+  assert.match((applyPatch("x", [{ old: "z", new: "y" }]) as { problem: string }).problem, /not found/);
+  // `$&` in the new text is text, not a pattern
+  assert.deepEqual(applyPatch("a", [{ old: "a", new: "$&$&" }]), { text: "$&$&" });
+}
+
+/**
+ * `tcm at <file>[:<line>]`: the definition at a line of a file, or every definition in it with its lines. For
+ * scratch files, definitions' documents, generated modules (what stack traces name) and mirrored files.
+ */
+export function at(cb: Codebase, arg: string) {
+  const m = /^(.*?)(?::(\d+))?(?::\d+)?$/.exec(arg)!;
+  const file = path.resolve(process.cwd(), m[1]!);
+  if (!fs.existsSync(file)) throw new UsageError(`no file ${m[1]}`);
+  const line = m[2] ? Number(m[2]) : undefined;
+  const text = fs.readFileSync(file, "utf8");
+  const lineOf = (offset: number) => text.slice(0, offset).split("\n").length;
+  const name = nameAt(cb, file, text);
+  const decls = [...declarations(file, text)].map(([leaf, d]) => ({ leaf, from: lineOf(d.doc?.start ?? d.start), to: lineOf(d.end), at: lineOf(d.start) }));
+  const shown = line === undefined ? decls : decls.filter((d) => d.from <= line && line <= d.to);
+  if (!shown.length) return console.log(dim(line === undefined ? `no definitions in ${m[1]}` : `line ${line} of ${m[1]} isn't in a definition`));
+  for (const d of shown.sort((a, b) => a.from - b.from)) {
+    const full = name(d.leaf, d.at);
+    let hashes: string[] = [];
+    try {
+      hashes = full ? cb.lookup(full) : [];
+    } catch {
+      hashes = [];
+    }
+    const rec = hashes[0] ? cb.store.getDef(hashes[0]) : undefined;
+    const what = rec ? `${dim(shortHash(rec.hash))}  ${dim(cutSignature(rec.kind === "type" ? rec.signature : `: ${rec.signature}`, 80))}` : dim("(not in the codebase)");
+    console.log(`${bold(full ?? d.leaf)}  ${what}  ${dim(`lines ${d.from}–${d.to}`)}`);
+  }
+}
+
+/**
+ * The codebase name of a definition declared as `leaf` at `line` of `file`: a definition's document (.tcm/src) is
+ * one name's, a generated module (.tcm/cache) a component's, a mirrored file its namespace's, and a scratch file's
+ * say where they go (`// tcm: path`, or its `// tcm: namespace`).
+ */
+export function nameAt(cb: Codebase, file: string, text: string): (leaf: string, line: number) => string | undefined {
+  const inside = (dir: string) => !path.relative(dir, file).startsWith("..");
+  if (inside(srcDir(cb))) {
+    const name = hashesOfViewFile(cb, file).map((h) => cb.store.pathsOf(h)[0]).find(Boolean);
+    return () => name;
+  }
+  if (inside(cb.lay.cacheDir)) {
+    const members = cb.store.componentMembers(path.basename(file).replace(/\.tsx?$/, "")).flatMap((m) => cb.store.pathsOf(m.hash));
+    return (leaf) => members.find((p) => p.slice(p.lastIndexOf(".") + 1) === leaf);
+  }
+  const m = loadMirror(cb);
+  const mirrored = m?.files[path.relative(m.dir, file)];
+  if (mirrored) return (leaf) => joinName(mirrored.ns, leaf);
+  const lines = text.split("\n");
+  const ns = /^\/\/ tcm: namespace (\S+)/m.exec(text)?.[1] ?? "";
+  return (leaf, line) => {
+    // a `// tcm: path` line above the declaration (and its doc) says where it goes
+    for (let i = line - 2; i >= 0 && i >= line - 40; i--) {
+      const p = /^\/\/ tcm: path (\S+)/.exec(lines[i]!);
+      if (p) return p[1];
+      if (lines[i]!.trim() && !/^\s*(\/\/|\/\*|\*)/.test(lines[i]!)) break;
+    }
+    return joinName(ns, leaf);
+  };
+}
+
+/**
+ * `tcm status`: where things stand. The branch; what's in the codebase, by namespace; what needs fixing; scratch
+ * files holding work that isn't saved, and what saving them would do; and whether a mirror's files are in step.
+ */
+export function status(cb: Codebase) {
+  console.log(`${bold("branch")}  ${cb.store.branch().name}${cb.sessionDir ? dim("  (a session: `tcm merge` lands it)") : ""}`);
+  const names = cb.store.names(undefined, true);
+  // by namespace, as deep as fits in a screenful
+  let counts = new Map<string, number>();
+  for (let depth = 3; depth > 0; depth--) {
+    counts = new Map();
+    for (const n of names) {
+      const segs = n.path.split(".");
+      const ns = segs.slice(0, Math.min(segs.length - 1, depth)).join(".") || "(root)";
+      counts.set(ns, (counts.get(ns) ?? 0) + 1);
+    }
+    if (counts.size <= 20) break;
+  }
+  console.log(`\n${bold(`${names.length} named definition${names.length === 1 ? "" : "s"}`)}${counts.size > 1 ? dim(", by namespace") : ""}`);
+  const width = Math.max(0, ...[...counts.keys()].map((k) => k.length));
+  for (const [ns, n] of [...counts].sort()) console.log(`  ${ns.padEnd(width)}  ${dim(String(n))}`);
+  // scratch files with what isn't saved yet
+  const dir = cb.sessionDir ?? cb.lay.root;
+  const scratch = fs.readdirSync(dir).filter((f) => /\.tsx?$/.test(f) && !f.endsWith(".d.ts")).map((f) => path.join(dir, f));
+  const work: string[] = [];
+  for (const file of scratch) {
+    if (!fs.readFileSync(file, "utf8").trim()) continue;
+    const a = cb.analyze(file, cb.scratchSalts());
+    const rel = path.relative(process.cwd(), file);
+    if (a.errors.length || a.diagnostics.length) {
+      work.push(`  ${rel}  ${yellow(`doesn't check (${a.errors.length + a.diagnostics.length} problem${a.errors.length + a.diagnostics.length === 1 ? "" : "s"}): \`tcm check ${rel}\``)}`);
+      continue;
+    }
+    const tally = new Map<string, number>();
+    for (const r of classify(cb, a.defs, a.namespace ?? "")) if (r.status !== "identical") tally.set(r.status, (tally.get(r.status) ?? 0) + 1);
+    if (tally.size) work.push(`  ${rel}  ${[...tally].map(([s, n]) => `${n} ${s}`).join(", ")}${dim(`: \`tcm ${tally.has("update") || tally.has("conflict") ? "update" : "add"} ${rel}\` saves ${[...tally.values()].reduce((x, y) => x + y, 0) > 1 ? "them" : "it"}`)}`);
+  }
+  console.log(`\n${bold("scratch files")}`);
+  console.log(work.length ? work.join("\n") : dim("  nothing unsaved"));
+  console.log(`\n${bold("todo")}`);
+  todo(cb);
+  const m = loadMirror(cb);
+  if (m) {
+    const behind = onMirrorBranch(cb, m) && m.log !== cb.store.logHead();
+    console.log(`\n${bold("mirror")}  ${path.relative(process.cwd(), m.dir) || "."} ${dim(`(${Object.keys(m.files).length} files)`)}  ${behind ? yellow("behind: the codebase changed since the files were written (the next command writes them, or says why it can't)") : green("in step")}`);
+  }
 }

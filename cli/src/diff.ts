@@ -92,7 +92,7 @@ export function diffNamespaces(before: NameState, after: NameState, irOf: (hash:
 }
 
 /** Longest-common-subsequence line diff. Definitions are short, so O(n·m) is fine. */
-function lineDiff(a: string[], b: string[]): [" " | "-" | "+", string][] {
+export function lineDiff(a: string[], b: string[]): [" " | "-" | "+", string][] {
   const lcs = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
   for (let i = a.length - 1; i >= 0; i--) {
     for (let j = b.length - 1; j >= 0; j--) lcs[i]![j] = a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);

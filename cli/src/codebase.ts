@@ -163,8 +163,9 @@ export class Codebase {
     return new Codebase(Codebase.findRoot(cwd));
   }
 
-  /** The nearest directory at or above `cwd` holding a codebase. */
+  /** The nearest directory at or above `cwd` holding a codebase, or the one `TCM_CODEBASE` names. */
   static findRoot(cwd: string): string {
+    if (namedCodebase) return namedCodebase;
     for (let dir = cwd; ; dir = path.dirname(dir)) {
       if (fs.existsSync(path.join(dir, ".tcm", "codebase.sqlite"))) return dir;
       if (path.dirname(dir) === dir) throw new Error("no tcm codebase here; run `tcm init` first");
@@ -787,7 +788,8 @@ function setUpAgents(root: string) {
 
 This project's code is a tcm codebase (.tcm/codebase.sqlite), not source files: definitions are stored by hash and
 changed through tcm. Use the tcm MCP server's tools (configured in .mcp.json: tcm_status, tcm_find, tcm_view,
-tcm_edit, tcm_update, tcm_test, tcm_guide), or the CLI: \`tcm edit <name>\` writes definitions to a scratch file,
+tcm_patch, tcm_edit, tcm_update, tcm_test, tcm_guide), or the CLI: \`tcm patch <name> --old … --new …\` makes a small
+change in one step, \`tcm edit <name>\` writes definitions to a scratch file,
 \`tcm update\` saves it and re-hashes what depends on it, \`tcm todo\` lists what stopped typechecking, \`tcm test\`
 runs tests (cached by hash). Don't edit files under .tcm/. \`tcm help\` lists every command.
 `;
@@ -837,3 +839,13 @@ export function fileProblem(rec: DefRecord): string | undefined {
 export function sessionDirFor(root: string, branch: string): string {
   return path.join(root, ".tcm", "sessions", branch.replace(/[^\w.-]/g, "_"));
 }
+
+/**
+ * The codebase `TCM_CODEBASE` names, for running tcm from elsewhere (paths given to it are the caller's). Read once,
+ * and taken out of the environment: what tcm runs (tests, programs, other tcms) works on its own directory's.
+ */
+export const namedCodebase: string | undefined = (() => {
+  const dir = process.env.TCM_CODEBASE;
+  delete process.env.TCM_CODEBASE;
+  return dir ? path.resolve(dir) : undefined;
+})();

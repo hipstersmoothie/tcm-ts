@@ -22,14 +22,16 @@ they finish.
 
 | Tool | |
 |---|---|
-| `tcm_status` | namespaces and how many definitions each holds, what needs fixing, the [mirror](importing.md#mirrors) if there is one |
+| `tcm_status` | where things stand: the branch, the codebase by namespace, scratch files holding unsaved work, what needs fixing, the [mirror](importing.md#mirrors) if there is one |
 | `tcm_find` | names, docs and signatures; `:<type>` searches [by type](search.md) |
 | `tcm_view`, `tcm_docs` | definitions with current names and where they run, as Markdown: a line with each one's names, hash and placement, then its code (or a file's content) in a highlighted block; documentation, examples evaluated |
 | `tcm_deps`, `tcm_dependents` | what a definition uses, and what uses it |
 | `tcm_edit` | definitions into a scratch file, its path and contents returned (the contents in a highlighted block); a scratch file holding unsaved work keeps it: the definitions are added to it |
+| `tcm_patch` | a small change in one step: find-and-replace on a definition's code as `tcm_view` shows it, checked and saved as `tcm_update` does, the change shown; nothing is saved if an edit doesn't apply or the result doesn't typecheck |
+| `tcm_at` | which definition is at a line of a file (a stack trace's, a search result's), or every definition in a file with its lines |
 | `tcm_check`, `tcm_update` | what saving a scratch file would do; saving it |
 | `tcm_todo` | conflicts, and dependents that stopped typechecking |
-| `tcm_test`, `tcm_run` | tests (cached by hash, `fresh` to run them all) and [suites](testing.md#suites-testing-a-command-as-a-program) (cached by the code they ran, `definitions` to leave them out); running a definition |
+| `tcm_test`, `tcm_run` | tests (cached by hash, `names` for only some, `fresh` to run them all) and [suites](testing.md#suites-testing-a-command-as-a-program) (cached by the code they ran, `definitions` to leave them out); running a definition |
 | `tcm_mv`, `tcm_rm`, `tcm_history` | renaming, removing, history |
 | `tcm_merge` | in a [session](#several-agents-at-once-sessions): land its branch on `main`, once the tests the change reaches pass |
 | `tcm_cli` | any other command ([CLI](cli.md)) |
@@ -39,7 +41,9 @@ they finish.
 
 Agents can work in one codebase at the same time, each in a session: `tcm mcp --branch agent/a`, or
 `tcm mcp --session` for a new branch of its own each time it starts (`session/<date>-<id>`), which is what an
-`.mcp.json` every agent shares wants. A session:
+`.mcp.json` every agent shares wants. With `--session`, an agent that's the only one working on the codebase (no
+other `tcm mcp` running on it: each records itself in `.tcm/mcp/`) works on the codebase's own branch instead,
+with nothing to merge; its instructions say so. A session:
 
 - **works on its own branch** (made from the codebase's own if it's new), whatever the others do: `tcm switch` is
   refused there, and every command it runs is on its branch (`TCM_BRANCH` names it, for the CLI too);
@@ -52,7 +56,15 @@ Agents can work in one codebase at the same time, each in a session: `tcm mcp --
   the branch merged into `main`. The agent's instructions say all this.
 
 Test results are cached by hash, for everyone: a test one session ran doesn't run again in another for the same
-code.
+code. A session is also how to keep working while something long reads `main` (`pnpm verify` in tcm's own
+repository): the session's changes don't touch it until they land.
+
+## A new tcm, without restarting
+
+`tcm mcp` runs the server under a small supervisor. When tcm is replaced (upgraded, or, in tcm's own repository, a
+new known-good build verified), the supervisor starts the server again between requests, replays the client's
+handshake, and tells the client its tools changed (`notifications/tools/list_changed`), so new tools and fixes
+reach a running agent without restarting it.
 
 ## Without MCP
 

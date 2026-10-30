@@ -33,4 +33,8 @@ if [ ! -f .tcm/codebase.sqlite ]; then
     node "$TCM" import .. --into tcmts --tests --mirror >&2
   fi
 fi
+# run from where it was called (pnpm says where: INIT_CWD), so paths given to it are the caller's; TCM_CODEBASE
+# says which codebase (tcm takes it out of the environment of what it runs, so tests work on their own)
+export TCM_CODEBASE="$REPO/codebase"
+cd "${INIT_CWD:-$REPO/codebase}"
 exec node "$TCM" "$@"

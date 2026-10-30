@@ -27,6 +27,11 @@ export function sh(program: string, args: string[], cwd: string, env: NodeJS.Pro
 }
 
 /**
+ * tcm's own codebase, in the repository (where its tcm commands run).
+ */
+export const codebaseDir = (): string => path.join(repository(), "codebase");
+
+/**
  * Everything a change to tcm must pass, run from its codebase (`pnpm verify`, which is `pnpm tcm run
  * tcmts.dev.verify`), with the codebase's own tcm:
  *
@@ -44,7 +49,7 @@ export function sh(program: string, args: string[], cwd: string, env: NodeJS.Pro
 export async function verify(): Promise<void> {
   const tcm = process.env.TCM_BIN;
   if (!tcm) throw new Error("run this with `tcm run`, which gives it the codebase's own tcm (TCM_BIN)");
-  const codebase = process.cwd();
+  const codebase = codebaseDir();
   const repo = repository();
   const started = Date.now();
   let failed = false;
@@ -187,7 +192,7 @@ export function compareCompilers(): void {
   if (!installed.ok) throw new Error(`installing tsrs: ${installed.out}`);
   const tsrs = sh(process.execPath, ["--input-type=module", "-e", 'import("./node_modules/tsrs/lib/getExePath.js").then((m) => console.log(m.default()))'], tmp).out.trim();
   const hashes = (env: NodeJS.ProcessEnv) => {
-    const r = sh(process.execPath, [tcm, "run", "tcmts.dev.hashProject", repository()], process.cwd(), env);
+    const r = sh(process.execPath, [tcm, "run", "tcmts.dev.hashProject", repository()], codebaseDir(), env);
     if (!r.ok) throw new Error(r.out);
     return r.out.split("\n").filter((l) => /^\S+:\S+ [a-z2-7]+$/.test(l));
   };
@@ -200,7 +205,7 @@ export function compareCompilers(): void {
     return;
   }
   console.log(`identical hashes (${ours.length} definitions)`);
-  const golden = sh(process.execPath, [tcm, "test", "tcmts.core.test", "--definitions", "--fresh"], process.cwd(), { TCM_TYPESCRIPT: tsrs });
+  const golden = sh(process.execPath, [tcm, "test", "tcmts.core.test", "--definitions", "--fresh"], codebaseDir(), { TCM_TYPESCRIPT: tsrs });
   console.log(`golden hashes with tsrs: ${golden.out.trim().split("\n").at(-1)}`);
   process.exitCode = golden.ok ? 0 : 1;
 }
@@ -248,7 +253,7 @@ export async function deployServer(): Promise<void> {
   const environment = linked.environments.edges.find((e) => e.node.name === "production")?.node.id;
   if (!environment) throw new Error("the linked Railway project has no production environment");
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), "tcm-server-"));
-  const files = sh(process.execPath, [tcm, "export", "tcmts.server", stage], process.cwd());
+  const files = sh(process.execPath, [tcm, "export", "tcmts.server", stage], codebaseDir());
   if (!files.ok) throw new Error(`tcm export tcmts.server: ${files.out.trim()}`);
   fs.copyFileSync(path.join(good, tgz), path.join(stage, "tcm-ts.tgz"));
   const site = await buildSite(path.join(stage, "site"));
@@ -271,7 +276,7 @@ export function mirrorCommit(): void {
   const repo = repository();
   const git = (...args: string[]) => sh("git", ["-C", repo, ...args], repo);
   if (git("status", "--porcelain").out.trim()) throw new Error("the repository has changes git doesn't have yet: commit or stash them first");
-  const tcmIn = (...args: string[]) => sh(process.execPath, [tcm, ...args], process.cwd());
+  const tcmIn = (...args: string[]) => sh(process.execPath, [tcm, ...args], codebaseDir());
   const pulled = tcmIn("pull", "origin");
   if (!pulled.ok) throw new Error(`tcm pull origin: ${pulled.out.trim()}`);
   console.log(pulled.out.trim());

@@ -157,11 +157,15 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
   const byName = new Map<string, DefSite>();
 
   let targetPath: string | undefined;
+  // a `// tcm: namespace` line below the one a scratch file starts with begins a section: the definitions after it
+  // go to that namespace
+  const fileNs = mode === "scratch" ? /^\/\/\s*tcm:\s*namespace\s+(\S+)/m.exec(sf.text.split("\n").slice(0, 5).join("\n"))?.[1] : undefined;
+  let section: string | undefined;
   let groups = 0;
   /** the current statement's directive comments: they go with its first definition (all of a destructuring's) */
   let directives: Piece[] = [];
   const push = (fields: Omit<DefSite, "id" | "isWatch" | "sf" | "targetPath">) => {
-    const site = { ...fields, targetPath };
+    const site = { ...fields, targetPath: targetPath ?? (section !== undefined ? (section ? `${section}.${fields.name}` : fields.name) : undefined) };
     if (directives.length) {
       site.pieces = [...directives, ...site.pieces];
       if (site.group === undefined) directives = [];
@@ -212,6 +216,8 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
     }
     const doc = jsDocText(st, sf);
     targetPath = pathPragma(st, sf);
+    const ns = mode === "scratch" ? namespacePragma(st, sf) : undefined;
+    if (ns !== undefined && (section !== undefined || ns !== fileNs)) section = ns;
     if (targetPath && ts.isVariableStatement(st) && st.declarationList.declarations.length > 1) {
       throw new TcmError("a `// tcm: path` comment names one definition; split this `const` list", st);
     }
@@ -415,4 +421,16 @@ export function extract(sf: ts.SourceFile, mode: ExtractMode = "scratch", firstI
     }
   }
   return { defs, watches, imports, warnings };
+}
+
+/**
+ * A `// tcm: namespace a.b` line among the comments before a statement: the namespace it names.
+ */
+export function namespacePragma(node: ts.Node, sf: ts.SourceFile): string | undefined {
+  let found: string | undefined;
+  for (const r of ts.getLeadingCommentRanges(sf.text, node.getFullStart()) ?? []) {
+    const m = /^\/\/\s*tcm:\s*namespace\s+(\S+)\s*$/.exec(sf.text.slice(r.pos, r.end));
+    if (m) found = m[1];
+  }
+  return found;
 }

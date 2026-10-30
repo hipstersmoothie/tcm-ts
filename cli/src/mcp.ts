@@ -7,17 +7,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { IR_VERSION } from "@tcm/core";
+import type { ChildProcess } from "node:child_process";
+import assert from "node:assert/strict";
+import os from "node:os";
 
 /** What the model is told when it connects: the way of working, in brief. tcm_guide has the rest. */
 export const INSTRUCTIONS = `This project's code is a tcm codebase (.tcm/codebase.sqlite): Unison's codebase model for TypeScript. Each top-level definition is stored by the hash of its code, and names (dotted paths, like lib.math.square) point at hashes. The codebase is the truth: there are no source files to edit (anything under .tcm/ is generated).
 
 To change code:
-1. Find it: tcm_find searches names, docs and signatures (or types: ":(xs: T[]) => T"); tcm_view shows definitions with their current names; tcm_dependents and tcm_deps follow references.
-2. tcm_edit the definitions you'll change. It writes them into a scratch file: ordinary TypeScript that imports the rest of the codebase from "#codebase/…". Edit that file with your usual file tools. New definitions go in a scratch file too, below a "// tcm: namespace a.b" line.
+1. Find it: tcm_find searches names, docs and signatures (or types: ":(xs: T[]) => T"); tcm_view shows definitions with their current names; tcm_dependents and tcm_deps follow references; tcm_at says which definition a line of a file (a stack trace's, say) is in.
+2. For a small change, tcm_patch does it in one step: find-and-replace on a definition's code as tcm_view shows it, checked and saved. For more, tcm_edit the definitions you'll change. It writes them into a scratch file: ordinary TypeScript that imports the rest of the codebase from "#codebase/…". Edit that file with your usual file tools. New definitions go in a scratch file too, below a "// tcm: namespace a.b" line.
 3. tcm_check typechecks the file and says what saving would do; tcm_update saves it. Dependents are re-hashed automatically; any that stop typechecking are in tcm_todo: fix them the same way (tcm_edit, then tcm_update).
 4. Tests are definitions named test… (or anything under a tests namespace). tcm_test runs them, cached by hash: only the tests your change reaches run again.
 
-Renames are tcm_mv: references are by hash, so nothing else changes. tcm_status shows what's in the codebase and what needs doing. tcm_guide explains more: the model, editing, testing, apps, packages and releases, mirrors. Any other command: tcm_cli.`;
+Renames are tcm_mv: references are by hash, so nothing else changes. tcm_status shows where things stand: what's in the codebase, unsaved scratch work, and what needs doing. tcm_guide explains more: the model, editing, testing, apps, packages and releases, mirrors. Any other command: tcm_cli.`;
 
 const GUIDE: Record<string, string> = {
   model: `# The model
@@ -107,32 +110,9 @@ function next(argv: string[], out: string, code: number): string | undefined {
 const TOOLS: Tool[] = [
   {
     name: "tcm_status",
-    description: "What's in the codebase: its namespaces (with how many definitions each), what needs fixing (todo), and whether it mirrors a directory of source files. Start here.",
+    description: "Where things stand: the branch you're on, the codebase by namespace (with how many definitions each), scratch files holding unsaved work (and what saving them would do), what needs fixing (todo), and whether a mirror's files are in step. Start here.",
     inputSchema: schema({}),
-    run: async (_a, ctx) => {
-      const ls = await ctx.tcm(["ls"]);
-      if (ls.code !== 0) return { text: ls.out, isError: true };
-      const counts = new Map<string, number>();
-      for (const line of ls.out.split("\n")) {
-        const p = line.split(/\s+/)[0];
-        if (!p || !/^[\w$.]+$/.test(p)) continue;
-        const segs = p.split(".");
-        const ns = segs.slice(0, Math.min(segs.length - 1, 3)).join(".") || "(root)";
-        counts.set(ns, (counts.get(ns) ?? 0) + 1);
-      }
-      const total = [...counts.values()].reduce((a, b) => a + b, 0);
-      const todo = await ctx.tcm(["todo"]);
-      const mirror = await ctx.tcm(["mirror"]);
-      return {
-        text: [
-          `${total} named definitions, by namespace:`,
-          ...[...counts].sort().map(([ns, n]) => `  ${ns}  ${n}`),
-          "",
-          `todo: ${todo.out || "nothing to do"}`,
-          mirror.code === 0 ? `\n${mirror.out}` : "",
-        ].join("\n"),
-      };
-    },
+    argv: () => ["status"],
   },
   {
     name: "tcm_find",
@@ -168,6 +148,26 @@ const TOOLS: Tool[] = [
     },
   },
   {
+    name: "tcm_patch",
+    description:
+      "Change a definition by find-and-replace on its code, as tcm_view shows it (current names), and save it as tcm_update does: checked, its dependents re-hashed, the tests it reaches named. Each `old` must be in it exactly once (or set `all`). Nothing is saved if an edit doesn't apply or the result doesn't typecheck. The quick way to make a small change; tcm_edit is for bigger ones.",
+    inputSchema: schema(
+      {
+        name: { type: "string", description: "the definition" },
+        edits: { type: "array", items: schema({ old: { type: "string" }, new: { type: "string" } }, ["old", "new"]), description: "what to find, and what replaces it, in order" },
+        all: { type: "boolean", description: "replace every place each old text is" },
+      },
+      ["name", "edits"],
+    ),
+    argv: (a) => ["patch", str(a.name), "--edits", JSON.stringify(a.edits), ...(a.all ? ["--all"] : [])],
+  },
+  {
+    name: "tcm_at",
+    description: "Which definition is at a line of a file (a scratch file, a definition's document in .tcm/src, a generated module in .tcm/cache as stack traces name them, a mirrored file); without a line, every definition in the file with its lines.",
+    inputSchema: schema({ place: { type: "string", description: "<file>[:<line>], relative to the project" } }, ["place"]),
+    argv: (a) => ["at", str(a.place)],
+  },
+  {
     name: "tcm_check",
     description: "Typecheck a scratch file and say what saving it would do (new, update, identical, conflict); watch expressions and tests in it are run.",
     inputSchema: schema({ file: { type: "string", description: "the scratch file (default scratch.ts)" } }),
@@ -182,13 +182,13 @@ const TOOLS: Tool[] = [
   { name: "tcm_todo", description: "What needs fixing: conflicted names, and dependents that stopped typechecking (with the error).", inputSchema: schema({}), argv: () => ["todo"] },
   {
     name: "tcm_test",
-    description: "Run tests (definitions named test…, or under a tests namespace), optionally in one namespace, and the suites packages declare (test files running a package's command). Results are cached by hash: only tests whose code or dependencies changed run again, and only suites that ran code that changed.",
+    description: "Run tests (definitions named test…, or under a tests namespace), optionally only some (by name or namespace), and the suites packages declare (test files running a package's command). Results are cached by hash: only tests whose code or dependencies changed run again, and only suites that ran code that changed.",
     inputSchema: schema({
-      namespace: { type: "string" },
+      names: { type: "array", items: { type: "string" }, description: "only these tests, or the tests under these namespaces" },
       fresh: { type: "boolean", description: "run everything again, ignoring cached results" },
       definitions: { type: "boolean", description: "only the test definitions, not the suites (which can take minutes when much changed)" },
     }),
-    argv: (a) => ["test", ...(a.namespace ? [str(a.namespace)] : []), ...(a.fresh ? ["--fresh"] : []), ...(a.definitions ? ["--definitions"] : [])],
+    argv: (a) => ["test", ...(Array.isArray(a.names) ? strs(a.names) : []), ...(a.fresh ? ["--fresh"] : []), ...(a.definitions ? ["--definitions"] : [])],
   },
   {
     name: "tcm_run",
@@ -277,7 +277,9 @@ export function serveMcp(root: string, bin: string[], version: string, branch?: 
           serverInfo: { name: "tcm", version: `${version} (hash format v${IR_VERSION})` },
           instructions: branch
             ? `${INSTRUCTIONS}\n\nThis is a session on its own branch, ${branch}: your changes stay on it, and out of the repository's files, while other agents work on other branches of the same codebase. When your change is done and its tests pass, tcm_merge lands it on main (merging main in first, then testing).`
-            : INSTRUCTIONS,
+            : process.env.TCM_MCP_ALONE
+              ? `${INSTRUCTIONS}\n\nYou're the only agent working on this codebase, so your changes go straight to its own branch (and the files it writes), with no merging to do. An agent starting while you're here gets a branch of its own.`
+              : INSTRUCTIONS,
         });
       case "ping":
         return reply({});
@@ -369,4 +371,169 @@ export function viewMarkdown(out: string): string {
       return `**${b.names}** \`${b.hash}\`${about ? ` · ${about}` : ""}\n\n${fence(b.lines.join("\n"), file ? (LANG[b.rest] ?? "") : "ts")}`;
     })
     .join("\n\n");
+}
+
+/**
+ * The id the supervisor gives the handshake it replays to a restarted server.
+ */
+export const REINIT = "tcm-supervisor-reinit";
+
+/**
+ * The MCP servers running on a codebase now (the records of ones that stopped are cleared away).
+ */
+export function liveMcpServers(root: string): { pid: number; branch?: string }[] {
+  const dir = serversDir(root);
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).flatMap((f) => {
+    const file = path.join(dir, f);
+    try {
+      const s = JSON.parse(fs.readFileSync(file, "utf8")) as { pid: number; branch?: string };
+      process.kill(s.pid, 0);
+      return [s];
+    } catch {
+      fs.rmSync(file, { force: true });
+      return [];
+    }
+  });
+}
+
+/**
+ * Say this process is an MCP server on the codebase (on `branch`); undone when it exits.
+ */
+export function registerMcpServer(root: string, branch: string | undefined) {
+  const file = path.join(serversDir(root), `${process.pid}.json`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ pid: process.pid, ...(branch ? { branch } : {}) }));
+  const gone = () => fs.rmSync(file, { force: true });
+  process.on("exit", gone);
+  for (const s of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(s, () => process.exit(0));
+}
+
+/**
+ * Where the MCP servers running on a codebase say so: a file each, by process id, with its branch.
+ */
+export const serversDir = (root: string) => path.join(root, ".tcm", "mcp");
+
+/**
+ * When a file was last replaced or written, to notice a new version: its inode and time, or undefined if it's gone.
+ */
+export function stampOf(file: string): string | undefined {
+  try {
+    const st = fs.statSync(file);
+    return `${st.ino}:${st.mtimeMs}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Run the MCP server `argv` as a child and relay the protocol, starting it again when `watch` (this tcm's own
+ * program) is replaced: a new version installed, or a new known-good tcm verified. The restart waits until no
+ * request is in flight; the client's handshake is replayed to the new server, and the client is told the tools
+ * changed. So an agent picks up a new tcm, tools and all, without restarting. Resolves with the server's exit code.
+ */
+export function superviseMcp(argv: string[], env: NodeJS.ProcessEnv, cwd: string, watch: string, poll = 2000): Promise<number> {
+  return new Promise((resolve) => {
+    let current: ChildProcess | undefined;
+    let init: string | undefined;
+    let initialized: string | undefined;
+    const inFlight = new Set<string>();
+    let restarting = false;
+    let pending = false;
+    let held: string[] = [];
+    let stamp = stampOf(watch);
+    const write = (line: string) => process.stdout.write(line + "\n");
+    const toChild = (line: string) => {
+      try {
+        const msg = JSON.parse(line) as { id?: unknown; method?: string };
+        if (msg.method === "initialize") init = line;
+        if (msg.method === "notifications/initialized") initialized = line;
+        if (msg.id !== undefined && msg.method) inFlight.add(JSON.stringify(msg.id));
+      } catch {
+        // not ours to understand: passed on as it is
+      }
+      current!.stdin!.write(line + "\n");
+    };
+    const start = (replay: boolean) => {
+      const child = spawn(argv[0]!, argv.slice(1), { cwd, env, stdio: ["pipe", "pipe", "inherit"] });
+      current = child;
+      let buf = "";
+      child.stdout!.setEncoding("utf8").on("data", (d: string) => {
+        buf += d;
+        for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          if (!line.trim()) continue;
+          let msg: { id?: unknown; result?: unknown; error?: unknown } = {};
+          try {
+            msg = JSON.parse(line);
+          } catch {
+            // passed on as it is
+          }
+          // the replayed handshake answered: the new server is ready, and the client hears what changed
+          if (msg.id === REINIT) {
+            if (initialized) child.stdin!.write(initialized + "\n");
+            restarting = false;
+            write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" }));
+            const waiting = held;
+            held = [];
+            for (const l of waiting) toChild(l);
+            continue;
+          }
+          if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) inFlight.delete(JSON.stringify(msg.id));
+          write(line);
+          restartIfDue();
+        }
+      });
+      child.on("exit", (code) => {
+        // (a server replaced on purpose isn't the end)
+        if (child !== current) return;
+        clearInterval(timer);
+        resolve(code ?? 0);
+      });
+      if (replay && init) child.stdin!.write(JSON.stringify({ ...JSON.parse(init), id: REINIT }) + "\n");
+    };
+    const restartIfDue = () => {
+      if (!pending || restarting || inFlight.size || !init) return;
+      pending = false;
+      restarting = true;
+      const old = current!;
+      start(true);
+      old.kill();
+    };
+    const timer = setInterval(() => {
+      const now = stampOf(watch);
+      if (!now || now === stamp) return;
+      stamp = now;
+      pending = true;
+      restartIfDue();
+    }, poll);
+    start(false);
+    let rest = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (d: string) => {
+      rest += d;
+      for (let nl = rest.indexOf("\n"); nl >= 0; nl = rest.indexOf("\n")) {
+        const line = rest.slice(0, nl);
+        rest = rest.slice(nl + 1);
+        if (!line.trim()) continue;
+        if (restarting) held.push(line);
+        else toChild(line);
+      }
+    });
+    process.stdin.on("end", () => current?.stdin!.end());
+  });
+}
+
+/**
+ * A running server is seen as one; a stopped one's record is cleared.
+ */
+export const testLiveMcpServers = () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tcm mcp servers "));
+  fs.mkdirSync(serversDir(root), { recursive: true });
+  fs.writeFileSync(path.join(serversDir(root), "1.json"), JSON.stringify({ pid: process.pid, branch: "session/x" }));
+  fs.writeFileSync(path.join(serversDir(root), "2.json"), JSON.stringify({ pid: 2 ** 22 + 12345 }));
+  assert.deepEqual(liveMcpServers(root), [{ pid: process.pid, branch: "session/x" }]);
+  assert.deepEqual(fs.readdirSync(serversDir(root)), ["1.json"]);
+  fs.rmSync(root, { recursive: true, force: true });
 }

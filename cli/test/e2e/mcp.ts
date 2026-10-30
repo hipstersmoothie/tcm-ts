@@ -5,39 +5,16 @@ import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { plainEnv, tcmBin, tempDir, withChildren } from "./harness.ts";
 import { okIn } from "./harness.ts";
+import { pathToFileURL } from "node:url";
 
 type Reply = { result?: Record<string, unknown>; error?: { message: string } };
 
 /**
- * `tcm mcp` as an agent's client runs it (with `args`: `--branch agent/a` for a session).
+ * `tcm mcp` as an agent's client runs it (with `args`: `--branch agent/a` for a session; `bin`, another program
+ * than tcm's own).
  */
 function session(dir: string, keep: <C extends ChildProcess>(c: C) => C, ...args: string[]) {
-  const child = keep(spawn(process.execPath, [tcmBin(), "mcp", ...args], { cwd: dir, env: plainEnv(), stdio: ["pipe", "pipe", "pipe"] }));
-  let buf = "";
-  let id = 0;
-  const waiting = new Map<number, (m: Reply) => void>();
-  const notes: { method: string; params: Record<string, unknown> }[] = [];
-  child.stdout.on("data", (d) => {
-    buf += d;
-    for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
-      const m = JSON.parse(buf.slice(0, nl)) as { id?: number; method?: string; params?: Record<string, unknown> } & Reply;
-      buf = buf.slice(nl + 1);
-      if (m.id === undefined) notes.push({ method: m.method!, params: m.params! });
-      else waiting.get(m.id)?.(m);
-    }
-  });
-  const request = (method: string, params: Record<string, unknown> = {}) =>
-    new Promise<Reply>((resolve) => {
-      const i = ++id;
-      waiting.set(i, resolve);
-      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: i, method, params }) + "\n");
-    });
-  const call = async (name: string, args: Record<string, unknown> = {}, meta?: Record<string, unknown>) => {
-    const r = await request("tools/call", { name, arguments: args, ...(meta ? { _meta: meta } : {}) });
-    const result = r.result as { content: { text: string }[]; isError: boolean };
-    return { text: result.content[0]!.text, isError: result.isError };
-  };
-  return { request, call, notes, close: () => child.stdin.end() };
+  return sessionOf(dir, keep, [tcmBin(), "mcp", ...args]);
 }
 
 /** An agent works in the codebase through tcm mcp: find, edit, check, update, test. */
@@ -59,7 +36,7 @@ export const testAgentWorksThroughMcp = () =>
     const init = await s.request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } });
     assert.match(String(init.result!.instructions), /tcm_edit the definitions you'll change/);
     const tools = ((await s.request("tools/list")).result!.tools as { name: string }[]).map((t) => t.name);
-    for (const t of ["tcm_status", "tcm_find", "tcm_view", "tcm_edit", "tcm_check", "tcm_update", "tcm_todo", "tcm_test", "tcm_mv", "tcm_cli", "tcm_guide"]) assert.ok(tools.includes(t), t);
+    for (const t of ["tcm_status", "tcm_find", "tcm_view", "tcm_edit", "tcm_patch", "tcm_at", "tcm_check", "tcm_update", "tcm_todo", "tcm_test", "tcm_mv", "tcm_cli", "tcm_guide"]) assert.ok(tools.includes(t), t);
 
     assert.match((await s.call("tcm_status")).text, /3 named definitions[\s\S]*lib {2}3[\s\S]*nothing to do/);
     assert.match((await s.call("tcm_find", { query: ":(x: number) => number" })).text, /lib\.square/);
@@ -74,10 +51,17 @@ export const testAgentWorksThroughMcp = () =>
     assert.match((await s.call("tcm_check", { file: "scratch.ts" })).text, /~ update +lib\.square[\s\S]*tcm_update saves it/);
     const updated = await s.call("tcm_update", { file: "scratch.ts" });
     assert.match(updated.text, /~ updated +lib\.area \(dependent\)[\s\S]*tcm_test runs the tests/);
+    // a small change in one step: found and replaced, checked, saved, what it reached re-hashed
+    const patched = await s.call("tcm_patch", { name: "lib.square", edits: [{ old: "x ** 2", new: "x * x" }] });
+    assert.match(patched.text, /- export const square = \(x: number\): number => x \*\* 2[\s\S]*\+ export const square = \(x: number\): number => x \* x[\s\S]*~ update +lib\.square[\s\S]*~ updated +lib\.area \(dependent\)/);
+    assert.match((await s.call("tcm_patch", { name: "lib.square", edits: [{ old: "nowhere", new: "x" }] })).text, /lib\.square: not found: "nowhere"; nothing was changed/);
+    assert.match((await s.call("tcm_patch", { name: "lib.square", edits: [{ old: "x * x", new: "x ** 2" }] })).text, /~ update +lib\.square/);
+    // which definition a line of a file is in
+    assert.match((await s.call("tcm_at", { place: ".tcm/src/lib/square.ts:2" })).text, /^lib\.square {2}#\w+ {2}: \(x: number\) => number {2}lines \d+–\d+/);
     // a definition: its name, hash and where it runs, then its code
     assert.match((await s.call("tcm_view", { names: ["lib.square"] })).text, /^\*\*lib\.square\*\* `#\w+` · runs anywhere\n\n```ts\nexport const square = \(x: number\): number => x \*\* 2;?\n```$/);
     // a client that asks for progress hears a long command's output as it comes
-    assert.match((await s.call("tcm_test", { namespace: "lib", fresh: true }, { progressToken: "t1" })).text, /1 passed, 0 failed/);
+    assert.match((await s.call("tcm_test", { names: ["lib"], fresh: true }, { progressToken: "t1" })).text, /1 passed, 0 failed/);
     const progress = s.notes.filter((n) => n.method === "notifications/progress" && n.params.progressToken === "t1");
     assert.ok(progress.some((n) => /lib\.testArea/.test(String(n.params.message))), JSON.stringify(progress));
 
@@ -151,4 +135,63 @@ export const testSessionsWorkApart = () =>
     a.close();
     b.close();
     c.close();
+  });
+
+/**
+ * An MCP server run as `node <argv>`, as an agent's client talks to it.
+ */
+export function sessionOf(dir: string, keep: <C extends ChildProcess>(c: C) => C, argv: string[]) {
+  const child = keep(spawn(process.execPath, argv, { cwd: dir, env: plainEnv(), stdio: ["pipe", "pipe", "pipe"] }));
+  let buf = "";
+  let id = 0;
+  const waiting = new Map<number, (m: Reply) => void>();
+  const notes: { method: string; params: Record<string, unknown> }[] = [];
+  child.stdout.on("data", (d) => {
+    buf += d;
+    for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+      const m = JSON.parse(buf.slice(0, nl)) as { id?: number; method?: string; params?: Record<string, unknown> } & Reply;
+      buf = buf.slice(nl + 1);
+      if (m.id === undefined) notes.push({ method: m.method!, params: m.params! });
+      else waiting.get(m.id)?.(m);
+    }
+  });
+  const request = (method: string, params: Record<string, unknown> = {}) =>
+    new Promise<Reply>((resolve) => {
+      const i = ++id;
+      waiting.set(i, resolve);
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: i, method, params }) + "\n");
+    });
+  const call = async (name: string, args: Record<string, unknown> = {}, meta?: Record<string, unknown>) => {
+    const r = await request("tools/call", { name, arguments: args, ...(meta ? { _meta: meta } : {}) });
+    const result = r.result as { content: { text: string }[]; isError: boolean };
+    return { text: result.content[0]!.text, isError: result.isError };
+  };
+  return { request, call, notes, close: () => child.stdin.end() };
+}
+
+/**
+ * An agent alone on a codebase (`--session`) works on its own branch; one starting beside it gets a branch of its
+ * own. And when tcm is replaced (a new version, a new known-good build), the server starts again: the client is
+ * told its tools changed, and keeps working.
+ */
+export const testMcpSessionsAndUpgrades = () =>
+  withChildren(async (keep) => {
+    const dir = tempDir("mcp upgrade");
+    assert.equal(spawnSync(process.execPath, [tcmBin(), "init"], { cwd: dir, env: plainEnv() }).status, 0);
+    // tcm run through a program of its own, which "upgrading" replaces
+    const bin = path.join(dir, "tcm-bin.mjs");
+    fs.writeFileSync(bin, `import ${JSON.stringify(pathToFileURL(tcmBin()).href)};\n`);
+    const hello = { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } };
+    const a = sessionOf(dir, keep, [bin, "mcp", "--session"]);
+    assert.match(String((await a.request("initialize", hello)).result!.instructions), /only agent working on this codebase/);
+    const b = session(dir, keep, "--session");
+    assert.match(String((await b.request("initialize", hello)).result!.instructions), /This is a session on its own branch, session\//);
+    b.close();
+    // replaced: started again, the client told, still answering
+    fs.writeFileSync(bin, `${fs.readFileSync(bin, "utf8")}// v2\n`);
+    for (const until = Date.now() + 30_000; !a.notes.some((n) => n.method === "notifications/tools/list_changed"); await new Promise((r) => setTimeout(r, 100))) {
+      if (Date.now() > until) assert.fail("the server wasn't started again");
+    }
+    assert.match((await a.call("tcm_status")).text, /named definitions|empty|nothing to do/);
+    a.close();
   });

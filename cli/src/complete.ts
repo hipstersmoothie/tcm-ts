@@ -112,6 +112,8 @@ function sourceFor(command: string, param: string, s: Sources): ((complete: Comp
     on: (c) => s.remotes(c),
     table: (c) => s.tables(c),
     file: (c) => s.scratchFiles(c),
+    files: (c) => s.scratchFiles(c),
+    place: (c) => s.scratchFiles(c),
     about: definitions,
   };
   return byCommand[`${command} ${param}`] ?? byName[param];

@@ -23,13 +23,15 @@ or option a command doesn't take is an error naming it.
 | `tcm lsp [--stdio]` | language server for editors, over stdio ([editors](editors.md)) |
 | `tcm mcp [--branch b \| --session]` | tools for AI agents to work in the codebase: a Model Context Protocol server, over stdio ([agents](agents.md)); as a [session](agents.md#several-agents-at-once-sessions) on its own branch, with `tcm_merge` to land it |
 | `tcm complete <shell>` | a completion script for zsh, bash, fish or powershell, completing names from the codebase too |
-| `tcm check [file] [--fresh]` | one-shot version of watch. Reports each definition as `new` / `identical` / `update` / `alias` / `conflict` |
-| `tcm add [file] [--into ns]` | save new definitions from a scratch file (default `scratch.ts`) |
-| `tcm update [file] [--into ns]` | save, re-point changed names, and re-hash every dependent. Dependents that stop typechecking keep their old hash and go to `todo`. Also checks stored table rows against changed row types ([data](data.md)) |
+| `tcm check [files...] [--fresh]` | one-shot version of watch. Reports each definition as `new` / `identical` / `update` / `alias` / `conflict` (more than a few identical ones as one line) |
+| `tcm add [files...] [--into ns]` | save new definitions from scratch files (default: the codebase's `scratch.ts`, wherever tcm runs from) |
+| `tcm update [files...] [--into ns]` | save, re-point changed names, and re-hash every dependent. Dependents that stop typechecking keep their old hash and go to `todo`. Also checks stored table rows against changed row types ([data](data.md)) (many dependents are listed by namespace; `tcm diff` lists them all) |
 | `tcm export <namespace> <dir>` | write a namespace's [files](pages.md) (pages, stylesheets, images), or one file, to a directory, links and names as they are now |
 | `tcm import <dir> [--into ns] [--update] [--exclude a,b] [--tests] [--mirror] [--verbose]` | add an existing project, one namespace per file; `--mirror` keeps its files in step with the codebase, and makes the releases recorded with them again ([importing](importing.md#mirrors)) |
 | `tcm mirror [--check] [--unlink]` | the directory changes are written back to; `--check` re-analyzes its files, which must hash to what the codebase holds ([mirrors](importing.md#mirrors)) |
 | `tcm edit <name>... [--file f] [--force]` | write definitions to a scratch file for editing (`scratch.ts`, or `scratch.tsx` for JSX), with references following any updates; added to the file if it holds unsaved work (`--force` replaces it); never over the codebase's own `package.json` or `tsconfig.json` |
+| `tcm patch <name> --old <text> --new <text> [--all]` | change a definition by find-and-replace on its code as `tcm view` shows it, then save it as `update` does. Each old text must be there once (or `--all`); nothing is saved if one isn't, or if the result doesn't typecheck. `--edits '[{"old": …, "new": …}]'` makes several edits at once. The change is shown as lines removed and added |
+| `tcm at <file>[:<line>]` | which definition is at a line of a file (a scratch file, a definition's document in `.tcm/src`, a generated module in `.tcm/cache` as stack traces name them, a mirrored file), or every definition in it with its lines |
 | `tcm view <name\|#hash>...` | show definitions, rendered with current names, with their placement for app code |
 | `tcm ls [namespace]` | list names |
 | `tcm find <query>` | search names and signature text |
@@ -41,6 +43,7 @@ or option a command doesn't take is an error naming it.
 | `tcm alias <name> <new>` | add another name for a definition |
 | `tcm rm <name> [--force]` | remove a name. If it's the definition's last name and named definitions use it, refuses unless `--force` (they keep working either way) |
 | `tcm todo` | conflicts, plus dependents that need fixing after an update |
+| `tcm status` | where things stand: the branch, the codebase by namespace, scratch files holding unsaved work and what saving them would do, `todo`, whether a mirror's files are in step |
 | `tcm fmt [namespace]` | reformat stored definitions with oxfmt; no hash changes ([formatting](formatting.md)) |
 | `tcm lint [namespace] [--fresh]` | lint definitions with oxlint, cached by hash ([linting](linting.md)) |
 | `tcm packages` | the npm packages the codebase runs: range, locked version, what uses them ([packages](packages.md)) |
@@ -54,7 +57,7 @@ or option a command doesn't take is an error naming it.
 | `tcm releases [package]` | the packages and their releases |
 | `tcm changelog [package] [--out file]` | a package's changelog, from its releases |
 | `tcm resolve <name> <#hash>` | pick one definition for a conflicted name |
-| `tcm test [namespace] [--fresh] [--definitions] [--bin cmd=<path>,...]` | run tests, cached by hash, then the suites packages declare, cached by the code they ran; `--definitions` skips the suites, `--bin` runs them against another build of a command, like a package packed from the codebase ([testing](testing.md)) |
+| `tcm test [names...] [--fresh] [--definitions] [--bin cmd=<path>,...]` | run tests (all of them, or the ones named and the ones under the namespaces named), cached by hash, then the suites packages declare, cached by the code they ran; `--definitions` skips the suites, `--bin` runs them against another build of a command, like a package packed from the codebase ([testing](testing.md)) |
 | `tcm verify` | re-render and re-hash every live definition; must be the identity ([hashing](hashing.md)) |
 
 ## History and branches

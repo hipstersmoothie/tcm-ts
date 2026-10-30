@@ -94,7 +94,10 @@ holding only what's saved starts again. A scratch file's imports are one stateme
 long. `--file other.ts` picks another file, `--force` replaces what it holds. Code with JSX goes to
 `scratch.tsx`, which takes the rest too while it holds work and `scratch.ts` doesn't. Edit, then
 `tcm update`. You can edit several at once, from different namespaces: each gets a `// tcm: path a.b.c` comment
-when its path isn't the file's namespace plus its name, so `update` puts it back where it came from.
+when its path isn't the file's namespace plus its name, so `update` puts it back where it came from. A
+`// tcm: namespace` line further down the file starts a section: the definitions after it go to that namespace.
+`tcm check`, `add` and `update` take several files at once. For a small change, `tcm patch <name> --old … --new …`
+does it in one step, with no scratch file: find-and-replace on the code as `tcm view` shows it, then saved.
 
 Definitions that refer to each other (functions calling each other, a class and the functions that take it) are
 hashed together, as one, so they're updated together. `tcm edit` writes only what you asked for, and says what it's

@@ -208,3 +208,53 @@ export const testEditAddsToTheScratchFile = () => {
   // (both reads one as the file's own: the edited one)
   assert.match(ok("check"), /~ update +lib\.one[\s\S]*~ update +lib\.both/);
 }
+
+/**
+ * A `// tcm: namespace` line below a scratch file's first starts a section: what follows it goes to that
+ * namespace (and `// tcm: path` still names one definition's place).
+ */
+export const testNamespaceSections = () => {
+  const dir = tempDir("sections");
+  const ok = (...args: string[]) => okIn(dir, ...args);
+  ok("init");
+  fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace geo\nexport const half = (x: number): number => x / 2;\n\n// tcm: namespace text\nexport const shout = (s: string): string => s.toUpperCase();\n// tcm: path util.twice\nexport const double = (x: number): number => x * 2;\nexport const whisper = (s: string): string => s.toLowerCase();\n`);
+  const added = ok("add");
+  assert.match(added, /\+ new +geo\.half/);
+  assert.match(added, /\+ new +text\.shout/);
+  assert.match(added, /\+ new +util\.twice/);
+  assert.match(added, /\+ new +text\.whisper/);
+}
+
+/**
+ * Where things stand (`tcm status`), which definition a line is in (`tcm at`), small changes in one step
+ * (`tcm patch`), and several scratch files saved at once.
+ */
+export const testStatusAtPatchAndFiles = () => {
+  const dir = tempDir("status");
+  const ok = (...args: string[]) => okIn(dir, ...args);
+  ok("init");
+  fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace lib\nexport const square = (x: number): number => x * x;\n\nexport const area = (s: number): number => square(s);\n`);
+  fs.writeFileSync(path.join(dir, "more.ts"), `// tcm: namespace geo\nexport const half = (x: number): number => x / 2;\n`);
+  const added = ok("add", "scratch.ts", "more.ts");
+  assert.match(added, /\+ new +lib\.square[\s\S]*\+ new +geo\.half/);
+  // work not saved shows in status, with what saving it does
+  fs.writeFileSync(path.join(dir, "more.ts"), `// tcm: namespace geo\nexport const half = (x: number): number => x * 0.5;\n`);
+  const st = ok("status");
+  assert.match(st, /^branch {2}main/);
+  assert.match(st, /3 named definitions/);
+  assert.match(st, /more\.ts {2}1 update: `tcm update more\.ts` saves it/);
+  assert.match(st, /todo\nnothing to do/);
+  // a line of a file: the definition there; a whole file: all of them, with their lines
+  assert.match(ok("at", "scratch.ts:4"), /^lib\.area {2}#\w+ {2}: \(s: number\) => number {2}lines 4–4$/m);
+  assert.match(ok("at", "scratch.ts"), /lib\.square[^\n]*lines 2–2\nlib\.area[^\n]*lines 4–4/);
+  assert.match(ok("at", ".tcm/src/lib/square.ts"), /^lib\.square /);
+  // a change in one step: shown, saved, its dependents re-hashed
+  const patched = ok("patch", "lib.square", "--old", "x * x", "--new", "x ** 2");
+  assert.match(patched, /- export const square = \(x: number\): number => x \* x\n[\s\S]*\+ export const square = \(x: number\): number => x \*\* 2[\s\S]*~ update +lib\.square[\s\S]*~ updated +lib\.area \(dependent\)/);
+  assert.match(ok("view", "lib.square"), /x \*\* 2/);
+  // text that isn't there, or is there twice: nothing changes, and it says why
+  const missing = tcmIn(dir, "patch", "lib.square", "--old", "nope", "--new", "x");
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.out, /lib\.square: not found: "nope"; nothing was changed/);
+  assert.match(tcmIn(dir, "patch", "lib.square", "--old", "x", "--new", "y").out, /found \d+ times/);
+}
