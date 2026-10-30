@@ -406,6 +406,8 @@ export const testPackagesInEditor = () => withChildren(async (keep) => {
   assert.equal(page.version, "2.1.1");
   assert.match(page.readme, /^# ms/m, "the package's README");
   assert.ok(page.api.some((a: { name: string; kind: string }) => a.name === "default" && a.kind === "function"), "its API, from its types");
+  // signatures come highlighted, as a definition page's code does
+  assert.ok(page.api.some((a: { html: string }) => /<span class="k">/.test(a.html)), "its API's signatures, highlighted");
   assert.equal(page.users[0].uri, pathToFileURL(path.join(dir5, ".tcm", "src", "time", "short.ts")).href);
 
   // oxlint's findings are diagnostics in scratch files, beside tcm's own

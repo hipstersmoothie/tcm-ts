@@ -6,6 +6,7 @@ import { compareVersions, createProgram, ts } from "@tcm/core";
 import { ensureExternals, npmAlias } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 import { usersOf } from "./upgrade.ts";
+import { highlight } from "./pages.ts";
 
 export interface PackageRange {
   range: string;
@@ -45,6 +46,8 @@ export interface ApiEntry {
   name: string;
   kind: "function" | "class" | "interface" | "type" | "enum" | "namespace" | "value";
   signature: string;
+  /** the signature as highlighted HTML, as a definition page's code is */
+  html: string;
   doc: string;
 }
 
@@ -117,7 +120,7 @@ function apiOf(cb: Codebase, alias: string): ApiEntry[] {
     } catch {
       signature = "";
     }
-    return { name, kind, signature, doc: s.getDocumentationComment(checker) };
+    return { name, kind, signature, html: highlight(signature, [], new Set()), doc: s.getDocumentationComment(checker) };
   };
   const out = checker
     .getExportsOfModule(mod)

@@ -248,7 +248,7 @@ function packageCard(c) {
   if (p.api.length) {
     h += '<div class="group"><h3>API (' + p.api.length + ")</h3></div>";
     const entry = (a, i) => '<div class="section"><b class="f">' + esc(a.name) + '</b> <span class="badge">' + esc(a.kind) + "</span>" +
-      (a.signature ? '<pre class="src">' + esc(a.signature) + "</pre>" : "") + (c.docs[i] ? '<div class="doc">' + c.docs[i] + "</div>" : "") + "</div>";
+      (a.signature ? '<pre class="src">' + (a.html || esc(a.signature)) + "</pre>" : "") + (c.docs[i] ? '<div class="doc">' + c.docs[i] + "</div>" : "") + "</div>";
     // by kind, each section folding; a big API starts folded, to read as an overview
     const open = p.api.length <= 20 ? " open" : "";
     const known = API_KINDS.map(([k]) => k);
