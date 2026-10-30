@@ -156,6 +156,8 @@ export function html(webview: vscode.Webview): string {
   .sig { opacity: .6; font-family: var(--vscode-editor-font-family); }
   .problem { color: var(--vscode-errorForeground); padding: 4px 14px; }
   .group h3 { margin: 10px 14px 4px; font-size: .95em; opacity: .8; }
+  details.kind > summary { margin: 8px 14px 2px; font-size: .95em; font-weight: 600; cursor: pointer; }
+  details.kind > summary .muted { font-weight: normal; }
   .group ul { list-style: none; margin: 0 14px 8px; padding: 0; }
   .group li { margin: 3px 0; } .group .summary { opacity: .75; }
   /* package (releases) pages */
@@ -245,11 +247,22 @@ function packageCard(c) {
   if (c.readmeHtml) h += '<div class="group"><h3>README</h3></div><div class="doc">' + c.readmeHtml + "</div>";
   if (p.api.length) {
     h += '<div class="group"><h3>API (' + p.api.length + ")</h3></div>";
-    h += p.api.map((a, i) => '<div class="section"><b class="f">' + esc(a.name) + '</b> <span class="badge">' + esc(a.kind) + "</span>" +
-      (a.signature ? '<pre class="src">' + esc(a.signature) + "</pre>" : "") + (c.docs[i] ? '<div class="doc">' + c.docs[i] + "</div>" : "") + "</div>").join("");
+    const entry = (a, i) => '<div class="section"><b class="f">' + esc(a.name) + '</b> <span class="badge">' + esc(a.kind) + "</span>" +
+      (a.signature ? '<pre class="src">' + esc(a.signature) + "</pre>" : "") + (c.docs[i] ? '<div class="doc">' + c.docs[i] + "</div>" : "") + "</div>";
+    // by kind, each section folding; a big API starts folded, to read as an overview
+    const open = p.api.length <= 20 ? " open" : "";
+    const known = API_KINDS.map(([k]) => k);
+    for (const [kind, label] of [...API_KINDS, ["", "Other"]]) {
+      const items = p.api.map((a, i) => [a, i]).filter(([a]) => (kind ? a.kind === kind : !known.includes(a.kind)));
+      if (!items.length) continue;
+      h += '<details class="kind"' + open + '><summary>' + label + ' <span class="muted">' + items.length + "</span></summary>" + items.map(([a, i]) => entry(a, i)).join("") + "</details>";
+    }
   }
   return h;
 }
+
+/** A package's exports, by kind, in the order its page shows them. */
+const API_KINDS = [["function", "Functions"], ["class", "Classes"], ["interface", "Interfaces"], ["type", "Types"], ["enum", "Enums"], ["value", "Values"], ["namespace", "Namespaces"]];
 
 const LEVELS = [["major", "Breaking", "level-major"], ["minor", "Additions", "level-minor"], ["patch", "Same API", "level-patch"]];
 const day = (ts) => new Date(ts).toISOString().slice(0, 10);
