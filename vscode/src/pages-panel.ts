@@ -140,10 +140,10 @@ export function html(webview: vscode.Webview): string {
   .file-image { display: block; margin: 8px 14px 12px; max-width: calc(100% - 28px); max-height: 60vh; }
   /* VS Code doesn't give webviews the theme's syntax colours, so these are its default themes' (Dark+, Light+,
      High Contrast), picked by the theme's kind. Code in rendered docs (highlight.js classes) uses the same. */
-  body { --k: #569cd6; --x: #c586c0; --s: #ce9178; --n: #b5cea8; --c: #6a9955; --f: #dcdcaa; --t: #4ec9b0; }
-  body.vscode-light { --k: #0000ff; --x: #af00db; --s: #a31515; --n: #098658; --c: #008000; --f: #795e26; --t: #267f99; }
-  body.vscode-high-contrast { --k: #569cd6; --x: #c586c0; --s: #ce9178; --n: #b5cea8; --c: #7ca668; --f: #dcdcaa; --t: #4ec9b0; }
-  body.vscode-high-contrast-light { --k: #0f4a85; --x: #b5200d; --s: #0f4a85; --n: #096d48; --c: #515151; --f: #5e2cbc; --t: #185e73; }
+  body { --k: #569cd6; --x: #c586c0; --s: #ce9178; --n: #b5cea8; --c: #6a9955; --f: #dcdcaa; --t: #4ec9b0; --g: #569cd6; --a: #9cdcfe; }
+  body.vscode-light { --k: #0000ff; --x: #af00db; --s: #a31515; --n: #098658; --c: #008000; --f: #795e26; --t: #267f99; --g: #800000; --a: #e50000; }
+  body.vscode-high-contrast { --k: #569cd6; --x: #c586c0; --s: #ce9178; --n: #b5cea8; --c: #7ca668; --f: #dcdcaa; --t: #4ec9b0; --g: #569cd6; --a: #9cdcfe; }
+  body.vscode-high-contrast-light { --k: #0f4a85; --x: #b5200d; --s: #0f4a85; --n: #096d48; --c: #515151; --f: #5e2cbc; --t: #185e73; --g: #0f4a85; --a: #264f78; }
   .k, .hljs-keyword, .hljs-built_in, .hljs-literal { color: var(--k); }
   .x, .hljs-meta { color: var(--x); }
   .s, .hljs-string, .hljs-regexp { color: var(--s); }
@@ -151,6 +151,8 @@ export function html(webview: vscode.Webview): string {
   .c, .hljs-comment { color: var(--c); font-style: italic; }
   .f, .hljs-title.function_, .hljs-title { color: var(--f); }
   a.ref.t, .hljs-type, .hljs-title.class_ { color: var(--t); }
+  /* JSX: tags (a component is a type) and attribute names */
+  .g, .hljs-name { color: var(--g); } .t { color: var(--t); } .a, .hljs-attr { color: var(--a); }
   /* links in code keep the colour of what they are (a string, a call, a type, a name): only hovering says they're links */
   .src a.ref { color: inherit; }
   .src a.ref.s { color: var(--s); } .src a.ref.f { color: var(--f); } .src a.ref.t { color: var(--t); }

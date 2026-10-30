@@ -27,9 +27,11 @@ const CONTROL = new Set(["if", "else", "for", "while", "do", "switch", "case", "
  * a link to its namespace's or package's page. Uses TypeScript's scanner, re-scanning where it needs context: a
  * `}` that resumes a template literal, a `/` that starts a regex.
  */
-export function highlight(text: string, refs: HighlightRef[], typeHashes: Set<string>): string {
+export function highlight(text: string, refs: HighlightRef[], typeHashes: Set<string>, jsx = false): string {
   const scanner = ts.createScanner(false, ts.LanguageVariant.Standard, text);
   const at = new Map(refs.map((r) => [r.start, r]));
+  // (the scanner alone reads JSX's text as code: those parts come from the syntax tree)
+  const pieces = jsx ? jsxPieces(text, at) : undefined;
   // open braces since each template substitution started (`${`): the `}` closing one resumes the template
   const templates: number[] = [];
   let previous = ts.SyntaxKind.Unknown;
@@ -48,6 +50,14 @@ export function highlight(text: string, refs: HighlightRef[], typeHashes: Set<st
     if (kind === ts.SyntaxKind.TemplateHead) templates.push(0);
     if ((kind === ts.SyntaxKind.SlashToken || kind === ts.SyntaxKind.SlashEqualsToken) && !endsExpression(previous)) kind = scanner.reScanSlashToken();
     const start = scanner.getTokenStart();
+    const piece = pieces?.get(start);
+    if (piece) {
+      out += piece.html;
+      scanner.resetTokenState(piece.end);
+      // (a JSX element ends an expression)
+      previous = ts.SyntaxKind.Identifier;
+      continue;
+    }
     const raw = text.slice(start, scanner.getTokenEnd());
     const trivia = kind === ts.SyntaxKind.WhitespaceTrivia || kind === ts.SyntaxKind.NewLineTrivia;
     const ref = at.get(start);
@@ -105,7 +115,7 @@ export function definitionPage(cb: Codebase, hash: string, placement: Placement,
     }
     const text = rec.sourceText;
     if (format === "svg") return { ...page, ...related, image: `data:image/svg+xml;base64,${Buffer.from(text).toString("base64")}`, sourceHtml: esc(text) };
-    if (format !== "md") return { ...page, ...related, sourceHtml: ["ts", "tsx", "js", "json"].includes(format) ? highlight(text, [], new Set()) : esc(text) };
+    if (format !== "md") return { ...page, ...related, sourceHtml: ["ts", "tsx", "js", "json"].includes(format) ? highlight(text, [], new Set(), format === "tsx") : esc(text) };
     // Markdown: its links to code and to other pages open their pages
     // (a span is the name in `{@link name}`: the whole of it becomes the link)
     const edits: { start: number; end: number; text: string }[] = rec.spans.flatMap((sp) => {
@@ -136,7 +146,7 @@ export function definitionPage(cb: Codebase, hash: string, placement: Placement,
     ...(isTest ? { test: test ? (test.ok ? "passed" : "failed") : "not run" } : {}),
     docMarkdown: doc?.markdown,
     docProblems: doc?.problems ?? [],
-    sourceHtml: highlight(r.text.trimEnd(), [...r.refs.filter((x) => x.hash !== hash || x.from !== hash), ...importRefs(cb, r.text.trimEnd(), rec)], typeHashes),
+    sourceHtml: highlight(r.text.trimEnd(), [...r.refs.filter((x) => x.hash !== hash || x.from !== hash), ...importRefs(cb, r.text.trimEnd(), rec)], typeHashes, !!rec.jsx),
     uses: deps.map(item).sort((a, b) => (a.name < b.name ? -1 : 1)),
     // what it imports from outside the codebase, as written in code: a package, a Node builtin, #tcm/server
     externals: [...new Set(rec.spans.flatMap((s) => (s.ext ? [s.ext.module === SERVER_API_MODULE ? "#tcm/server" : s.ext.module.replace(/^npm:/, "")] : [])))],
@@ -399,4 +409,61 @@ export const testSearchCode = () => {
   assert.equal(lines("squar", { wholeWord: true }).matches, 0);
   assert.equal(lines("x \\* x", { regex: true }).matches, 1);
   assert.match(lines("(", { regex: true }).error ?? "", /Invalid regular expression/);
+}
+
+/**
+ * The parts of JSX that highlighting takes from the syntax tree rather than the scanner, by where each starts: text
+ * between tags (which the scanner would read as code), closing tags, and tag and attribute names (`aria-label` is
+ * one name). A built-in tag (`div`) is coloured as a tag (g), a component as a type (t), linked if it's in `refs`;
+ * an attribute name as an attribute (a).
+ */
+export function jsxPieces(text: string, refs: Map<number, HighlightRef>): Map<number, { end: number; html: string }> {
+  const sf = parse("code.tsx", text);
+  const out = new Map<number, { end: number; html: string }>();
+  const tag = (n: ts.Node) => {
+    const start = n.getStart(sf);
+    const raw = text.slice(start, n.end);
+    const ref = refs.get(start);
+    if (ref?.hash) return `<a class="ref t" data-hash="${ref.hash}">${esc(raw)}</a>`;
+    return `<span class="${/^[a-z][\w-]*$/.test(raw) ? "g" : "t"}">${esc(raw)}</span>`;
+  };
+  const walk = (n: ts.Node): void => {
+    if (ts.isJsxText(n)) {
+      if (n.end > n.pos) out.set(n.pos, { end: n.end, html: esc(text.slice(n.pos, n.end)) });
+      return;
+    }
+    if (ts.isJsxClosingElement(n)) {
+      const start = n.getStart(sf);
+      const name = n.tagName;
+      out.set(start, { end: n.end, html: esc(text.slice(start, name.getStart(sf))) + tag(name) + esc(text.slice(name.end, n.end)) });
+      return;
+    }
+    if (ts.isJsxClosingFragment(n)) {
+      const start = n.getStart(sf);
+      out.set(start, { end: n.end, html: esc(text.slice(start, n.end)) });
+      return;
+    }
+    if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) out.set(n.tagName.getStart(sf), { end: n.tagName.end, html: tag(n.tagName) });
+    if (ts.isJsxAttribute(n)) {
+      const start = n.name.getStart(sf);
+      out.set(start, { end: n.name.end, html: `<span class="a">${esc(text.slice(start, n.name.end))}</span>` });
+    }
+    n.forEachChild(walk, (arr) => void arr.forEach(walk));
+  };
+  walk(sf);
+  return out;
+}
+
+/**
+ * JSX is highlighted as JSX: text between tags isn't code (an apostrophe in it starts no string), tags and
+ * attributes have colours of their own, and a component that's a definition is a link.
+ */
+export const testHighlightJsx = () => {
+  const text = `const Hi = () => <p className="x" aria-label="hi">don't <Name /></p>;`;
+  const at = text.indexOf("<Name") + 1;
+  const html = highlight(text, [{ start: at, end: at + 4, hash: "h1" }], new Set(), true);
+  assert.match(html, /<span class="g">p<\/span> <span class="a">className<\/span>=<span class="s">&quot;x&quot;<\/span> <span class="a">aria-label<\/span>/);
+  assert.match(html, /&gt;don't &lt;<a class="ref t" data-hash="h1">Name<\/a> \/&gt;&lt;\/<span class="g">p<\/span>&gt;;$/);
+  // without JSX, the scanner reads the text as code
+  assert.doesNotMatch(highlight(text, [], new Set()), /don't &lt;/);
 }
