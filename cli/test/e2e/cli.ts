@@ -169,3 +169,19 @@ export const testOtherLayoutRefused = async () => {
   assert.equal(r.status, 1);
   assert.match(strip(r.stdout + r.stderr), /was made by a tcm that stores codebases differently, and this one can't read it; make the codebase again with this tcm/);
 };
+
+/**
+ * a codebase moved away from the @types/node its tsconfig names (or the tcm that made it moved) finds this tcm's
+ */
+export const testMovedCodebaseFindsNodeTypes = () => {
+  const dir = tempDir("moved");
+  okIn(dir, "init");
+  const file = path.join(dir, "tsconfig.json");
+  const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+  cfg.compilerOptions.typeRoots = [path.join(dir, "gone", "node_modules", "@types")];
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
+  fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace lib\nimport fs from "node:fs";\nexport const here = (p: string): boolean => fs.existsSync(p);\n`);
+  assert.match(okIn(dir, "add"), /\+ new +lib\.here/);
+  const roots: string[] = JSON.parse(fs.readFileSync(file, "utf8")).compilerOptions.typeRoots;
+  assert.ok(roots.every((r) => fs.existsSync(r)), roots.join(", "));
+}

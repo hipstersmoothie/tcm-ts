@@ -30,7 +30,8 @@ choice. A few are forced, with a warning when the project sets them otherwise:
 Without its own `types`, a project gets tcm's `@types/node`, so scratch files typecheck without installing it: the
 copy installed with tcm, or, when tcm runs from a codebase with none nearby, one the codebase installs into its
 cache like any package (and records in `.tcm/cache/node-types.json`, for tests and watch expressions running from
-there).
+there). `tcm init` writes where that is into the codebase's `tsconfig.json`; if it isn't there any more (the
+codebase, or the tcm it was made with, moved), the next command points it at this tcm's.
 
 ## Imported projects
 

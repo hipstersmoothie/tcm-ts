@@ -110,6 +110,23 @@ export class Codebase {
     }
     // for what runs from the codebase (tests, watch expressions), which may be far from tcm's own copy
     writeIfChanged(path.join(this.lay.cacheDir, "node-types.json"), JSON.stringify(tcmNodeTypes()) + "\n");
+    // a codebase (or the tcm it was made with) that moved names a @types/node that isn't there any more, where
+    // `tcm init` wrote it: point that at this tcm's (type roots it doesn't recognize are left alone)
+    const tsconfig = path.join(root, "tsconfig.json");
+    const types = tcmNodeTypes();
+    if (types && fs.existsSync(tsconfig)) {
+      try {
+        const cfg = JSON.parse(fs.readFileSync(tsconfig, "utf8")) as { compilerOptions?: { typeRoots?: string[]; types?: string[] } };
+        const roots = cfg.compilerOptions?.typeRoots;
+        if (cfg.compilerOptions && roots?.length && roots.every((r) => path.isAbsolute(r) && !fs.existsSync(r))) {
+          cfg.compilerOptions.typeRoots = types.typeRoots;
+          cfg.compilerOptions.types = types.types;
+          fs.writeFileSync(tsconfig, JSON.stringify(cfg, null, 2) + "\n");
+        }
+      } catch {
+        // (one with comments in it is someone's own: left as it is)
+      }
+    }
     // the #tcm/server runtime every generated module and runner in this codebase shares
     const api = serverApiFiles();
     fs.mkdirSync(this.lay.cacheDir, { recursive: true });
