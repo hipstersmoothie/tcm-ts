@@ -35,9 +35,10 @@ save with `tcm_update`.
 ## Verifying a change
 
 Run `pnpm verify` when a change is done; it names any failing tests. It's a definition in tcm's codebase
-(`tcmts.dev.verify`, run with `pnpm tcm run`): it checks the codebase (`tcm todo`, `tcm verify`), runs its tests
-against its own tcm, builds the docs site, and packs tcm-ts and runs the end-to-end tests against that. Tests run
-again only where code they ran changed, so it takes a minute to a few.
+(`tcmts.dev.verify`, run with `pnpm tcm run`): it checks the codebase (`tcm todo`, `tcm verify`), runs its test
+definitions, builds the docs site, and packs tcm-ts and runs the end-to-end tests against that, all side by side.
+Tests run again only where code they ran changed, so with nothing changed it takes under a second, and a few
+seconds to a few minutes otherwise.
 
 `pnpm test` (`tcm test`) runs the tests the change reaches: the quick check while working.
 
