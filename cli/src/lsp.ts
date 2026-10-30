@@ -32,6 +32,7 @@ import { ensureView, hashesOfViewFile, srcDir, viewText, type View } from "./vie
 import { resultKey } from "./vitest.ts";
 import { searchCode } from "./pages.ts";
 import { entryChanges, historyList, branchList } from "./changes.ts";
+import { branchChanges } from "./changes.ts";
 
 /** What the language server needs from the CLI (passed in, so this module doesn't import the CLI's entry). */
 export interface LspTools {
@@ -1070,6 +1071,13 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         return;
       case "tcm/history":
         send({ id: m.id, result: cb ? historyList(cb, Number(p?.limit ?? 30)) : [] });
+        return;
+      case "tcm/branchChanges":
+        try {
+          send({ id: m.id, result: cb ? branchChanges(cb, String(p?.branch ?? ""), viewUri) : [] });
+        } catch (e) {
+          send({ id: m.id, error: { code: -32602, message: (e as Error).message } });
+        }
         return;
       case "tcm/historyEntry":
         send({ id: m.id, result: cb ? entryChanges(cb, String(p?.hash ?? ""), viewUri) : [] });

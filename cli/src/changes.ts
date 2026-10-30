@@ -112,3 +112,11 @@ export function namesChanged(cb: Codebase, before: NameState, after: NameState, 
  * The names as of a history entry.
  */
 export const stateAt = (cb: Codebase, causal: string): NameState => stateOf(cb.store.namespaceRows(cb.store.causal(causal)!.namespace));
+
+/**
+ * What another branch has that this one doesn't, name by name: the changes from this branch to it.
+ */
+export function branchChanges(cb: Codebase, branch: string, viewUri: (hash: string) => string): NameChange[] {
+  if (!cb.store.hasBranch(branch)) throw new Error(`no branch named '${branch}'`);
+  return namesChanged(cb, stateOf(cb.store.names(undefined, true)), stateOf(cb.store.names(branch, true)), viewUri);
+}

@@ -33,7 +33,7 @@ export type ChangesNode =
   | { kind: "group"; group: "branches" | "history" }
   | ({ kind: "branch" } & BranchItem)
   | ({ kind: "entry" } & HistoryItem)
-  | { kind: "change"; change: NameChange; entry: string }
+  | { kind: "change"; change: NameChange }
   | { kind: "more" };
 
 /**
@@ -53,6 +53,13 @@ export class ChangesTree implements vscode.TreeDataProvider<ChangesNode> {
     this.request = request;
   }
 
+  /** What a history entry changed, or what another branch has that this one doesn't. */
+  changesOf(e: ChangesNode): Promise<NameChange[]> {
+    if (e.kind === "entry") return this.request("tcm/historyEntry", { hash: e.hash });
+    if (e.kind === "branch") return this.request("tcm/branchChanges", { branch: e.name });
+    return Promise.resolve([]);
+  }
+
   refresh(): void {
     this.changed.fire(undefined);
   }
@@ -68,7 +75,7 @@ export class ChangesTree implements vscode.TreeDataProvider<ChangesNode> {
       const entries = (await this.request("tcm/history", { limit: this.limit })) as HistoryItem[];
       return [...entries.map((h): ChangesNode => ({ kind: "entry", ...h })), ...(entries.length === this.limit ? [{ kind: "more" } as const] : [])];
     }
-    if (e.kind === "entry") return ((await this.request("tcm/historyEntry", { hash: e.hash })) as NameChange[]).map((change) => ({ kind: "change", change, entry: e.hash }));
+    if (e.kind === "entry" || (e.kind === "branch" && !e.current)) return (await this.changesOf(e)).map((change) => ({ kind: "change", change }));
     return [];
   }
 
@@ -85,14 +92,14 @@ export class ChangesTree implements vscode.TreeDataProvider<ChangesNode> {
       return item;
     }
     if (e.kind === "branch") {
-      const item = new vscode.TreeItem(e.name);
+      // another branch opens to the names that differ
+      const item = new vscode.TreeItem(e.name, e.current || !e.differs ? vscode.TreeItemCollapsibleState.None : vscode.TreeItemCollapsibleState.Collapsed);
       item.id = `branch:${e.name}`;
       item.iconPath = new vscode.ThemeIcon(e.current ? "check" : "git-branch");
       const when = e.ts ? ago(e.ts) : "";
       item.description = e.current ? ["this branch", when].filter(Boolean).join(" · ") : [`${e.differs} name${e.differs === 1 ? "" : "s"} differ${e.differs === 1 ? "s" : ""}`, when].filter(Boolean).join(" · ");
-      item.tooltip = e.current ? `${e.name}: the branch this codebase is on` : `${e.name}: ${e.differs} name(s) differ from this branch's. Click for the changes from this branch to it.`;
+      item.tooltip = e.current ? `${e.name}: the branch this codebase is on` : `${e.name}: ${e.differs} name(s) differ from this branch's`;
       item.contextValue = e.current ? "branch.current" : "branch";
-      if (!e.current) item.command = { command: "tcm.showChanges", title: "Show changes", arguments: [e] };
       return item;
     }
     if (e.kind === "entry") {
@@ -174,7 +181,23 @@ export function changesCommands(tree: ChangesTree, cwd: string | undefined): vsc
     await vscode.window.showTextDocument(doc, { preview: true });
   };
   return [
-    vscode.commands.registerCommand("tcm.showChanges", (x?: ChangesNode) => {
+    // the definitions whose code the changes touched, in VS Code's multi-file diff editor: edits old beside new,
+    // additions and removals whole (renames, and dependents only re-hashed, are in the tree: their code is the same)
+    vscode.commands.registerCommand("tcm.showChanges", async (x?: ChangesNode) => {
+      if (x?.kind !== "entry" && x?.kind !== "branch") return;
+      const title = x.kind === "entry" ? `${x.command} (${x.short})` : `${tree.branch || "this branch"} → ${x.name}`;
+      const changes = (await tree.changesOf(x)).filter((c) => (c.change === "edited" || c.change === "added" || c.change === "removed") && c.uri);
+      if (!changes.length) return vscode.window.showInformationMessage(`${title}: no code changed`);
+      const uri = (u: string | undefined) => (u ? vscode.Uri.parse(u) : undefined);
+      const label = (path: string) => vscode.Uri.from({ scheme: "tcm", path: `/${path.replaceAll(".", "/")}.ts` });
+      const resources = changes.map((c) =>
+        c.change === "edited" ? [label(c.path), uri(c.oldUri), uri(c.uri)]
+        : c.change === "removed" ? [label(c.path), uri(c.uri), undefined]
+        : [label(c.path), undefined, uri(c.uri)],
+      );
+      return vscode.commands.executeCommand("vscode.changes", title, resources);
+    }),
+    vscode.commands.registerCommand("tcm.showChangesText", (x?: ChangesNode) => {
       if (x?.kind === "entry") return show(`${x.command} (${x.short})`, ["diff", x.parents[0]!, x.hash]);
       if (x?.kind === "branch") return show(`this branch → ${x.name}`, ["diff", x.name]);
       return show("the last command's changes", ["diff"]);

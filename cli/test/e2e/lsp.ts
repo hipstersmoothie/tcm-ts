@@ -631,4 +631,9 @@ export const testChangesInEditor = () => withChildren(async (keep) => {
   assert.deepEqual((await c.request("tcm/branches", {})).map((b: any) => [b.name, b.current, b.differs]), [["main", true, 0], ["idea", false, 0]]);
   assert.equal(tcm("rm", "lib.areaOf").status, 0);
   assert.deepEqual((await c.request("tcm/branches", {})).map((b: any) => [b.name, b.differs]), [["main", 0], ["idea", 1]]);
+  // what it has that this one doesn't, name by name, to open as diffs
+  const toIdea = await c.request("tcm/branchChanges", { branch: "idea" });
+  assert.deepEqual(toIdea.map((x: any) => [x.change, x.path]), [["added", "lib.areaOf"]]);
+  // (its code, with this branch's names: here it has none, so it reads as it was written)
+  assert.match(fs.readFileSync(fileURLToPath(toIdea[0].uri), "utf8"), /=> square\(s\)/);
 });

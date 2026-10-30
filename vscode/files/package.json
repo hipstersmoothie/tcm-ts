@@ -283,7 +283,7 @@
       },
       {
         "command": "tcm.showChanges",
-        "title": "Show changes",
+        "title": "Open changes",
         "category": "tcm",
         "icon": "$(diff)"
       },
@@ -309,6 +309,11 @@
         "title": "Refresh",
         "category": "tcm",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "tcm.showChangesText",
+        "title": "Show changes as text",
+        "category": "tcm"
       }
     ],
     "menus": {
@@ -559,6 +564,11 @@
           "command": "tcm.mergeBranch",
           "when": "view == tcm.changes && viewItem == branch",
           "group": "2_change@1"
+        },
+        {
+          "command": "tcm.showChangesText",
+          "when": "view == tcm.changes && (viewItem == historyEntry || viewItem == branch)",
+          "group": "1_open@2"
         }
       ],
       "commandPalette": [
@@ -604,6 +614,14 @@
         },
         {
           "command": "tcm.moreHistory",
+          "when": "false"
+        },
+        {
+          "command": "tcm.showChangesText",
+          "when": "false"
+        },
+        {
+          "command": "tcm.showChanges",
           "when": "false"
         }
       ]
