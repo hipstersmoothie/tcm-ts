@@ -7,12 +7,12 @@
   "license": "MIT",
   "private": true,
   "engines": {
-    "vscode": "^1.91.0"
+    "vscode": "^1.143.0"
   },
   "categories": [
     "Programming Languages"
   ],
-  "main": "./extension.js",
+  "main": "./index.js",
   "activationEvents": [
     "workspaceContains:.tcm/codebase.sqlite"
   ],
@@ -208,7 +208,7 @@
       },
       {
         "command": "tcm.upgradePackageTo",
-        "title": "Move code to another range\u2026",
+        "title": "Move code to another range…",
         "category": "tcm",
         "icon": "$(versions)"
       },
@@ -262,7 +262,7 @@
       },
       {
         "command": "tcm.saveChangelog",
-        "title": "Save changelog\u2026",
+        "title": "Save changelog…",
         "category": "tcm",
         "icon": "$(save)"
       }
@@ -547,7 +547,6 @@
     }
   },
   "dependencies": {
-    "vscode-languageclient": "^9.0.1",
-    "tcm-ts-plugin": "file:./ts-plugin"
+    "tcm-ts-plugin": "file:./plugin"
   }
 }

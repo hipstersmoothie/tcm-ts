@@ -76,6 +76,16 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/vscode:
+    dependencies:
+      vscode-languageclient:
+        specifier: ^9.0.1
+        version: 9.0.1
+    devDependencies:
+      '@types/vscode':
+        specifier: ^1.143.0
+        version: 1.144.0
+
 packages:
 
   '@bomb.sh/router@0.8.0':
@@ -247,6 +257,9 @@ packages:
   '@types/unist@3.0.3':
     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
 
+  '@types/vscode@1.144.0':
+    resolution: {integrity: sha512-IDd4eQzu6MjGucfaQF0V/TY5vHX9o1albkKyZD6K/iVXSCcL5NSj4KW1wWfx1QDadPKWyxMaE/+M1wKLCJlXpA==}
+
   '@typescript/typescript-aix-ppc64@7.1.0-beta':
     resolution: {integrity: sha512-DXDG+jIWxBHGdoO70tcHON33rCnSzsEZj9P13oyf/r/KEGIo6awsdSNVNjAw0uMwEpqRu75IrgCcW58YcVkZHg==}
     engines: {node: '>=16.20.0'}
@@ -375,6 +388,12 @@ packages:
 
   '@ungap/structured-clone@1.4.0':
     resolution: {integrity: sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ==}
+
+  balanced-match@1.0.2:
+    resolution: {integrity: sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==}
+
+  brace-expansion@2.1.7:
+    resolution: {integrity: sha512-uZbew1NqdmPDTMJ8ah1y+b+9QEJrfkXFk3RcTQw3X0jW/xRUvFKsg1CfQdSYGdTbXZWExtU3J3ccxtnfw1Fi0g==}
 
   ccount@2.0.1:
     resolution: {integrity: sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg==}
@@ -524,6 +543,10 @@ packages:
   micromark-util-types@2.0.3:
     resolution: {integrity: sha512-oxB2Ik03hI0gv+VNn9tnh1t1YEe9MDPptViAEgfdf3YQHsn0pzGTgCdlSCJXcwhqm8phaEuM7zeEu3QQzVBrPg==}
 
+  minimatch@5.1.9:
+    resolution: {integrity: sha512-7o1wEA2RyMP7Iu7GNba9vc0RWWGACJOCZBJX2GJWip0ikV+wcOsgVuY9uE8CPiyQhkGFSlhuSkZPavN7u1c2Fw==}
+    engines: {node: '>=10'}
+
   nanoid@3.3.20:
     resolution: {integrity: sha512-uKdg2G3GNCKQn9byYOpxbGqrT2fGO5KRt5J/8b3pok8rT6qxGWF6hxMyJiEYtAf+FVyYuD9hRaDqX5uPFYJ4ZQ==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
@@ -561,6 +584,11 @@ packages:
   rolldown@1.2.15:
     resolution: {integrity: sha512-6odND+fel5zVw3I4Yc2e69gvguDnX0CAAGiNDZSq4ik5WUcaLrkD2GLuog0XcODbor31hZ5ayEMgVDno+KPV5g==}
     engines: {node: ^20.19.0 || >=22.12.0}
+    hasBin: true
+
+  semver@7.8.5:
+    resolution: {integrity: sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==}
+    engines: {node: '>=10'}
     hasBin: true
 
   shiki@4.5.0:
@@ -663,6 +691,20 @@ packages:
         optional: true
       yaml:
         optional: true
+
+  vscode-jsonrpc@8.2.0:
+    resolution: {integrity: sha512-C+r0eKJUIfiDIfwJhria30+TYWPtuHJXHtI7J0YlOmKAo7ogxP20T0zxB7HZQIFhIyvoBPwWskjxrvAtfjyZfA==}
+    engines: {node: '>=14.0.0'}
+
+  vscode-languageclient@9.0.1:
+    resolution: {integrity: sha512-JZiimVdvimEuHh5olxhxkht09m3JzUGwggb5eRUkzzJhZ2KjCN0nh55VfiED9oez9DyF8/fz1g1iBV3h+0Z2EA==}
+    engines: {vscode: ^1.82.0}
+
+  vscode-languageserver-protocol@3.17.5:
+    resolution: {integrity: sha512-mb1bvRJN8SVznADSGWM9u/b07H7Ecg0I3OgXDuLdn307rl/J3A9YD6/eYOssqhecL27hK1IPZAsaqh00i/Jljg==}
+
+  vscode-languageserver-types@3.17.5:
+    resolution: {integrity: sha512-Ld1VelNuX9pdF39h2Hgaeb5hEZM2Z3jUrrMgWQAu82jMtZp7p3vJT3BzToKtZI7NgQssZje5o0zryOrhQvzQAg==}
 
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
@@ -792,6 +834,8 @@ snapshots:
 
   '@types/unist@3.0.3': {}
 
+  '@types/vscode@1.144.0': {}
+
   '@typescript/typescript-aix-ppc64@7.1.0-beta':
     optional: true
 
@@ -856,6 +900,12 @@ snapshots:
     optional: true
 
   '@ungap/structured-clone@1.4.0': {}
+
+  balanced-match@1.0.2: {}
+
+  brace-expansion@2.1.7:
+    dependencies:
+      balanced-match: 1.0.2
 
   ccount@2.0.1: {}
 
@@ -990,6 +1040,10 @@ snapshots:
 
   micromark-util-types@2.0.3: {}
 
+  minimatch@5.1.9:
+    dependencies:
+      brace-expansion: 2.1.7
+
   nanoid@3.3.20: {}
 
   oniguruma-parser@0.12.2: {}
@@ -1042,6 +1096,8 @@ snapshots:
       '@rolldown/binding-openharmony-arm64': 1.2.15
       '@rolldown/binding-win32-arm64-msvc': 1.2.15
       '@rolldown/binding-win32-x64-msvc': 1.2.15
+
+  semver@7.8.5: {}
 
   shiki@4.5.0:
     dependencies:
@@ -1143,5 +1199,20 @@ snapshots:
     optionalDependencies:
       '@types/node': 24.19.2
       fsevents: 2.3.3
+
+  vscode-jsonrpc@8.2.0: {}
+
+  vscode-languageclient@9.0.1:
+    dependencies:
+      minimatch: 5.1.9
+      semver: 7.8.5
+      vscode-languageserver-protocol: 3.17.5
+
+  vscode-languageserver-protocol@3.17.5:
+    dependencies:
+      vscode-jsonrpc: 8.2.0
+      vscode-languageserver-types: 3.17.5
+
+  vscode-languageserver-types@3.17.5: {}
 
   zwitch@2.0.4: {}

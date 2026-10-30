@@ -1,21 +1,48 @@
 // Definition and namespace pages, as in Unison's codebase UI: each opens in its own tab (opening one that's open
 // focuses it), and links in a page open more. The language server builds the pages; docs are markdown, rendered
 // by VS Code's own renderer.
-const vscode = require("vscode");
+import * as vscode from "vscode";
+import type { Request } from "./releases.ts";
 
-class Pages {
+/** What a page shows: a release's, a package's, a definition's or a namespace's. */
+export interface PageTarget {
+  title?: string;
+  release?: { name: string };
+  package?: { name: string; range: string };
+  hash?: string;
+  namespace?: string;
+}
+
+/** What a page's buttons run, by name, given the page's data. */
+export type PageActions = Record<string, (page: any) => unknown>;
+
+interface PageMessage {
+  type: string;
+  package?: { name: string; range: string };
+  hash?: string;
+  namespace?: string;
+  action?: string;
+  page?: unknown;
+  url?: string;
+}
+
+export class Pages {
+  request: Request;
+  actions: PageActions;
+  icon: vscode.Uri;
+  panels = new Map<string, { panel: vscode.WebviewPanel; target: PageTarget }>();
+
   /**
    * `request` sends a request to the language server; `actions` run editor commands for a page's buttons;
    * `icon` is the tab icon.
    */
-  constructor(request, actions, icon) {
+  constructor(request: Request, actions: PageActions, icon: vscode.Uri) {
     this.request = request;
     this.actions = actions;
     this.icon = icon;
-    this.panels = new Map(); // key → { panel, target }
   }
 
-  async open(target) {
+  async open(target: PageTarget): Promise<void> {
     const key = target.release ? `rel:${target.release.name}` : target.package ? `pkg:${target.package.name}@${target.package.range}` : target.hash ? `def:${target.hash}` : `ns:${target.namespace}`;
     const open = this.panels.get(key);
     if (open) {
@@ -26,17 +53,17 @@ class Pages {
     panel.iconPath = this.icon;
     this.panels.set(key, { panel, target });
     panel.onDidDispose(() => this.panels.delete(key));
-    panel.webview.onDidReceiveMessage((m) => {
+    panel.webview.onDidReceiveMessage((m: PageMessage) => {
       if (m.type === "open") return this.open(m.package ? { package: m.package } : m.hash ? { hash: m.hash } : { namespace: m.namespace });
-      if (m.type === "action") return this.actions[m.action]?.(m.page);
-      if (m.type === "external") return vscode.env.openExternal(vscode.Uri.parse(m.url));
+      if (m.type === "action") return this.actions[m.action!]?.(m.page);
+      if (m.type === "external") return vscode.env.openExternal(vscode.Uri.parse(m.url!));
     });
     panel.webview.html = html(panel.webview);
     await this.render(key);
   }
 
   /** Fetch a page (cheap: examples are cached by hash) and draw it; the tab is named after it. */
-  async render(key) {
+  async render(key: string): Promise<void> {
     const open = this.panels.get(key);
     if (!open) return;
     const { panel, target } = open;
@@ -44,16 +71,16 @@ class Pages {
       if (target.release) {
         const page = await this.request("tcm/releasePage", { name: target.release.name });
         panel.title = `${page.name} (releases)`;
-        const [nextHtml, ...notesHtml] = await Promise.all([markdown(page.next.notes), ...page.releases.map((r) => markdown(r.body))]);
+        const [nextHtml, ...notesHtml] = await Promise.all([markdown(page.next.notes), ...(page.releases as { body: string }[]).map((r) => markdown(r.body))]);
         panel.webview.postMessage({ type: "page", card: { kind: "release", page, nextHtml, notesHtml } });
       } else if (target.package) {
         const page = await this.request("tcm/packagePage", target.package);
         panel.title = `${page.name} ${page.range} (package)`;
-        const docs = await Promise.all(page.api.map((a) => (a.doc ? markdown(a.doc) : "")));
+        const docs = await Promise.all((page.api as { doc?: string }[]).map((a) => (a.doc ? markdown(a.doc) : "")));
         panel.webview.postMessage({ type: "page", card: { kind: "package", page, readmeHtml: page.readme ? await markdown(page.readme) : "", docs } });
       } else if (target.hash) {
         const page = await this.request("tcm/page", { hash: target.hash });
-        const name = page.names[0] ?? page.short;
+        const name: string = page.names[0] ?? page.short;
         panel.title = name.slice(name.lastIndexOf(".") + 1);
         panel.webview.postMessage({ type: "page", card: { kind: "def", page, docHtml: page.docMarkdown ? await markdown(page.docMarkdown) : "" } });
       } else {
@@ -62,25 +89,25 @@ class Pages {
         panel.webview.postMessage({ type: "page", card: { kind: "namespace", page, readmeHtml: page.readme ? await markdown(page.readme) : "" } });
       }
     } catch (e) {
-      panel.webview.postMessage({ type: "page", card: { error: e.message } });
+      panel.webview.postMessage({ type: "page", card: { error: (e as Error).message } });
     }
   }
 
-  refresh() {
+  refresh(): void {
     for (const key of this.panels.keys()) this.render(key);
   }
 }
 
 /** Markdown to HTML with VS Code's renderer (the markdown preview's), falling back to escaped text. */
-async function markdown(md) {
+export async function markdown(md: string): Promise<string> {
   try {
-    return await vscode.commands.executeCommand("markdown.api.render", md);
+    return await vscode.commands.executeCommand<string>("markdown.api.render", md);
   } catch {
-    return `<pre>${md.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c])}</pre>`;
+    return `<pre>${md.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!)}</pre>`;
   }
 }
 
-function html(webview) {
+export function html(webview: vscode.Webview): string {
   const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
   return `<!doctype html>
 <html><head><meta charset="utf-8">
@@ -305,5 +332,3 @@ window.addEventListener("message", (e) => {
 });
 </script></body></html>`;
 }
-
-module.exports = { Pages, html };

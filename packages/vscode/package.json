@@ -1,0 +1,12 @@
+{
+  "name": "@tcm/vscode",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.143.0"
+  }
+}

@@ -9,8 +9,8 @@ packages/
   loader/   rendering stored definitions to .tcm/cache modules, running them, the #codebase shim
   cli/      the tcm command, placement inference, sync, merge, web (Vite plugin, dev/build/start), the
             #tcm/server runtime, the wire codec
-packages/editors/  vscode/: the VS Code extension (a thin client for `tcm lsp`; not part of the npm package), files of
-            tcm's codebase (tcmts.editors, kept as written: a .tcm-files directory)
+packages/vscode/  the VS Code extension (a thin client for `tcm lsp`), a package of its own (tcm-ts-vscode): its code
+            in src/, the files it ships beside it (its package.json, icon, TypeScript plugin) in files/
 packages/examples/  polls, notes, geometry: example projects, files of tcm's codebase (tcmts.examples, kept as
             written: their directory has a .tcm-files mark), built by their setup scripts, run by e2e/examples.ts
 scripts/    codebase.sh (`pnpm tcm`): verifying, the docs site and comparing compilers are definitions (packages/dev.ts)

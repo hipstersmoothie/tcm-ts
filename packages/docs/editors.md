@@ -102,7 +102,8 @@ and open as pages.
 
 ## VS Code
 
-`packages/editors/vscode` is the extension. Beyond starting `tcm lsp` in workspaces with a codebase, it adds:
+`packages/vscode` is the extension: definitions of tcm's codebase (`tcmts.vscode`), packed as a package of its own,
+`tcm-ts-vscode`. Beyond starting `tcm lsp` in workspaces with a codebase, it adds:
 
 The `#` icon in the activity bar opens these views:
 
@@ -157,7 +158,7 @@ All five refresh when the codebase changes (including from a terminal), and the 
 does, so rows appear as a running app writes them.
 - **tcm: Find by type** (the search icon in the sidebar, or the command palette): type a TypeScript type, pick a
   match, and it opens.
-- **A TypeScript server plugin** (`packages/editors/vscode/ts-plugin`, loaded through VS Code's
+- **A TypeScript server plugin** (`packages/vscode/files/plugin`, loaded through VS Code's
   `typescriptServerPlugins`): Go to Definition skips tcm's generated modules, so Cmd+click on a codebase name
   lands on its source rather than offering `.tcm/cache/<hash>.ts` too. Reload the window after installing.
 - **tcm: Add / Update**, which save the file first; **Rename** and **Edit** ask for names when run from the
@@ -165,13 +166,18 @@ does, so rows appear as a running app writes them.
 
 Try it on the [polls example](../examples/README.md).
 
-Build a `.vsix` (the first `npx` downloads vsce, which takes a while) and install it with **Extensions → … →
+It needs VS Code 1.143 or later (it's an ES module). Pack it from tcm's repository, build a `.vsix` from what
+that writes (the first `npx` downloads vsce, which takes a while), and install it with **Extensions → … →
 Install from VSIX…**, or with VS Code's CLI (on macOS it's inside the app if `code` isn't on your PATH):
 
 ```sh
-cd packages/editors/vscode && npm install && npx @vscode/vsce package
+pnpm tcm pack tcm-ts-vscode --out ../dist/vscode
+cd dist/vscode && npm install && npx @vscode/vsce package
 "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --install-extension tcm-ts-*.vsix
 ```
+
+The `.vsix` takes its version from the extension's latest release (`tcm release tcm-ts-vscode`); unreleased,
+it's 0.0.0.
 
 Don't symlink the folder into `~/.vscode/extensions`: VS Code only keeps extensions listed in its manifest, and
 marks unlisted folders as removed. A workspace you haven't trusted yet runs in Restricted Mode, where the
@@ -187,7 +193,7 @@ Any LSP client can run `tcm lsp` for TypeScript files, next to its TypeScript se
 the codebase directory (or inside it).
 
 Packages tcm provides (ones the project hasn't installed; see [packages](packages.md)) are resolved for the
-editor by tcm's TypeScript plugin, `packages/editors/vscode/ts-plugin`. Load it in your TypeScript server (as a
+editor by tcm's TypeScript plugin, `packages/vscode/files/plugin`. Load it in your TypeScript server (as a
 `tsserver` plugin) to get the same resolution; without it, TypeScript reports those imports as missing, though
 tcm's own checks and diagnostics are unaffected.
 

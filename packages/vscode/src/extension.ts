@@ -1,31 +1,37 @@
 // The VS Code side of `tcm lsp`. The language server knows the codebase; this shows it: a Codebase sidebar (the
 // namespace tree), `tcm:` documents (definitions rendered with current names, served by the server), and the
 // actions that need VS Code's UI: picking, asking for names, opening files, terminals.
-const fs = require("node:fs");
-const { spawn } = require("node:child_process");
-const vscode = require("vscode");
-const { LanguageClient } = require("vscode-languageclient/node");
-const { showTable, refreshTables } = require("./data-panel.js");
-const { Pages } = require("./pages-panel.js");
-const { ReleasesTree, DraftLenses } = require("./releases.js");
+import fs from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import * as vscode from "vscode";
+import { LanguageClient, State } from "vscode-languageclient/node.js";
+import { refreshTables, showTable } from "./data-panel.ts";
+import { Pages } from "./pages-panel.ts";
+import { DraftLenses, ReleasesTree, type PublishedPackage, type ReleaseCheck, type Request } from "./releases.ts";
 
-let client;
+/** The language client, while the extension is active. */
+export const session: { client?: LanguageClient } = {};
+
+/** Whether the language server is up to answer requests. */
+export const running = (): boolean => session.client?.state === State.Running;
 
 /**
  * `tcm.path` is the tcm executable, or a path to tcm's `bin/tcm.js` (run with Node), or a command line whose
  * words are separated by spaces, with "quotes" around a word that contains spaces.
  */
-function tcmCommand() {
+export function tcmCommand(): string[] {
   const setting = vscode.workspace.getConfiguration("tcm").get("path", "tcm").trim();
   // a file: tcm itself, or its bin/tcm.js (spaces in the path and all)
   if (fs.existsSync(setting)) return /\.(c|m)?(js|ts)$/.test(setting) ? ["node", setting] : [setting];
-  return [...setting.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
+  return [...setting.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]!);
 }
 
-const quote = (s) => (/^[\w./:@=+-]+$/.test(s) ? s : `'${s.replaceAll("'", "'\\''")}'`);
+export const quote = (s: string) => (/^[\w./:@=+-]+$/.test(s) ? s : `'${s.replaceAll("'", "'\\''")}'`);
+
+export type Role = "app" | "type" | "table" | "schedule" | "server" | "browser" | "shared" | "test";
 
 /** How definitions are grouped in a namespace: by what they're for, the app's entry points first. */
-const ROLES = [
+export const ROLES: [Role, string, string][] = [
   ["app", "Apps", "rocket"],
   ["type", "Types", "symbol-interface"],
   ["table", "Data", "database"],
@@ -36,12 +42,29 @@ const ROLES = [
   ["test", "Tests", "beaker"],
 ];
 /** Namespaces with more definitions than this are shown in role groups. */
-const GROUP_OVER = 8;
+export const GROUP_OVER = 8;
 
-const short = (s, n = 80) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+export const short = (s: string, n = 80) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+
+/** A definition, as the language server lists it (tcm/tree). */
+export interface DefinitionEntry {
+  kind: "term" | "type" | "class";
+  name: string;
+  path: string;
+  hash: string;
+  uri: string;
+  signature: string;
+  role?: Role;
+  test?: "passed" | "failed" | string;
+  endpoint?: boolean;
+  streaming?: boolean;
+  symbolKind?: number;
+  place?: "server" | "browser" | "anywhere";
+  doc?: string;
+}
 
 /** An item for one definition (shared by both views). */
-function definitionItem(e, label = e.name) {
+export function definitionItem(e: DefinitionEntry, label: string = e.name): vscode.TreeItem {
   const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
   item.description = e.kind === "type" ? "type" : short(e.signature);
   item.iconPath =
@@ -66,30 +89,45 @@ function definitionItem(e, label = e.name) {
   return item;
 }
 
+/** An app started from here. */
+export interface RunningApp {
+  proc: ChildProcess;
+  output: vscode.OutputChannel;
+  url?: string;
+  stopping?: boolean;
+}
+
+export type CodebaseNode =
+  | { kind: "namespace"; name: string; path: string; count: number }
+  | { kind: "group"; role: Role; label: string; icon: string; definitions: DefinitionEntry[] }
+  | DefinitionEntry;
+
 /** Sidebar items: namespaces, then the definitions directly in each (grouped by role in big namespaces). */
-class CodebaseTree {
-  constructor(running) {
+export class CodebaseTree implements vscode.TreeDataProvider<CodebaseNode> {
+  running: Map<string, RunningApp>;
+  changed = new vscode.EventEmitter<CodebaseNode | undefined | void>();
+  onDidChangeTreeData = this.changed.event;
+
+  constructor(running: Map<string, RunningApp>) {
     this.running = running;
-    this.changed = new vscode.EventEmitter();
-    this.onDidChangeTreeData = this.changed.event;
   }
   refresh() {
     this.changed.fire();
   }
-  async getChildren(element) {
+  async getChildren(element?: CodebaseNode): Promise<CodebaseNode[]> {
     if (element?.kind === "group") return element.definitions;
     if (element && element.kind !== "namespace") return [];
-    if (!client || client.state !== 2 /* running */) return [];
-    const t = await client.sendRequest("tcm/tree", { namespace: element?.path ?? "" });
-    const namespaces = t.namespaces.map((n) => ({ ...n, kind: "namespace" }));
+    if (!running()) return [];
+    const t = (await session.client!.sendRequest("tcm/tree", { namespace: element?.path ?? "" })) as { namespaces: { name: string; path: string; count: number }[]; definitions: DefinitionEntry[] };
+    const namespaces = t.namespaces.map((n) => ({ ...n, kind: "namespace" as const }));
     if (t.definitions.length <= GROUP_OVER) return [...namespaces, ...t.definitions];
-    const groups = ROLES.map(([role, label, icon]) => ({ kind: "group", role, label, icon, definitions: t.definitions.filter((d) => d.role === role) }));
+    const groups = ROLES.map(([role, label, icon]) => ({ kind: "group" as const, role, label, icon, definitions: t.definitions.filter((d) => d.role === role) }));
     return [...namespaces, ...groups.filter((g) => g.definitions.length)];
   }
-  getTreeItem(e) {
+  getTreeItem(e: CodebaseNode): vscode.TreeItem {
     if (e.kind === "group") {
       const item = new vscode.TreeItem(e.label, e.role === "test" ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.Expanded);
-      item.id = `group:${e.definitions[0].path}:${e.role}`;
+      item.id = `group:${e.definitions[0]!.path}:${e.role}`;
       item.description = String(e.definitions.length);
       item.iconPath = new vscode.ThemeIcon(e.icon);
       return item;
@@ -112,26 +150,41 @@ class CodebaseTree {
   }
 }
 
+/** An app of the codebase (tcm/apps), and what would stop it building. */
+export interface AppEntry {
+  path: string;
+  uri: string;
+  errors: string[];
+  endpoints: unknown[];
+  browser: unknown[];
+  tables: unknown[];
+  schedules: unknown[];
+}
+
+export type AppNode = ({ kind: "app" } & AppEntry) | { kind: "problem"; label: string };
+
 /**
  * The apps in the codebase, as a launcher: each app's status, and starting, stopping and opening it. What an app is
  * made of is in the Codebase view (grouped by role) and the Data view; only problems that would stop it building
  * are listed here.
  */
-class AppsTree {
-  constructor(running) {
+export class AppsTree implements vscode.TreeDataProvider<AppNode> {
+  running: Map<string, RunningApp>;
+  changed = new vscode.EventEmitter<AppNode | undefined | void>();
+  onDidChangeTreeData = this.changed.event;
+
+  constructor(running: Map<string, RunningApp>) {
     this.running = running;
-    this.changed = new vscode.EventEmitter();
-    this.onDidChangeTreeData = this.changed.event;
   }
   refresh() {
     this.changed.fire();
   }
-  async getChildren(element) {
-    if (!client || client.state !== 2) return [];
-    if (!element) return (await client.sendRequest("tcm/apps", {})).map((a) => ({ ...a, kind: "app" }));
-    return element.kind === "app" ? element.errors.map((label) => ({ kind: "problem", label })) : [];
+  async getChildren(element?: AppNode): Promise<AppNode[]> {
+    if (!running()) return [];
+    if (!element) return ((await session.client!.sendRequest("tcm/apps", {})) as AppEntry[]).map((a) => ({ ...a, kind: "app" as const }));
+    return element.kind === "app" ? element.errors.map((label) => ({ kind: "problem" as const, label })) : [];
   }
-  getTreeItem(e) {
+  getTreeItem(e: AppNode): vscode.TreeItem {
     if (e.kind === "problem") {
       const item = new vscode.TreeItem(e.label);
       item.iconPath = new vscode.ThemeIcon("error", new vscode.ThemeColor("errorForeground"));
@@ -154,20 +207,28 @@ class AppsTree {
   }
 }
 
+/** A table of app data (tcm/data). */
+export interface TableEntry {
+  table: string;
+  rows: number;
+  older: number;
+  path?: string;
+  uri?: string;
+}
+
 /** The app data: every table, with its row count; a table opens in the table viewer. */
-class DataTree {
-  constructor() {
-    this.changed = new vscode.EventEmitter();
-    this.onDidChangeTreeData = this.changed.event;
-  }
+export class DataTree implements vscode.TreeDataProvider<TableEntry> {
+  changed = new vscode.EventEmitter<TableEntry | undefined | void>();
+  onDidChangeTreeData = this.changed.event;
+
   refresh() {
     this.changed.fire();
   }
-  async getChildren(element) {
-    if (!client || client.state !== 2 || element) return [];
-    return client.sendRequest("tcm/data", {});
+  async getChildren(element?: TableEntry): Promise<TableEntry[]> {
+    if (!running() || element) return [];
+    return session.client!.sendRequest("tcm/data", {});
   }
-  getTreeItem(e) {
+  getTreeItem(e: TableEntry): vscode.TreeItem {
     const item = new vscode.TreeItem(e.table, vscode.TreeItemCollapsibleState.None);
     item.id = `table:${e.table}`;
     item.description = `${e.rows} row${e.rows === 1 ? "" : "s"}${e.older ? ` · ${e.older} older` : ""}${e.path ? "" : " · not declared"}`;
@@ -182,30 +243,50 @@ class DataTree {
   }
 }
 
+/** One compatible range of a package the codebase runs (tcm/packages). */
+export interface PackageRange {
+  range: string;
+  version: string;
+  users: number;
+  types?: string;
+  integrity?: string;
+}
+
+export type PackageNode =
+  | { kind: "package"; name: string; ranges: PackageRange[] }
+  | ({ kind: "range"; name: string; only?: boolean } & PackageRange)
+  | { kind: "user"; path: string; hash: string; signature: string; userKind?: string };
+
 /**
  * The packages the codebase runs: each package, then (when it runs more than one) each compatible range, then the
  * definitions that use it. A package or range opens its page (README, API, users).
  */
-class PackagesTree {
-  constructor() {
-    this.changed = new vscode.EventEmitter();
-    this.onDidChangeTreeData = this.changed.event;
-  }
+export class PackagesTree implements vscode.TreeDataProvider<PackageNode> {
+  changed = new vscode.EventEmitter<PackageNode | undefined | void>();
+  onDidChangeTreeData = this.changed.event;
+
   refresh() {
     this.changed.fire();
   }
-  async getChildren(element) {
-    if (!client || client.state !== 2) return [];
-    if (!element) return (await client.sendRequest("tcm/packages", {})).map((p) => (p.ranges.length === 1 ? { kind: "range", name: p.name, ...p.ranges[0], only: true } : { kind: "package", ...p }));
-    if (element.kind === "package") return element.ranges.map((r) => ({ kind: "range", name: element.name, ...r }));
-    if (element.kind === "range") return (await client.sendRequest("tcm/packageUsers", { name: element.name, range: element.range })).map((u) => ({ kind: "user", ...u }));
+  async getChildren(element?: PackageNode): Promise<PackageNode[]> {
+    if (!running()) return [];
+    const client = session.client!;
+    if (!element) {
+      const pkgs = (await client.sendRequest("tcm/packages", {})) as { name: string; ranges: PackageRange[] }[];
+      return pkgs.map((p): PackageNode => (p.ranges.length === 1 ? { kind: "range", name: p.name, ...p.ranges[0]!, only: true } : { kind: "package", ...p }));
+    }
+    if (element.kind === "package") return element.ranges.map((r) => ({ kind: "range" as const, name: element.name, ...r }));
+    if (element.kind === "range") {
+      const users = (await client.sendRequest("tcm/packageUsers", { name: element.name, range: element.range })) as { path: string; hash: string; signature: string; kind?: string }[];
+      return users.map(({ kind, ...u }) => ({ kind: "user" as const, userKind: kind, ...u }));
+    }
     return [];
   }
-  getTreeItem(e) {
+  getTreeItem(e: PackageNode): vscode.TreeItem {
     if (e.kind === "user") {
       const item = new vscode.TreeItem(e.path, vscode.TreeItemCollapsibleState.None);
-      item.description = e.kind === "type" ? "type" : e.signature;
-      item.iconPath = new vscode.ThemeIcon(e.kind === "type" ? "symbol-interface" : "symbol-function");
+      item.description = e.userKind === "type" ? "type" : e.signature;
+      item.iconPath = new vscode.ThemeIcon(e.userKind === "type" ? "symbol-interface" : "symbol-function");
       item.command = { command: "tcm.openPage", title: "Open page", arguments: [{ hash: e.hash }] };
       return item;
     }
@@ -231,15 +312,26 @@ class PackagesTree {
   }
 }
 
-async function activate(context) {
+/** A result of tcm/find: a definition, or why the query didn't parse. */
+interface FoundItem {
+  match: string;
+  kind?: string;
+  path?: string;
+  signature?: string;
+  detail?: string;
+  hash?: string;
+}
+
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const [command, ...args] = tcmCommand();
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  /** apps started from here: path → { proc, url, output } */
-  const running = new Map();
+  /** apps started from here, by path */
+  const running = new Map<string, RunningApp>();
   const tree = new CodebaseTree(running);
   const icon = vscode.Uri.joinPath(context.extensionUri, "media", "tcm.svg");
+  const request: Request = (method, params) => client.sendRequest(method, params);
   const pages = new Pages(
-    (method, params) => client.sendRequest(method, params),
+    request,
     {
       source: (p) => vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(p.uri)),
       upgradePackage: (p) => vscode.commands.executeCommand("tcm.upgradePackage", p),
@@ -260,25 +352,25 @@ async function activate(context) {
     },
     icon,
   );
-  const views = new vscode.EventEmitter();
+  const views = new vscode.EventEmitter<vscode.Uri>();
   const apps = new AppsTree(running);
   const data = new DataTree();
   const packages = new PackagesTree();
-  const releases = new ReleasesTree((method, params) => client.sendRequest(method, params));
-  const lenses = new DraftLenses((method, params) => client.sendRequest(method, params));
+  const releases = new ReleasesTree(request);
+  const lenses = new DraftLenses(request);
   const releasesChanged = () => {
     releases.refresh();
     lenses.changed.fire();
     pages.refresh();
   };
   /** A package's name, from a tree item, a page, or by asking. */
-  const packageOf = async (x) => {
+  const packageOf = async (x: any): Promise<string | undefined> => {
     if (x?.name) return x.name;
-    const pkgs = await client.sendRequest("tcm/publishing", {});
-    if (pkgs.length === 1) return pkgs[0].name;
+    const pkgs = (await client.sendRequest("tcm/publishing", {})) as PublishedPackage[];
+    if (pkgs.length === 1) return pkgs[0]!.name;
     return (await vscode.window.showQuickPick(pkgs.map((p) => ({ label: p.name, description: p.latest?.version ?? "unreleased" })), { placeHolder: "Which package?" }))?.label;
   };
-  const upgrade = async (name, target, namespace) => {
+  const upgrade = async (name: string, target?: string, namespace?: string) => {
     const label = target ? `${name} → ${target}${namespace ? ` in ${namespace}` : ""}` : name;
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Upgrading ${label}…` }, () =>
       client.sendRequest("workspace/executeCommand", { command: "tcm.upgrade", arguments: [name, target, namespace] }),
@@ -295,8 +387,8 @@ async function activate(context) {
     if (live.length) status.show();
     else status.hide();
   };
-  const appOf = (x) => (typeof x === "string" ? x : x?.path);
-  const startApp = async (x) => {
+  const appOf = (x: any): string | undefined => (typeof x === "string" ? x : x?.path);
+  const startApp = async (x: unknown) => {
     const app = appOf(x) ?? (await vscode.window.showInputBox({ prompt: "Start which app?", placeHolder: "app.main" }));
     if (!app) return;
     const existing = running.get(app);
@@ -305,12 +397,12 @@ async function activate(context) {
     const output = vscode.window.createOutputChannel(`tcm: ${app}`);
     const [cmd, ...pre] = tcmCommand();
     // port 0: a free port, so several apps can run at once
-    const proc = spawn(cmd, [...pre, "dev", app, "--port", "0"], { cwd: folder, env: { ...process.env, NO_COLOR: "1" } });
-    const run = { proc, output, url: undefined };
+    const proc = spawn(cmd!, [...pre, "dev", app, "--port", "0"], { cwd: folder, env: { ...process.env, NO_COLOR: "1" } });
+    const run: RunningApp = { proc, output, url: undefined };
     running.set(app, run);
     apps.refresh();
     tree.refresh();
-    const onData = (d) => {
+    const onData = (d: Buffer) => {
       const text = d.toString().replace(/\x1b\[[0-9;]*m/g, "");
       output.append(text);
       const m = !run.url && /url\s+(https?:\/\/\S+)/.exec(text);
@@ -336,10 +428,10 @@ async function activate(context) {
     });
   };
 
-  client = new LanguageClient(
+  const client = new LanguageClient(
     "tcm",
     "tcm-ts",
-    { command, args: [...args, "lsp"], options: { cwd: folder } },
+    { command: command!, args: [...args, "lsp"], options: { cwd: folder } },
     {
       // scratch files, and the codebase's own documents
       documentSelector: [{ scheme: "file", language: "typescript" }, { scheme: "file", language: "typescriptreact" }, { scheme: "tcm" }],
@@ -357,19 +449,20 @@ async function activate(context) {
       },
     },
   );
+  session.client = client;
 
-  const pathOf = (x) => (typeof x === "string" ? x : x?.path);
-  const isTestPath = (p) => p.split(".").includes("tests") || /^test([A-Z0-9_$]|$)/.test(p.slice(p.lastIndexOf(".") + 1));
-  const debug = async (kind, name, uri) => {
+  const pathOf = (x: any): string | undefined => (typeof x === "string" ? x : x?.path);
+  const isTestPath = (p: string) => p.split(".").includes("tests") || /^test([A-Z0-9_$]|$)/.test(p.slice(p.lastIndexOf(".") + 1));
+  const debug = async (kind: "run" | "test" | "app", name: string | undefined, uri?: string) => {
     try {
-      const config = await client.sendRequest("tcm/debug", { kind, name, uri });
+      const config = (await client.sendRequest("tcm/debug", { kind, name, uri })) as vscode.DebugConfiguration;
       await vscode.debug.startDebugging(vscode.workspace.workspaceFolders?.[0], config);
     } catch (e) {
-      vscode.window.showErrorMessage(`tcm: can't debug ${name ?? "that"}: ${e.message}`);
+      vscode.window.showErrorMessage(`tcm: can't debug ${name ?? "that"}: ${(e as Error).message}`);
     }
   };
-  const run = (cmd, cmdArgs) => client.sendRequest("workspace/executeCommand", { command: cmd, arguments: cmdArgs });
-  const pickDefinition = async (prompt) => {
+  const run = (cmd: string, cmdArgs: unknown[]): Promise<any> => client.sendRequest("workspace/executeCommand", { command: cmd, arguments: cmdArgs });
+  const pickDefinition = async (prompt: string) => {
     const from = await vscode.window.showInputBox({ prompt, placeHolder: "lib.square" });
     return from || undefined;
   };
@@ -390,7 +483,7 @@ async function activate(context) {
       const name = await packageOf(x);
       if (!name) return;
       if (x?.fromDraft) await vscode.workspace.textDocuments.find((d) => d.uri.toString() === x.fromDraft.toString())?.save();
-      const check = await client.sendRequest("tcm/releaseCheck", { name });
+      const check = (await client.sendRequest("tcm/releaseCheck", { name })) as ReleaseCheck & { notes: string };
       if (check.blocked) return vscode.window.showWarningMessage(check.blocked);
       const go = await vscode.window.showInformationMessage(
         `Release ${name}@${check.version}?`,
@@ -429,7 +522,7 @@ async function activate(context) {
     vscode.commands.registerCommand("tcm.saveChangelog", async (x) => {
       const name = await packageOf(x);
       if (!name) return;
-      const { markdown } = await client.sendRequest("tcm/changelog", { name });
+      const { markdown } = (await client.sendRequest("tcm/changelog", { name })) as { markdown: string };
       const to = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(`${folder}/CHANGELOG.md`), filters: { Markdown: ["md"] }, title: `${name}'s changelog` });
       if (!to) return;
       await vscode.workspace.fs.writeFile(to, Buffer.from(markdown));
@@ -458,29 +551,29 @@ async function activate(context) {
     { dispose: () => running.forEach((r) => r.proc.kill()) },
     vscode.commands.registerCommand("tcm.startApp", startApp),
     vscode.commands.registerCommand("tcm.stopApp", (x) => {
-      const r = running.get(appOf(x));
+      const r = running.get(appOf(x) ?? "");
       if (!r) return;
       r.stopping = true;
       r.proc.kill();
     }),
     vscode.commands.registerCommand("tcm.openApp", async (x) => {
       const live = [...running].filter(([, r]) => r.url);
-      const app = appOf(x) ?? (live.length === 1 ? live[0][0] : (await vscode.window.showQuickPick(live.map(([p]) => p), { placeHolder: "Open which app?" })));
+      const app = appOf(x) ?? (live.length === 1 ? live[0]![0] : (await vscode.window.showQuickPick(live.map(([p]) => p), { placeHolder: "Open which app?" })));
       const url = app && running.get(app)?.url;
       if (url) vscode.commands.executeCommand("simpleBrowser.show", url);
     }),
     vscode.commands.registerCommand("tcm.openAppExternal", (x) => {
-      const url = running.get(appOf(x))?.url;
+      const url = running.get(appOf(x) ?? "")?.url;
       if (url) vscode.env.openExternal(vscode.Uri.parse(url));
     }),
-    vscode.commands.registerCommand("tcm.showAppLog", (x) => running.get(appOf(x))?.output.show()),
+    vscode.commands.registerCommand("tcm.showAppLog", (x) => running.get(appOf(x) ?? "")?.output.show()),
     vscode.commands.registerCommand("tcm.showTable", (t) =>
-      t?.table && showTable(t.table, (method, params) => client.sendRequest(method, params), (uri) => vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(uri)), icon),
+      t?.table && showTable(t.table, request, (uri) => vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(uri)), icon),
     ),
     // definitions as documents: tcm:/lib/square.ts is lib.square, rendered with current names
     vscode.workspace.registerTextDocumentContentProvider("tcm", {
       onDidChange: views.event,
-      provideTextDocumentContent: async (uri) => (await client.sendRequest("tcm/source", { uri: uri.toString() })).text,
+      provideTextDocumentContent: async (uri) => ((await client.sendRequest("tcm/source", { uri: uri.toString() })) as { text: string }).text,
     }),
     // pages: a definition (from a tree item, a hash, or a name) or a namespace
     vscode.commands.registerCommand("tcm.openPage", async (x) => {
@@ -489,20 +582,20 @@ async function activate(context) {
       const name = typeof x === "string" ? x : await vscode.window.showInputBox({ prompt: "Open which definition?", placeHolder: "lib.square" });
       if (!name) return;
       try {
-        const page = await client.sendRequest("tcm/page", { path: name });
+        const page = (await client.sendRequest("tcm/page", { path: name })) as { hash: string };
         await pages.open({ hash: page.hash });
       } catch (e) {
-        vscode.window.showErrorMessage(e.message);
+        vscode.window.showErrorMessage((e as Error).message);
       }
     }),
     vscode.commands.registerCommand("tcm.openNamespacePage", (item) => pages.open({ namespace: item?.path ?? "" })),
     // one search box: names, docs, and types (anything that looks like one, or starts with ":")
     vscode.commands.registerCommand("tcm.find", () => {
-      const pick = vscode.window.createQuickPick();
+      const pick = vscode.window.createQuickPick<vscode.QuickPickItem & { hash?: string }>();
       pick.placeholder = "Find a definition: a name, words from its docs, or a type like (xs: T[]) => T";
       pick.matchOnDescription = true;
       pick.matchOnDetail = true;
-      let timer;
+      let timer: ReturnType<typeof setTimeout> | undefined;
       let seq = 0;
       pick.onDidChangeValue((q) => {
         clearTimeout(timer);
@@ -512,7 +605,7 @@ async function activate(context) {
           try {
             const items = await client.sendRequest("tcm/find", { query: q });
             if (mine !== seq) return;
-            pick.items = items.map((i) =>
+            pick.items = (items as FoundItem[]).map((i) =>
               i.match === "error"
                 ? { label: "$(error) " + i.detail, alwaysShow: true }
                 : {
@@ -556,7 +649,7 @@ async function activate(context) {
       const to = await vscode.window.showInputBox({ prompt: `Rename ${from} to`, value: from });
       if (to && to !== from) await run("tcm.mv", [from, to]);
     }),
-    vscode.commands.registerCommand("tcm.findUsages", async (x, line = 0, character = 0) => {
+    vscode.commands.registerCommand("tcm.findUsages", async (x, line: number = 0, character: number = 0) => {
       const uri = typeof x === "string" ? x : x?.uri;
       if (uri) await vscode.commands.executeCommand("editor.action.findReferences", vscode.Uri.parse(uri), new vscode.Position(line, character));
     }),
@@ -591,15 +684,15 @@ async function activate(context) {
       const query = await vscode.window.showInputBox({ prompt: "Find by type", placeHolder: "(xs: T[]) => T   (unknown names are type variables)" });
       if (!query) return;
       try {
-        const r = await client.sendRequest("tcm/findByType", { query });
+        const r = (await client.sendRequest("tcm/findByType", { query })) as { hits: unknown[]; variables: string[] };
         if (!r.hits.length) return vscode.window.showInformationMessage(`Nothing in the codebase has type ${query}`);
         const pick = await vscode.window.showQuickPick(
-          r.hits.map((h) => ({ label: h.path, description: h.signature, detail: h.notes.join(", ") || undefined, uri: h.uri })),
+          (r.hits as { path: string; signature: string; notes: string[]; uri: string }[]).map((h) => ({ label: h.path, description: h.signature, detail: h.notes.join(", ") || undefined, uri: h.uri })),
           { placeHolder: r.variables.length ? `type variables: ${r.variables.join(", ")}` : query, matchOnDescription: true },
         );
         if (pick) await vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(pick.uri));
       } catch (e) {
-        vscode.window.showErrorMessage(e.message);
+        vscode.window.showErrorMessage((e as Error).message);
       }
     }),
   );
@@ -628,8 +721,6 @@ async function activate(context) {
   releases.refresh();
 }
 
-function deactivate() {
-  return client?.stop();
+export function deactivate(): Promise<void> | undefined {
+  return session.client?.stop();
 }
-
-module.exports = { activate, deactivate };

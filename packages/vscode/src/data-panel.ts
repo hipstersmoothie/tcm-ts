@@ -1,19 +1,35 @@
 // The table viewer: a webview grid over one table's rows. Sorting, searching and paging happen in the language
 // server (in SQLite), so big tables stay fast; the webview only draws what it's sent.
-const vscode = require("vscode");
+import * as vscode from "vscode";
+import type { Request } from "./releases.ts";
 
-const panels = new Map();
-const PAGE = 100;
+interface Query {
+  offset: number;
+  limit: number;
+  search: string;
+  sort?: { field: string; desc: boolean };
+}
+
+interface Viewer {
+  table: string;
+  panel: vscode.WebviewPanel;
+  query: Query;
+  load?: () => Promise<void>;
+}
+
+/** The open viewers, by table. */
+export const panels = new Map<string, Viewer>();
+export const PAGE = 100;
 
 /** Open (or reveal) the viewer for a table. `request` sends a request to the language server. */
-function showTable(table, request, openUri, icon) {
+export function showTable(table: string, request: Request, openUri: (uri: string) => unknown, icon?: vscode.Uri): void {
   const existing = panels.get(table);
   if (existing) {
     existing.panel.reveal();
     return;
   }
   const panel = vscode.window.createWebviewPanel("tcm.table", `${table} (table)`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
-  const state = { table, panel, query: { offset: 0, limit: PAGE, search: "", sort: undefined } };
+  const state: Viewer = { table, panel, query: { offset: 0, limit: PAGE, search: "", sort: undefined } };
   panels.set(table, state);
   if (icon) panel.iconPath = icon;
   panel.onDidDispose(() => panels.delete(table));
@@ -21,13 +37,13 @@ function showTable(table, request, openUri, icon) {
   const load = async () => {
     try {
       const [tables, page] = await Promise.all([request("tcm/data", {}), request("tcm/rows", { table, ...state.query })]);
-      panel.webview.postMessage({ type: "data", info: tables.find((t) => t.table === table) ?? { table, rows: 0, older: 0 }, page, query: state.query });
+      panel.webview.postMessage({ type: "data", info: (tables as { table: string }[]).find((t) => t.table === table) ?? { table, rows: 0, older: 0 }, page, query: state.query });
     } catch (e) {
-      panel.webview.postMessage({ type: "error", message: e.message });
+      panel.webview.postMessage({ type: "error", message: (e as Error).message });
     }
   };
   state.load = load;
-  panel.webview.onDidReceiveMessage(async (m) => {
+  panel.webview.onDidReceiveMessage(async (m: { type: string; query?: Partial<Query>; uri?: string }) => {
     if (m.type === "query") {
       state.query = { ...state.query, ...m.query };
       await load();
@@ -42,11 +58,11 @@ function showTable(table, request, openUri, icon) {
 }
 
 /** Reload every open viewer (the data changed). */
-function refreshTables() {
+export function refreshTables(): void {
   for (const p of panels.values()) p.load?.();
 }
 
-function html(webview) {
+export function html(webview: vscode.Webview): string {
   const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
   return `<!doctype html>
 <html><head><meta charset="utf-8">
@@ -150,5 +166,3 @@ window.addEventListener("message", (e) => {
 });
 </script></body></html>`;
 }
-
-module.exports = { showTable, refreshTables, html };

@@ -46,7 +46,7 @@ export async function withChildren<T>(fn: (keep: <C extends ChildProcess>(c: C) 
 }
 
 /**
- * A path in tcm's repository (`packages/examples/notes`, `packages/editors/vscode`): TCM_REPO if set (the runners set it), or the
+ * A path in tcm's repository (`packages/examples/notes`, `packages/vscode`): TCM_REPO if set (the runners set it), or the
  * nearest directory up from here that has it (`tcm test` runs these in tcm's codebase, inside the repository).
  * Files kept outside the codebase, while some are.
  */

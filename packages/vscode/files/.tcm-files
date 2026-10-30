@@ -1,0 +1,3 @@
+# packed extensions: vsce package
+*.vsix
+node_modules/
