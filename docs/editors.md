@@ -88,7 +88,8 @@ codebase changes.
   where it does, its [doc](documentation.md) rendered (links, embeds, examples with their values), its source
   highlighted with every reference a link, in its own colour and underlined on hover (its imports too: each name to its definition, `#codebase/…` to the
   namespace's page, a package to its page), and lists of what it **uses**, what it's **used by**, and the packages
-  it imports. Buttons: Source (the `tcm:` document), Edit, Usages, Run, Rename, Copy (the hash).
+  it imports. Buttons: Source (the `tcm:` document), Edit, Usages, Run (Start for an app: `tcm dev`, as the Apps
+  view's ▶, or opens it if it's running), Debug, Rename, Copy (the hash).
 - **A file's page:** its format, then its content: a Markdown page rendered (its `{@link}`s and links to other
   pages open their pages), an image shown, other text as it is (highlighted when it's code or JSON). What it
   links to and what links to it are listed too. Buttons: Edit, Rename, Copy.

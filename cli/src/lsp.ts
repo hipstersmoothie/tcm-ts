@@ -1040,8 +1040,11 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       // pages, as in Unison's codebase UI
       case "tcm/page": {
         const target = p?.hash ? String(p.hash) : p?.uri ? hashesOf(String(p.uri))[0] : p?.path ? cb?.lookup(String(p.path))[0] : undefined;
-        const page = cb && target ? definitionPage(cb, target, new Placement(cb), { viewUri }) : undefined;
-        send(page ? { id: m.id, result: page } : { id: m.id, error: { code: -32602, message: "no such definition" } });
+        const placement = cb && new Placement(cb);
+        const page = cb && target ? definitionPage(cb, target, placement!, { viewUri }) : undefined;
+        // (an app's page starts it, rather than running it as a program)
+        const rec = target ? cb?.store.getDef(target) : undefined;
+        send(page ? { id: m.id, result: { ...page, app: !!rec && isApp(target!, rec, placement!) } } : { id: m.id, error: { code: -32602, message: "no such definition" } });
         return;
       }
       case "tcm/namespace": {

@@ -229,7 +229,8 @@ function defCard(c) {
     p.endpoint ? '<span class="badge">' + (p.streaming ? "streaming endpoint" : "endpoint") + "</span>" : "",
     p.test ? '<span class="badge ' + p.test + '">test ' + p.test + "</span>" : "",
   ].join("");
-  const actions = (p.kind === "file" ? ["edit", "rename", "copy"] : ["source", "edit", "usages", p.kind === "term" ? "run" : "", p.kind === "term" ? "debug" : "", "rename", "copy"]).filter(Boolean)
+  // (an app starts, with tcm dev, rather than running as a program)
+  const actions = (p.kind === "file" ? ["edit", "rename", "copy"] : ["source", "edit", "usages", p.app ? "start" : p.kind === "term" ? "run" : "", p.kind === "term" ? "debug" : "", "rename", "copy"]).filter(Boolean)
     .map((a) => '<button data-action="' + a + '">' + a[0].toUpperCase() + a.slice(1) + "</button>").join("");
   let h = '<div class="head"><h2>' + esc(p.names[0] ?? p.short) + '</h2><span class="hash">' + esc(p.short) + "</span>" + badges +
     '<div class="actions">' + actions + "</div></div>";

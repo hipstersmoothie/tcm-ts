@@ -290,6 +290,9 @@ export const testFormat = () => {
   // the app, and what it's made of
   const [app] = await c.request("tcm/apps", {});
   assert.equal(app.path, "shop.main");
+  // its page says it's an app (the editor starts it, rather than running it); other definitions' don't
+  assert.equal((await c.request("tcm/page", { path: "shop.main" })).app, true);
+  assert.equal((await c.request("tcm/page", { path: "shop.format" })).app, false);
   assert.deepEqual(app.endpoints.map((e: any) => e.path), ["shop.listItems"]);
   assert.deepEqual(app.browser.map((e: any) => e.path), ["shop.format", "shop.main"]);
   assert.deepEqual(app.tables.map((t: any) => [t.table, t.rows]), [["items", 2]]);

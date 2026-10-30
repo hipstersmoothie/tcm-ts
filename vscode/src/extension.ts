@@ -346,6 +346,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       saveChangelog: (p) => vscode.commands.executeCommand("tcm.saveChangelog", p),
       usages: (p) => vscode.commands.executeCommand("tcm.findUsages", p.uri),
       run: (p) => vscode.commands.executeCommand("tcm.runDefinition", p.names[0]),
+      // an app: started (or opened, if it's running), as from the Apps view
+      start: (p) => vscode.commands.executeCommand("tcm.startApp", p.names[0]),
       debug: (p) => vscode.commands.executeCommand("tcm.debugDefinition", p.names[0]),
       rename: (p) => vscode.commands.executeCommand("tcm.rename", p.names[0]),
       copy: async (p) => {
