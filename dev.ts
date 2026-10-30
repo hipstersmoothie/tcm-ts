@@ -539,3 +539,41 @@ export async function deployServer(): Promise<void> {
   if (up.ok) console.log(`deploying the known-good tcm: ${fs.readFileSync(path.join(good, "VERIFIED"), "utf8").trim()}`);
   process.exitCode = up.ok ? 0 : 1;
 }
+
+/**
+ * Bring the repository up to tcm's server, for GitHub (a mirror of it): pull from `origin` (the mirror writes what
+ * changed into the files, as edits), then commit them, with a message listing the history entries since the last
+ * such commit (which its `tcm-causal:` trailer names). Pushing to GitHub is by hand. Refuses while the repository has
+ * changes git doesn't have yet, so a commit only ever holds what came from the server. `pnpm mirror:commit`.
+ */
+export function mirrorCommit(): void {
+  const tcm = process.env.TCM_BIN;
+  if (!tcm) throw new Error("run this with `tcm run`, which gives it the codebase's own tcm (TCM_BIN)");
+  const repo = repository();
+  const git = (...args: string[]) => sh("git", ["-C", repo, ...args], repo);
+  if (git("status", "--porcelain").out.trim()) throw new Error("the repository has changes git doesn't have yet: commit or stash them first");
+  const tcmIn = (...args: string[]) => sh(process.execPath, [tcm, ...args], process.cwd());
+  const pulled = tcmIn("pull", "origin");
+  if (!pulled.ok) throw new Error(`tcm pull origin: ${pulled.out.trim()}`);
+  console.log(pulled.out.trim());
+  if (!git("status", "--porcelain").out.trim()) {
+    console.log("the repository is up to date with tcm's server");
+    return;
+  }
+  // the entries since the last commit made from the server: `#hash  n  date  command`, then what each changed
+  const since = /tcm-causal: #?(\w+)/.exec(git("log", "-1", "--format=%B", "--grep=^tcm-causal:").out)?.[1];
+  const entries: { hash: string; command: string; changes: string[] }[] = [];
+  for (const line of tcmIn("history", "200").out.split("\n")) {
+    const head = /^#(\w+)\s+\d+\s+\S+ \S+\s+(.*)$/.exec(line);
+    if (head) {
+      if (since && head[1] === since) break;
+      entries.push({ hash: head[1]!, command: head[2]!, changes: [] });
+    } else if (line.startsWith("    ") && entries.length) entries.at(-1)!.changes.push(line.trim());
+  }
+  const subject = entries.length === 1 ? entries[0]!.command : `${entries.length} changes from tcm's server`;
+  const body = entries.map((e) => [`${e.command}`, ...e.changes.slice(0, 20).map((c) => `  ${c}`), ...(e.changes.length > 20 ? [`  and ${e.changes.length - 20} more`] : [])].join("\n")).join("\n\n");
+  git("add", "-A");
+  const committed = git("commit", "-q", "-m", `${subject}\n\n${body}\n\ntcm-causal: #${entries[0]?.hash ?? since}`);
+  if (!committed.ok) throw new Error(`git commit: ${committed.out.trim()}`);
+  console.log(`committed ${git("log", "-1", "--format=%h %s").out.trim()}; push it to GitHub by hand`);
+}

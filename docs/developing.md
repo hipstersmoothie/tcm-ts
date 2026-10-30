@@ -45,7 +45,7 @@ written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything i
 | `pnpm test` | `tcm test tcmts`: the tests a change reaches (hashing invariants, frozen golden hashes, and end-to-end CLI scenarios: sync, merge, web apps in real Chrome, production, jobs, data, import), the rest cached |
 | `pnpm typecheck` | typecheck the repo (TypeScript 7's `tsc`) |
 | `pnpm docs:dev` | serve the docs site locally (port 4321, or the next free one), building it again and reloading open pages when a page or an example changes |
-| `pnpm docs:site` | build the docs site (`tcmts.docs`, from the codebase, and the examples page) into `dist/site`; it fails on any broken link or anchor. A GitHub Actions workflow (`.github/workflows/docs.yml`) builds and deploys it to GitHub Pages on pushes to `main` |
+| `pnpm docs:site` | build the docs site (`tcmts.docs`, from the codebase, and the examples page) into `dist/site`; it fails on any broken link or anchor. `pnpm server:deploy` builds it into what [tcm's server](#tcms-server) serves |
 | `pnpm compare-compilers` | hash tcm's source with TypeScript 7 and with [tsrs](compiler-options.md#the-compiler), and run the golden tests with tsrs; hashes must match (`tcmts.dev.compareCompilers`) |
 
 `pnpm verify` should pass before a commit: it checks the codebase, its tests against its own tcm, and the
@@ -128,9 +128,14 @@ and its docs site (to anyone, at `/`). The repository on GitHub is a mirror of i
 - `pnpm server:deploy` (`tcmts.dev.deployServer`) builds the docs site from the codebase and uploads it, the server's
   files and the known-good tcm's package to the `tcm-server` service of the Railway project the repository is linked
   to (`railway link`, to `tcm-ts`). The docs it serves are as of the last deploy.
-- The token is the service's `TCM_TOKEN` (`railway variables list --service tcm-server`). With it,
-  `pnpm tcm remote add origin https://tcm-server-production.up.railway.app --token <token>`, then `pnpm tcm push`,
-  `pull` and `contribute` work against it.
+- The token is the service's `TCM_TOKEN` (`railway variables list --service tcm-server`). With it in `TCM_TOKEN`,
+  the first `pnpm tcm` makes `codebase/` from the server (pulled, then the files linked as its mirror), with `origin`
+  set up, so `pnpm tcm push`, `pull` and `contribute` work against it. Without it, `codebase/` is made from the files.
+  An existing `codebase/` connects with `pnpm tcm remote add origin <url> --token <token>`.
+- GitHub gets the server's changes with `pnpm mirror:commit` (`tcmts.dev.mirrorCommit`): it pulls from `origin`
+  (the mirror writes them into the files) and commits them, with a message listing the history entries since its
+  last commit (a `tcm-causal:` trailer marks it). It refuses while the repository has uncommitted changes; pushing
+  the commit to GitHub is by hand.
 
 ## Packaging
 

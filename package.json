@@ -14,7 +14,8 @@
     "build": "sh scripts/codebase.sh pack tcm-ts --out ../dist/package",
     "docs:site": "sh scripts/codebase.sh run tcmts.dev.site",
     "docs:dev": "sh scripts/codebase.sh run tcmts.dev.siteDev",
-    "server:deploy": "sh scripts/codebase.sh run tcmts.dev.deployServer"
+    "server:deploy": "sh scripts/codebase.sh run tcmts.dev.deployServer",
+    "mirror:commit": "sh scripts/codebase.sh run tcmts.dev.mirrorCommit"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
