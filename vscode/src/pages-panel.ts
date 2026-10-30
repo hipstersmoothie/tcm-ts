@@ -150,6 +150,10 @@ export function html(webview: vscode.Webview): string {
   .c, .hljs-comment { color: var(--c); font-style: italic; }
   .f, .hljs-title.function_, .hljs-title { color: var(--f); }
   a.ref.t, .hljs-type, .hljs-title.class_ { color: var(--t); }
+  /* links in code keep the colour of what they are (a string, a call, a type, a name): only hovering says they're links */
+  .src a.ref { color: inherit; }
+  .src a.ref.s { color: var(--s); } .src a.ref.f { color: var(--f); } .src a.ref.t { color: var(--t); }
+  .src a.ref:hover { text-decoration: underline; text-decoration-color: var(--vscode-textLink-foreground); }
   .lists { display: flex; gap: 28px; padding: 4px 14px 12px; flex-wrap: wrap; font-size: .92em; }
   .list h4 { margin: 4px 0; font-size: .85em; text-transform: uppercase; opacity: .65; letter-spacing: .04em; }
   .list ul { list-style: none; margin: 0; padding: 0; } .list li { margin: 2px 0; }

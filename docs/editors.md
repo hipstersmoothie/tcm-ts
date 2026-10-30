@@ -84,7 +84,7 @@ codebase changes.
 
 - **A definition's page:** its names, hash, kind and badges (where it runs, endpoint, test result), why it runs
   where it does, its [doc](documentation.md) rendered (links, embeds, examples with their values), its source
-  highlighted with every reference a link (its imports too: each name to its definition, `#codebase/…` to the
+  highlighted with every reference a link, in its own colour and underlined on hover (its imports too: each name to its definition, `#codebase/…` to the
   namespace's page, a package to its page), and lists of what it **uses**, what it's **used by**, and the packages
   it imports. Buttons: Source (the `tcm:` document), Edit, Usages, Run, Rename, Copy (the hash).
 - **A namespace's page:** its `README` definition's doc, if it has one, then what's in it, grouped by role (apps,

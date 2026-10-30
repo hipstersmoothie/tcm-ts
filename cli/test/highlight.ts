@@ -12,8 +12,12 @@ export const testHighlightingTemplatesRegexesKeywords = () => {
   assert.equal(classes("if (x) return y; // done"), "[x:if] (x) [x:return] y; [c:// done]");
 };
 
-/** Source highlighting: references are links. */
+/**
+ * Source highlighting: references are links, coloured as the names they are (a call, a type).
+ */
 export const testHighlightedReferencesAreLinks = () => {
-  assert.equal(highlight("square(2)", [{ start: 0, end: 6, hash: "h1" }], new Set()), '<a class="ref" data-hash="h1">square</a>(<span class="n">2</span>)');
+  assert.equal(highlight("square(2)", [{ start: 0, end: 6, hash: "h1" }], new Set()), '<a class="ref f" data-hash="h1">square</a>(<span class="n">2</span>)');
+  assert.equal(highlight("n + x", [{ start: 4, end: 5, hash: "h3" }], new Set()), 'n + <a class="ref" data-hash="h3">x</a>');
+  assert.equal(highlight('import "#codebase/geo";', [{ start: 7, end: 22, namespace: "geo" }], new Set()), '<span class="x">import</span> <a class="ref s" data-namespace="geo">&quot;#codebase/geo&quot;</a>;');
   assert.equal(highlight("let p: Point", [{ start: 7, end: 12, hash: "h2" }], new Set(["h2"])), '<span class="k">let</span> p: <a class="ref t" data-hash="h2">Point</a>');
-};
+}

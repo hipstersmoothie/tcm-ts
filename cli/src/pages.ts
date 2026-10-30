@@ -47,19 +47,21 @@ export function highlight(text: string, refs: HighlightRef[], typeHashes: Set<st
     const raw = text.slice(start, scanner.getTokenEnd());
     const trivia = kind === ts.SyntaxKind.WhitespaceTrivia || kind === ts.SyntaxKind.NewLineTrivia;
     const ref = at.get(start);
+    // a name followed by a call (or type arguments, then a call): coloured as a function, linked or not
+    const called = kind === ts.SyntaxKind.Identifier && /^\s*(<[^>()]*>)?\s*\(/.test(text.slice(scanner.getTokenEnd(), scanner.getTokenEnd() + 80));
     if (ref?.hash && kind === ts.SyntaxKind.Identifier) {
-      out += `<a class="ref${typeHashes.has(ref.hash) ? " t" : ""}" data-hash="${ref.hash}">${esc(raw)}</a>`;
+      // (a link keeps the colour the name would have)
+      out += `<a class="ref${typeHashes.has(ref.hash) ? " t" : called ? " f" : ""}" data-hash="${ref.hash}">${esc(raw)}</a>`;
     } else if (ref && kind === ts.SyntaxKind.StringLiteral && (ref.namespace !== undefined || ref.package)) {
       const to = ref.package ? `data-package-name="${esc(ref.package.name)}" data-package-range="${esc(ref.package.range)}"` : `data-namespace="${esc(ref.namespace!)}"`;
       out += `<a class="ref s" ${to}>${esc(raw)}</a>`;
     } else {
-      const next = kind === ts.SyntaxKind.Identifier ? /^\s*(<[^>()]*>)?\s*\(/.test(text.slice(scanner.getTokenEnd(), scanner.getTokenEnd() + 80)) : false;
       const cls =
         kind === ts.SyntaxKind.SingleLineCommentTrivia || kind === ts.SyntaxKind.MultiLineCommentTrivia ? "c"
         : kind >= ts.SyntaxKind.FirstKeyword && kind <= ts.SyntaxKind.LastKeyword ? (CONTROL.has(raw) ? "x" : "k")
         : kind === ts.SyntaxKind.StringLiteral || kind === ts.SyntaxKind.RegularExpressionLiteral || (kind >= ts.SyntaxKind.FirstTemplateToken && kind <= ts.SyntaxKind.LastTemplateToken) ? "s"
         : kind === ts.SyntaxKind.NumericLiteral || kind === ts.SyntaxKind.BigIntLiteral ? "n"
-        : next ? "f"
+        : called ? "f"
         : "";
       out += cls ? `<span class="${cls}">${esc(raw)}</span>` : esc(raw);
     }
