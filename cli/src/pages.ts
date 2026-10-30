@@ -6,12 +6,15 @@ import { SERVER_API_MODULE, shortHash, type DefRecord } from "@tcm/core";
 import { render } from "@tcm/loader";
 import { resultKey } from "./vitest.ts";
 import type { Codebase } from "./codebase.ts";
-import type { Placement } from "./placement.ts";
+import { Placement } from "./placement.ts";
 import { renderDoc } from "./docs.ts";
 import { searchByType } from "./search.ts";
 import { isTestPath } from "./testing.ts";
 import { isTypeOnlyImport, parse } from "../../core/src/ts.ts";
 import { linkedName, markdownLinks, isBytes, formatOf } from "./files.ts";
+import fs from "node:fs";
+import assert from "node:assert/strict";
+import { viewText, viewFile } from "./views.ts";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
@@ -244,3 +247,156 @@ export function importRefs(cb: Codebase, text: string, rec: DefRecord): Highligh
  * Images a page shows, by format.
  */
 export const IMAGE_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", ico: "image/x-icon" }
+
+/**
+ * A line that matched: its number in the document, the part of it shown, and where the matches are in that.
+ */
+export interface SearchLine {
+  line: number;
+  column: number;
+  text: string;
+  ranges: [number, number][];
+}
+
+/**
+ * How code search matches: case, whole words, a regular expression.
+ */
+export interface SearchOptions {
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+  regex?: boolean;
+}
+
+/**
+ * What code search found: the definitions and pages with matching lines, how many matches, and why it can't search.
+ */
+export interface SearchResults {
+  hits: { path: string; hash: string; kind: string; uri?: string; lines: SearchLine[] }[];
+  matches: number;
+  truncated: boolean;
+  error?: string;
+}
+
+/**
+ * A named definition's text as its document shows it (current names; `first` is the line its code starts on,
+ * after the header), or a page's: what code search reads.
+ */
+export interface SearchText {
+  path: string;
+  hash: string;
+  kind: string;
+  text: string;
+  first: number;
+}
+
+/**
+ * Code search, as an editor's find in files: every line of the codebase's definitions (as their documents show
+ * them, with current names) and pages that has `query` in it, by definition. At most 500 definitions or 5000
+ * matches; `truncated` says there were more.
+ */
+export function searchCode(cb: Codebase, query: string, opts: SearchOptions, viewUri: (hash: string) => string): SearchResults {
+  const none: SearchResults = { hits: [], matches: 0, truncated: false };
+  if (!query) return none;
+  let re: RegExp;
+  try {
+    const source = opts.regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    re = new RegExp(opts.wholeWord ? `\\b(?:${source})\\b` : source, opts.caseSensitive ? "g" : "gi");
+  } catch (e) {
+    return { ...none, error: (e as Error).message };
+  }
+  const out = none;
+  for (const t of searchableTexts(cb)) {
+    const lines = t.text.split("\n");
+    const found: SearchLine[] = [];
+    for (let i = t.first; i < lines.length; i++) {
+      const line = lines[i]!;
+      const ranges: [number, number][] = [];
+      re.lastIndex = 0;
+      for (let m = re.exec(line); m; m = re.exec(line)) {
+        if (!m[0].length) {
+          re.lastIndex++;
+          continue;
+        }
+        ranges.push([m.index, m.index + m[0].length]);
+      }
+      if (!ranges.length) continue;
+      // shown from a little before the first match, without the indentation
+      const indent = line.length - line.trimStart().length;
+      const from = Math.max(indent, ranges[0]![0] - 40);
+      const text = line.slice(from, from + 240);
+      found.push({ line: i, column: ranges[0]![0], text, ranges: ranges.map(([a, b]): [number, number] => [a - from, Math.min(b - from, text.length)]).filter(([a]) => a < text.length) });
+      out.matches += ranges.length;
+    }
+    if (!found.length) continue;
+    out.hits.push({ path: t.path, hash: t.hash, kind: t.kind, ...(t.kind === "file" ? {} : { uri: viewUri(t.hash) }), lines: found });
+    if (out.matches >= 5000 || out.hits.length >= 500) {
+      out.truncated = true;
+      break;
+    }
+  }
+  return out;
+}
+
+/**
+ * The texts code search read last, by the branch and history entry they're of.
+ */
+export const searchTexts = new Map<string, SearchText[]>();
+
+/**
+ * Every named definition's and page's text, made again when the names change. A definition's is its document's
+ * (`.tcm/src`), read from it when it's there and current.
+ */
+export function searchableTexts(cb: Codebase): SearchText[] {
+  const key = `${cb.sessionDir ?? ""}|${cb.store.branch().name}@${cb.store.logHead()}`;
+  const known = searchTexts.get(key);
+  if (known) return known;
+  const placement = new Placement(cb);
+  const out: SearchText[] = [];
+  const seen = new Set<string>();
+  for (const n of cb.store.names(undefined, true)) {
+    if (seen.has(n.path)) continue;
+    seen.add(n.path);
+    const rec = cb.store.getDef(n.hash);
+    if (!rec) continue;
+    if (rec.kind === "file") {
+      if (!isBytes(rec)) out.push({ path: n.path, hash: n.hash, kind: "file", text: rec.sourceText, first: 0 });
+      continue;
+    }
+    const hashes = cb.lookup(n.path);
+    const file = viewFile(cb, n.hash);
+    // (a session doesn't keep documents: its definitions are rendered here)
+    const text = !cb.sessionDir && fs.existsSync(file) ? fs.readFileSync(file, "utf8") : viewText(cb, hashes, placement)?.text;
+    if (text) out.push({ path: n.path, hash: n.hash, kind: rec.kind, text, first: hashes.length });
+  }
+  searchTexts.clear();
+  searchTexts.set(key, out);
+  return out;
+}
+
+/**
+ * Code search finds text in definitions as they read now (current names), and in pages, by line; a regular
+ * expression, whole words and case work as an editor's do.
+ */
+export const testSearchCode = () => {
+  const lines = (q: string, opts: SearchOptions = {}) => {
+    searchTexts.clear();
+    searchTexts.set("|b@0", [
+      { path: "lib.square", hash: "h1", kind: "term", text: "// lib.square #h1\nexport const square = (x: number): number => x * x;\n", first: 1 },
+      { path: "docs.guide", hash: "h2", kind: "file", text: "# Guide\n\nSquare things with `square`.\n", first: 0 },
+    ]);
+    const cb = { sessionDir: "", store: { branch: () => ({ name: "b" }), logHead: () => 0 } } as unknown as Codebase;
+    return searchCode(cb, q, opts, (h) => `file:///${h}`);
+  };
+  const r = lines("square");
+  assert.deepEqual(r.hits.map((h) => [h.path, h.lines.map((l) => l.line)]), [["lib.square", [1]], ["docs.guide", [2]]]);
+  assert.equal(r.matches, 3);
+  assert.equal(r.hits[0]!.uri, "file:///h1");
+  assert.equal(r.hits[1]!.uri, undefined);
+  assert.deepEqual(r.hits[0]!.lines[0]!.ranges, [[13, 19]]);
+  // the header line, with the name in it, isn't searched
+  assert.equal(lines("lib.square").matches, 0);
+  assert.equal(lines("Square", { caseSensitive: true }).matches, 1);
+  assert.equal(lines("squar", { wholeWord: true }).matches, 0);
+  assert.equal(lines("x \\* x", { regex: true }).matches, 1);
+  assert.match(lines("(", { regex: true }).error ?? "", /Invalid regular expression/);
+}

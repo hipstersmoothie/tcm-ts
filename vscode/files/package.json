@@ -29,6 +29,11 @@
     "views": {
       "tcm": [
         {
+          "type": "webview",
+          "id": "tcm.search",
+          "name": "Search"
+        },
+        {
           "id": "tcm.apps",
           "name": "Apps"
         },
@@ -94,6 +99,12 @@
         "title": "Refresh",
         "category": "tcm",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "tcm.search",
+        "title": "Search the codebase's code",
+        "category": "tcm",
+        "icon": "$(search)"
       },
       {
         "command": "tcm.openDefinition",
@@ -544,6 +555,11 @@
       }
     ],
     "keybindings": [
+      {
+        "command": "tcm.search",
+        "key": "ctrl+alt+shift+f",
+        "mac": "cmd+alt+shift+f"
+      },
       {
         "command": "tcm.find",
         "key": "ctrl+alt+u",

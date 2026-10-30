@@ -30,6 +30,7 @@ import { lintScratch, type LintIssue } from "./lint.ts";
 import { formatText } from "./fmt.ts";
 import { ensureView, hashesOfViewFile, srcDir, viewText, type View } from "./views.ts";
 import { resultKey } from "./vitest.ts";
+import { searchCode } from "./pages.ts";
 
 /** What the language server needs from the CLI (passed in, so this module doesn't import the CLI's entry). */
 export interface LspTools {
@@ -1060,6 +1061,10 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       }
       case "tcm/find":
         send({ id: m.id, result: cb ? find(cb, String(p?.query ?? ""), viewUri) : [] });
+        return;
+      // find in files, for the codebase: lines of definitions and pages with the text in them
+      case "tcm/searchCode":
+        send({ id: m.id, result: cb ? searchCode(cb, String(p?.query ?? ""), { caseSensitive: !!p?.caseSensitive, wholeWord: !!p?.wholeWord, regex: !!p?.regex }, viewUri) : { hits: [], matches: 0, truncated: false } });
         return;
       case "tcm/apps":
         send({ id: m.id, result: cb ? apps() : [] });

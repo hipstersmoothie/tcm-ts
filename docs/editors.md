@@ -72,6 +72,7 @@ For clients that want to show more, the server answers:
 | `tcm/page` | a definition's page: rendered doc (links as `tcm-page:<hash>`), highlighted source with references (and imports) as links, placement, uses and used-by |
 | `tcm/namespace` | a namespace's page: its README rendered, and its definitions by role with doc summaries |
 | `tcm/find` | the finder: names, doc words and types |
+| `tcm/searchCode` | find in files for the codebase: the lines of definitions (as their documents read) and pages with some text, by definition; `caseSensitive`, `wholeWord`, `regex` |
 
 It sends `tcm/changed` when the codebase changes and `tcm/dataChanged` when the data store does, here or from a
 terminal or a running app. `tcm.dataMigrate <table>` is a command, like `tcm.add`.
@@ -103,6 +104,13 @@ a namespace's **Open page** button (the book) opens the namespace's.
 (the letters in order, best matches first), words in docs, and types. Anything that looks like a type,
 `(xs: T[]) => T`, or starts with `:`, is a [type search](search.md). Results show signatures and doc summaries,
 and open as pages.
+
+**Search** (the first view in the `#` sidebar, or **tcm: Search the codebase's code**, Cmd/Ctrl+Alt+Shift+F, which
+searches for the selection) is find in files for the codebase: every line of its definitions and pages with the
+text in it, grouped by definition, with **Match Case**, **Match Whole Word** and **Use Regular Expression** as in
+VS Code's own search. Definitions are searched as they read now, with current names (a rename is in the next
+search), and the header line of their documents isn't. Click a definition to open its page, a line to open its
+document there. The mirror's files and `.tcm` aren't part of it.
 
 ## VS Code
 

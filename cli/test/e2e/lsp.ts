@@ -552,3 +552,48 @@ export const testVscodeRegistersNoServerCommands = () => withChildren(async (kee
   assert.deepEqual(registered.filter((r) => offered.includes(r)), [], "both registering one fails the client's start: 'command already exists'");
   await c.request("shutdown", null);
 });
+
+/**
+ * Code search in the editor: lines of definitions (as their documents read, with current names) and pages with
+ * the text, by definition; a rename made in a terminal is in the next search.
+ */
+export const testCodeSearchInEditor = () => withChildren(async (keep) => {
+  const dir = tempDir("lsp search");
+  const tcm = (...args: string[]) => spawnSync(process.execPath, [tcmBin(), ...args], { cwd: dir, env: plainEnv(), encoding: "utf8" });
+  tcm("init");
+  fs.writeFileSync(
+    path.join(dir, "scratch.ts"),
+    `// tcm: namespace geo
+export type Point = { x: number; y: number };
+export const dist = (a: Point, b: Point): number => Math.hypot(a.x - b.x, a.y - b.y);
+export const perimeter = (ps: Point[]): number => ps.reduce((n, p, i) => n + dist(p, ps[(i + 1) % ps.length]!), 0);
+`,
+  );
+  assert.equal(tcm("add").status, 0);
+  fs.writeFileSync(path.join(dir, "guide.md"), "<!-- tcm: namespace geo -->\n# Guide\n\nMeasure with {@link dist}.\n");
+  assert.equal(tcm("add", "guide.md").status, 0);
+  const c = client(keep);
+  await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir).href, capabilities: {}, clientInfo: { name: "Visual Studio Code" } });
+  c.notify("initialized", {});
+
+  const hypot = await c.request("tcm/searchCode", { query: "hypot" });
+  assert.equal(hypot.matches, 1);
+  assert.deepEqual(hypot.hits.map((h: any) => h.path), ["geo.dist"]);
+  const line = hypot.hits[0].lines[0];
+  // the line is the document's, where the match is
+  const doc = fs.readFileSync(fileURLToPath(hypot.hits[0].uri), "utf8").split("\n")[line.line]!;
+  assert.equal(doc.slice(line.column, line.column + 5), "hypot");
+  assert.equal(line.text.slice(line.ranges[0][0], line.ranges[0][1]), "hypot");
+
+  // pages too (opened as pages: no document), and case, words and regular expressions as an editor's find
+  const measure = await c.request("tcm/searchCode", { query: "measure" });
+  assert.deepEqual(measure.hits.map((h: any) => [h.path, h.uri]), [["geo.guide", undefined]]);
+  assert.equal((await c.request("tcm/searchCode", { query: "measure", caseSensitive: true })).matches, 0);
+  assert.deepEqual((await c.request("tcm/searchCode", { query: "dist", wholeWord: true })).hits.map((h: any) => h.path), ["geo.dist", "geo.guide", "geo.perimeter"]);
+  assert.match((await c.request("tcm/searchCode", { query: "(", regex: true })).error, /regular expression/);
+
+  // renamed in a terminal: the code reads with the new name
+  assert.equal(tcm("mv", "geo.dist", "geo.distance").status, 0);
+  const renamed = await c.request("tcm/searchCode", { query: "distance(p" });
+  assert.deepEqual(renamed.hits.map((h: any) => h.path), ["geo.perimeter"]);
+});

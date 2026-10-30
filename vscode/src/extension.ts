@@ -8,6 +8,7 @@ import { LanguageClient, State } from "vscode-languageclient/node.js";
 import { refreshTables, showTable } from "./data-panel.ts";
 import { Pages } from "./pages-panel.ts";
 import { DraftLenses, ReleasesTree, type PublishedPackage, type ReleaseCheck, type Request } from "./releases.ts";
+import { SearchView } from "./search.ts";
 
 /** The language client, while the extension is active. */
 export const session: { client?: LanguageClient } = {};
@@ -355,6 +356,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   const views = new vscode.EventEmitter<vscode.Uri>();
   const apps = new AppsTree(running);
+  const search = new SearchView(request, (hash) => pages.open({ hash }));
   const data = new DataTree();
   const packages = new PackagesTree();
   const releases = new ReleasesTree(request);
@@ -469,6 +471,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider("tcm.search", search, { webviewOptions: { retainContextWhenHidden: true } }),
+    vscode.commands.registerCommand("tcm.search", () => {
+      // the selection, if it's on one line, is what's searched for
+      const editor = vscode.window.activeTextEditor;
+      const selected = editor && !editor.selection.isEmpty && editor.selection.isSingleLine ? editor.document.getText(editor.selection) : undefined;
+      return search.show(selected);
+    }),
     vscode.window.createTreeView("tcm.codebase", { treeDataProvider: tree, showCollapseAll: true }),
     vscode.window.createTreeView("tcm.apps", { treeDataProvider: apps }),
     vscode.window.createTreeView("tcm.data", { treeDataProvider: data }),
@@ -702,6 +711,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // the codebase changed (here, or from a terminal): refresh the sidebar and any open definitions
   client.onNotification("tcm/changed", () => {
     tree.refresh();
+    search.refresh();
     apps.refresh();
     data.refresh();
     packages.refresh();
