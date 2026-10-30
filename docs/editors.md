@@ -69,7 +69,7 @@ For clients that want to show more, the server answers:
 | `tcm/rows` | a page of a table's rows for a viewer: searched, sorted by a field and paged in SQLite; the row type's fields (columns), and each row's cells, full value, and whether it's of an older row type |
 | `tcm/source` | a `tcm:` document's text: a definition, `tcm:/.data/<table>.txt`, or `tcm:/.data/<table>/<id>.txt` |
 | `tcm/findByType` | type search, as `tcm find ':…'` |
-| `tcm/page` | a definition's page: rendered doc (links as `tcm-page:<hash>`), highlighted source with references as links, placement, uses and used-by |
+| `tcm/page` | a definition's page: rendered doc (links as `tcm-page:<hash>`), highlighted source with references (and imports) as links, placement, uses and used-by |
 | `tcm/namespace` | a namespace's page: its README rendered, and its definitions by role with doc summaries |
 | `tcm/find` | the finder: names, doc words and types |
 
@@ -84,7 +84,8 @@ codebase changes.
 
 - **A definition's page:** its names, hash, kind and badges (where it runs, endpoint, test result), why it runs
   where it does, its [doc](documentation.md) rendered (links, embeds, examples with their values), its source
-  highlighted with every reference a link, and lists of what it **uses**, what it's **used by**, and the packages
+  highlighted with every reference a link (its imports too: each name to its definition, `#codebase/…` to the
+  namespace's page, a package to its page), and lists of what it **uses**, what it's **used by**, and the packages
   it imports. Buttons: Source (the `tcm:` document), Edit, Usages, Run, Rename, Copy (the hash).
 - **A namespace's page:** its `README` definition's doc, if it has one, then what's in it, grouped by role (apps,
   types, data, jobs, server, browser, shared, tests), each with the first paragraph of its doc, and its

@@ -366,6 +366,9 @@ export type README = never;
   assert.match(page.docMarkdown, /```text\n⧩ 5\n```/);
   assert.match(page.sourceHtml, new RegExp(`<a class="ref t" data-hash="${pointHash}">Point</a>`));
   assert.match(page.sourceHtml, /<span class="k">const<\/span>/);
+  // its imports link too: what each brings in, and the namespace it's from
+  assert.match(page.sourceHtml, /<a class="ref s" data-namespace="geo">&quot;#codebase\/geo&quot;<\/a>/);
+  assert.equal(page.sourceHtml.split(`data-hash="${pointHash}">Point</a>`).length - 1, 3, "Point in the import, and in both parameters");
   assert.deepEqual(page.uses.map((u: any) => u.name), ["geo.Point"]);
   assert.deepEqual(page.usedBy.map((u: any) => u.name), ["geo.perimeter"]);
 

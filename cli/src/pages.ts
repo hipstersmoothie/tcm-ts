@@ -10,6 +10,7 @@ import type { Placement } from "./placement.ts";
 import { renderDoc } from "./docs.ts";
 import { searchByType } from "./search.ts";
 import { isTestPath } from "./testing.ts";
+import { isTypeOnlyImport, parse } from "../../core/src/ts.ts";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
@@ -18,10 +19,11 @@ const CONTROL = new Set(["if", "else", "for", "while", "do", "switch", "case", "
 
 /**
  * Source as HTML: tokens classed for colouring (k keyword, x control keyword, s string, n number, c comment,
- * f called function, t type name), and each reference to a definition a link (`<a data-hash>`). Uses TypeScript's
- * scanner, re-scanning where it needs context: a `}` that resumes a template literal, a `/` that starts a regex.
+ * f called function, t type name), each reference to a definition a link (`<a data-hash>`), and an import's module
+ * a link to its namespace's or package's page. Uses TypeScript's scanner, re-scanning where it needs context: a
+ * `}` that resumes a template literal, a `/` that starts a regex.
  */
-export function highlight(text: string, refs: { start: number; end: number; hash: string }[], typeHashes: Set<string>): string {
+export function highlight(text: string, refs: HighlightRef[], typeHashes: Set<string>): string {
   const scanner = ts.createScanner(false, ts.LanguageVariant.Standard, text);
   const at = new Map(refs.map((r) => [r.start, r]));
   // open braces since each template substitution started (`${`): the `}` closing one resumes the template
@@ -45,8 +47,11 @@ export function highlight(text: string, refs: { start: number; end: number; hash
     const raw = text.slice(start, scanner.getTokenEnd());
     const trivia = kind === ts.SyntaxKind.WhitespaceTrivia || kind === ts.SyntaxKind.NewLineTrivia;
     const ref = at.get(start);
-    if (ref && kind === ts.SyntaxKind.Identifier) {
+    if (ref?.hash && kind === ts.SyntaxKind.Identifier) {
       out += `<a class="ref${typeHashes.has(ref.hash) ? " t" : ""}" data-hash="${ref.hash}">${esc(raw)}</a>`;
+    } else if (ref && kind === ts.SyntaxKind.StringLiteral && (ref.namespace !== undefined || ref.package)) {
+      const to = ref.package ? `data-package-name="${esc(ref.package.name)}" data-package-range="${esc(ref.package.range)}"` : `data-namespace="${esc(ref.namespace!)}"`;
+      out += `<a class="ref s" ${to}>${esc(raw)}</a>`;
     } else {
       const next = kind === ts.SyntaxKind.Identifier ? /^\s*(<[^>()]*>)?\s*\(/.test(text.slice(scanner.getTokenEnd(), scanner.getTokenEnd() + 80)) : false;
       const cls =
@@ -94,7 +99,7 @@ export function definitionPage(cb: Codebase, hash: string, placement: Placement,
     ...(isTest ? { test: test ? (test.ok ? "passed" : "failed") : "not run" } : {}),
     docMarkdown: doc?.markdown,
     docProblems: doc?.problems ?? [],
-    sourceHtml: highlight(r.text.trimEnd(), r.refs.filter((x) => x.hash !== hash || x.from !== hash), typeHashes),
+    sourceHtml: highlight(r.text.trimEnd(), [...r.refs.filter((x) => x.hash !== hash || x.from !== hash), ...importRefs(cb, r.text.trimEnd(), rec)], typeHashes),
     uses: deps.map(item).sort((a, b) => (a.name < b.name ? -1 : 1)),
     // what it imports from outside the codebase, as written in code: a package, a Node builtin, #tcm/server
     externals: [...new Set(rec.spans.flatMap((s) => (s.ext ? [s.ext.module === SERVER_API_MODULE ? "#tcm/server" : s.ext.module.replace(/^npm:/, "")] : [])))],
@@ -150,4 +155,53 @@ export function find(cb: Codebase, query: string, viewUri: (hash: string) => str
     .sort((a, b) => b.score - a.score || (a.n.path < b.n.path ? -1 : 1))
     .slice(0, 60)
     .map((s) => ({ ...item(s.n.path, s.n.hash), match: s.match }));
+}
+
+/**
+ * A link in highlighted source: to a definition (`hash`), or, from an import's module, a namespace or package.
+ */
+export interface HighlightRef {
+  start: number;
+  end: number;
+  hash?: string;
+  namespace?: string;
+  package?: { name: string; range: string };
+}
+
+/**
+ * The links in a page's imports: each name brought in from the codebase to its definition, `#codebase/a/b` to the
+ * namespace's page, and a package to its page (at the range the definition uses). Node's builtins aren't pages.
+ */
+export function importRefs(cb: Codebase, text: string, rec: DefRecord): HighlightRef[] {
+  const out: HighlightRef[] = [];
+  const ranges = new Map<string, string>();
+  for (const sp of rec.spans) {
+    const m = sp.ext && /^npm:((?:@[^/@]+\/)?[^@/]+)@([^/#]+)/.exec(sp.ext.module);
+    if (m) ranges.set(m[1]!, m[2]!);
+  }
+  const sf = parse("page.ts", text);
+  for (const st of sf.statements) {
+    if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
+    const spec = st.moduleSpecifier.text;
+    const at = { start: st.moduleSpecifier.getStart(sf), end: st.moduleSpecifier.end };
+    if (spec === "#codebase" || spec.startsWith("#codebase/")) {
+      const ns = spec.slice("#codebase".length).replace(/^\//, "").replaceAll("/", ".");
+      out.push({ ...at, namespace: ns });
+      const b = st.importClause?.namedBindings;
+      if (!b || !ts.isNamedImports(b)) continue;
+      for (const el of b.elements) {
+        const id = el.propertyName ?? el.name;
+        const hs = cb.store.hashesAt(ns ? `${ns}.${id.text}` : id.text);
+        // a name holding a type and a value: the one imported
+        const typeOnly = isTypeOnlyImport(st.importClause) || el.isTypeOnly;
+        const h = hs.find((x) => (cb.store.getDef(x)?.kind === "type") === typeOnly) ?? hs[0];
+        if (h) out.push({ start: id.getStart(sf), end: id.end, hash: h });
+      }
+      continue;
+    }
+    const name = /^((?:@[^/]+\/)?[^/]+)/.exec(spec)?.[1];
+    const range = name && ranges.get(name);
+    if (name && range) out.push({ ...at, package: { name, range } });
+  }
+  return out;
 }
