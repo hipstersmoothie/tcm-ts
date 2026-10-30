@@ -1455,6 +1455,9 @@ function jobs(cb: Codebase, r: Extract<ReturnType<typeof parse<typeof commands.j
 
 /** Process entry point: run a command, report errors, set the exit code. */
 export async function runCli(...argv: string[]): Promise<void> {
+  // measured (a suite runs tcm to see what code it runs), a tcm stopped by a signal (a test ending the language
+  // server it started) still says what it ran: V8 writes coverage on exit, not when a signal ends the process
+  if (process.env.NODE_V8_COVERAGE) for (const [signal, n] of [["SIGTERM", 15], ["SIGINT", 2]] as const) process.on(signal, () => process.exit(128 + n));
   try {
     const code = await main(argv);
     if (code >= 0) process.exitCode = code;

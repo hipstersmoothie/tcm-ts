@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { okIn, tcmIn, tempDir } from "./harness.ts";
+import { spawn } from "node:child_process";
+import { plainEnv, tcmBin } from "./harness.ts";
 
 /** A package's suites run its command, and run again only when code they ran changed. */
 export const testSuitesRunAgainOnlyWhenCodeTheyRanChanged = () => {
@@ -98,4 +100,24 @@ export const testGreets = () => {
   ok("update");
   ok("pack", "greeter", "--out", "pkg");
   assert.match(ok(...against), /suites: 1 passed, 0 failed\n/);
+}
+
+/**
+ * A tcm a test stops with a signal (the language server it started) still says what code it ran: a suite's
+ * cached result is only as good as that, and V8 writes coverage on exit, not when a signal ends the process.
+ */
+export const testStoppedTcmStillReportsWhatItRan = async () => {
+  const dir = tempDir("coverage");
+  okIn(dir, "init");
+  const coverage = path.join(dir, "coverage");
+  const child = spawn(process.execPath, [tcmBin(), "lsp"], { cwd: dir, env: { ...plainEnv(), NODE_V8_COVERAGE: coverage }, stdio: ["pipe", "pipe", "pipe"] });
+  // started: it answers
+  await new Promise<void>((resolve) => {
+    child.stdout.once("data", () => resolve());
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { processId: null, rootUri: null, capabilities: {} } });
+    child.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+  });
+  child.kill("SIGTERM");
+  await new Promise((resolve) => child.on("exit", resolve));
+  assert.ok(fs.existsSync(coverage) && fs.readdirSync(coverage).some((f) => f.endsWith(".json")), "coverage written");
 }

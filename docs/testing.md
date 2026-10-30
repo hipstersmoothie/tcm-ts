@@ -54,7 +54,7 @@ export const testGreets = () => {
   out. They aren't run with Vitest. `--bin greet=pkg/bin/greet.js` runs them against another build of the
   command instead, such as the package `tcm pack` makes: its results are kept apart, and hold until the
   package's files change or code the test ran in it does (a packed module is named by its component's hash).
-- **Results are cached by the code a test ran.** V8's coverage of each run (every process it starts) says which
+- **Results are cached by the code a test ran.** V8's coverage of each run (every process it starts, a tcm it stops with a signal included) says which
   definitions executed, and the result holds until the test changes, or the code of one of those definitions
   does. A definition it didn't run can change without running it again, though everything using it is
   re-hashed: that changes no code the test ran. Values computed when a module loads count as run.
