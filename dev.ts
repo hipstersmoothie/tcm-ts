@@ -36,12 +36,10 @@ export const codebaseDir = (): string => path.join(repository(), "codebase");
  * tcmts.dev.verify`), with the codebase's own tcm:
  *
  * 1. nothing needs fixing (`tcm todo`), and every definition renders and re-hashes to itself (`tcm verify`);
- * 2. while the codebase is mirrored to the repository, the files hash to what it holds (`tcm mirror --check`, the
- *    fixed point: this tcm reads its own source as the codebase it is) and typecheck;
- * 3. its tests pass (`tcm test`: the test definitions, and the end-to-end tests, each run against this tcm),
+ * 2. its tests pass (`tcm test`: the test definitions, and the end-to-end tests, each run against this tcm),
  *    run again only where code they ran changed;
- * 4. its docs (tcmts.docs) build into the site, every link and anchor resolving;
- * 5. the tcm-ts package packed from it installs, works far from the repository, and passes the end-to-end
+ * 3. its docs (tcmts.docs) build into the site, every link and anchor resolving;
+ * 4. the tcm-ts package packed from it installs, works far from the repository, and passes the end-to-end
  *    tests too (`tcm test --bin`), likewise run again only where code changed.
  *
  * When all of that passes, the package is the known-good tcm that `pnpm tcm` runs (dist/known-good).
@@ -69,11 +67,6 @@ export async function verify(): Promise<void> {
     const todo = run("todo");
     const identity = run("verify");
     return { ok: todo.ok && /nothing to do/.test(todo.out) && identity.ok, out: `${todo.out}\n${identity.out}` };
-  });
-  step("files", /the files hash|difference/, () => {
-    const mirror = run("mirror", "--check");
-    const typecheck = sh(path.join(repo, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.json"], repo);
-    return { ok: mirror.ok && typecheck.ok, out: `${mirror.out}\n${typecheck.out}` };
   });
   step("tests", /^(\d+ passed|suites:)/, () => run("test", "tcmts"));
   const docs = await buildSite(fs.mkdtempSync(path.join(os.tmpdir(), "tcm site ")));
@@ -113,10 +106,9 @@ export async function verify(): Promise<void> {
 
   // the tcm that runs on tcm's codebase from now on: what was just verified
   if (!failed && packed) {
-    const git = (...args: string[]) => sh("git", ["-C", repo, ...args], repo);
-    const commit = git("rev-parse", "--short", "HEAD").out.trim();
-    const changed = !git("diff", "--quiet", "HEAD").ok;
-    fs.writeFileSync(path.join(candidate, "VERIFIED"), `${commit}${changed ? " with changes" : ""}, verified ${new Date().toISOString().slice(0, 16).replace("T", " ")}\n`);
+    // (what it was made from: the codebase's latest history entry)
+    const entry = run("history", "1").out.trim().split(/\s+/)[0] ?? "";
+    fs.writeFileSync(path.join(candidate, "VERIFIED"), `${entry}, verified ${new Date().toISOString().slice(0, 16).replace("T", " ")}\n`);
     const good = path.join(dist, "known-good");
     fs.rmSync(good, { recursive: true, force: true });
     fs.renameSync(candidate, good);

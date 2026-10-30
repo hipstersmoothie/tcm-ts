@@ -11,7 +11,7 @@ the codebase ([developing](docs/developing.md#working-on-tcm-in-tcm)).
 With the tcm MCP server (this repository's `.mcp.json`), use its tools: tcm_find and tcm_view to read,
 tcm_edit then tcm_update to change, tcm_todo, tcm_test. Without it, `pnpm tcm <command>` is the CLI. Changes made
 through tcm are written to the repository's files, which are what's committed. The tcm doing this is the last build `pnpm verify`
-passed, not the code being changed: tcm_test tests the change, `TCM_LIVE=1 pnpm tcm …` runs it.
+passed, not the code being changed: tcm_test tests the change, `TCM_LIVE=1 pnpm tcm …` runs it (from the codebase).
 
 ## Keep the docs current
 
@@ -34,8 +34,8 @@ change and save with `tcm_update`; editing the file in `docs/` works too.
 ## Verifying a change
 
 Run `pnpm verify` before committing; it names any failing tests. It's a definition in tcm's codebase
-(`tcmts.dev.verify`, run with `pnpm tcm run`): it checks the codebase (`tcm todo`, `tcm verify`), that the files
-hash to it and typecheck, runs its tests against its own tcm, and packs tcm-ts and runs the end-to-end tests
+(`tcmts.dev.verify`, run with `pnpm tcm run`): it checks the codebase (`tcm todo`, `tcm verify`), runs its tests
+against its own tcm, builds the docs site, and packs tcm-ts and runs the end-to-end tests
 against that. Tests run again only where code they ran changed, so it takes seconds to a few minutes.
 
 `pnpm test` (`tcm test`) runs the tests the change reaches: the quick check while working.

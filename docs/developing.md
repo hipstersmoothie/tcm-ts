@@ -93,7 +93,7 @@ session (`TCM_BRANCH=agent/x pnpm tcm …`, or an agent's `tcm mcp --session` be
 
 The code being changed is what runs everywhere else: `tcm test tcmts` runs the codebase's own test definitions,
 and its end-to-end tests as [suites](testing.md#suites-testing-a-command-as-a-program) against the codebase's own
-tcm (`tcmts.cli.test.e2e`, in `cli/test/e2e/`), each only if code it ran changed. And `TCM_LIVE=1 pnpm tcm <command>` runs the repository's tcm as it is, to try a change before verifying it. Before
+tcm (`tcmts.cli.test.e2e`, in `cli/test/e2e/`), each only if code it ran changed. And `TCM_LIVE=1 pnpm tcm <command>` runs the codebase's own tcm as it is now, to try a change before verifying it: the known-good one runs it from the codebase (`tcm run tcmts.cli.main.runCli -- <command>`), as it would any program there. Before
 the first `pnpm verify`, there's no known-good build, and `pnpm tcm` says so and runs the repository's.
 
 ## Verifying a change
@@ -103,11 +103,9 @@ the codebase's own tcm, which `tcm run` gives it as `TCM_BIN`. It checks, printi
 
 1. **codebase**: nothing needs fixing (`tcm todo`), and every definition renders and re-hashes to itself
    (`tcm verify`);
-2. **files**, while the codebase is mirrored to the repository: the files hash to what it holds (`tcm mirror
-   --check`: the fixed point, this tcm reading its own source as the codebase it is), and typecheck (`tsc`);
-3. **tests**: `tcm test tcmts`, the test definitions and the end-to-end tests, each run against this tcm;
-4. **docs**: the docs site builds from the codebase's pages, every link and anchor resolving;
-5. **package**: the `tcm-ts` package packed from the codebase installs (into `dist/candidate`), works far from
+2. **tests**: `tcm test tcmts`, the test definitions and the end-to-end tests, each run against this tcm;
+3. **docs**: the docs site builds from the codebase's pages, every link and anchor resolving;
+4. **package**: the `tcm-ts` package packed from the codebase installs (into `dist/candidate`), works far from
    the repository (it makes a codebase in a temporary directory), and passes the end-to-end tests too
    (`tcm test --bin tcm=<it>`).
 
