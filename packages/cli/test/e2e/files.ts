@@ -11,7 +11,7 @@ export const testFilesInAMirror = () => {
   const root = tempDir("files mirror");
   const proj = path.join(root, "proj");
   const cbDir = path.join(root, "cb");
-  for (const d of ["src", "docs", "media"]) fs.mkdirSync(path.join(proj, d), { recursive: true });
+  for (const d of ["src", "docs", "media", "ext"]) fs.mkdirSync(path.join(proj, d), { recursive: true });
   fs.mkdirSync(cbDir);
   fs.writeFileSync(path.join(proj, "package.json"), JSON.stringify({ type: "module" }));
   fs.writeFileSync(path.join(proj, "src", "math.ts"), "export const square = (x: number): number => x * x;\n");
@@ -19,13 +19,16 @@ export const testFilesInAMirror = () => {
   fs.writeFileSync(path.join(proj, "docs", "faq.md"), "# FAQ\n\n## Why\n\nBack to [the guide](guide.md).\n");
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 1, 2, 255]);
   fs.writeFileSync(path.join(proj, "media", "logo.png"), png);
+  // everything in a marked directory is a file, code included
+  fs.writeFileSync(path.join(proj, "ext", ".tcm-files"), "");
+  fs.writeFileSync(path.join(proj, "ext", "main.js"), "module.exports = 1;\n");
   assert.equal(spawnSync("git", ["-C", proj, "init", "-q"]).status, 0);
   const ok = (...args: string[]) => okIn(cbDir, ...args);
   const read = (f: string) => fs.readFileSync(path.join(proj, f), "utf8");
   ok("init");
   fs.rmSync(path.join(cbDir, "scratch.ts"));
   ok("import", proj, "--into", "app", "--mirror");
-  assert.match(ok("ls", "app"), /app\.docs\.faq +#\w+ +: md[\s\S]*app\.docs\.guide +#\w+ +: md[\s\S]*app\.media\.logo +#\w+ +: png/);
+  assert.match(ok("ls", "app"), /app\.docs\.faq +#\w+ +: md[\s\S]*app\.docs\.guide +#\w+ +: md[\s\S]*app\.ext\.main +#\w+ +: js[\s\S]*app\.media\.logo +#\w+ +: png/);
   assert.match(ok("mirror", "--check"), /the files hash to what the codebase holds/);
 
   // a rename of the code reaches the page that names it, written as short as it reads
@@ -45,6 +48,10 @@ export const testFilesInAMirror = () => {
   // one file is written by its name
   ok("export", "app.docs.guide", path.join(root, "one"));
   assert.deepEqual(fs.readdirSync(path.join(root, "one")), ["guide.md"]);
+  // a marked directory removed, its mark with it: its files go too
+  fs.rmSync(path.join(proj, "ext"), { recursive: true });
+  assert.match(ok("ls", "app"), /- removed +app\.ext\.main \(gone from the files\)/);
+  assert.doesNotMatch(ok("ls", "app"), /app\.ext/);
   assert.match(ok("mirror", "--check"), /the files hash to what the codebase holds/);
 }
 

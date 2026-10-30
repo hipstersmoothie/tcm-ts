@@ -45,7 +45,7 @@ import { isTypeAliasDeclaration as ts_isTypeAliasDeclaration, isInterfaceDeclara
 import { scratchNamespace } from "@tcm/core";
 import { fileFormat, followMove, linkingTo, TEXT_FORMATS, fileContent, formatOf, fileDefinition, fileLeaf } from "./files.ts";
 import { exportFiles } from "./files.ts";
-import { isAsset, assetName, assetFiles } from "./mirror.ts";
+import { assetName, assetFiles } from "./mirror.ts";
 import { assetFormat } from "./mirror.ts";
 
 
@@ -1744,7 +1744,9 @@ export function importAssets(cb: Codebase, root: string, dir: string, mode: "add
   if (failed) return undefined;
   const held = new Map(planned.map((p) => [p.path, p.def.hash]));
   const was = new Map<string, string>();
-  if (following) for (const [rel, f] of Object.entries(following.files)) if (isAsset(rel, root)) for (const [leaf, h] of Object.entries(f.names)) was.set(joinName(f.ns, leaf), h);
+  // by what the codebase has for them: a removed file's mark (.tcm-files) may be gone with it
+  const isFile = (f: Mirror["files"][string]) => Object.values(f.names).some((h) => cb.store.getDef(h)?.kind === "file");
+  if (following) for (const f of Object.values(following.files)) if (isFile(f)) for (const [leaf, h] of Object.entries(f.names)) was.set(joinName(f.ns, leaf), h);
   const changed = planned.filter((p) => was.get(p.path) !== p.def.hash);
   // what's wrong with the files that changed (the others said so when they did)
   for (const p of changed) for (const w of p.warnings) console.log(yellow(`warning: ${w}`));
