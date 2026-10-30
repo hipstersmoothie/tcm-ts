@@ -8,13 +8,14 @@
 #
 # It runs the known-good tcm, the build the last passing `pnpm verify` tested (dist/known-good), not the repository as
 # it is: a change that breaks tcm can't break the tcm making it, and a git checkout doesn't change it mid-session.
-# TCM_LIVE=1 runs the repository's tcm instead (to try a change before verifying it); so does a repository with no
-# known-good build yet.
+# TCM_LIVE=1 runs the codebase's own tcm, as it is now (to try a change before verifying it): the known-good one runs
+# it from the codebase (`tcm run tcmts.cli.main.runCli`). A repository with no known-good build yet runs its files'.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 TCM="$REPO/dist/known-good/node_modules/tcm-ts/bin/tcm.js"
-if [ -n "${TCM_LIVE:-}" ]; then
-  TCM="$REPO/cli/bin/tcm.js"
+LIVE=""
+if [ -n "${TCM_LIVE:-}" ] && [ -f "$TCM" ]; then
+  LIVE=1
 elif [ ! -f "$TCM" ]; then
   echo "tcm: no known-good build yet (\`pnpm verify\` makes one); running the repository's as it is" >&2
   TCM="$REPO/cli/bin/tcm.js"
@@ -37,4 +38,5 @@ fi
 # says which codebase (tcm takes it out of the environment of what it runs, so tests work on their own)
 export TCM_CODEBASE="$REPO/codebase"
 cd "${INIT_CWD:-$REPO/codebase}"
+if [ -n "$LIVE" ]; then exec node "$TCM" run tcmts.cli.main.runCli -- "$@"; fi
 exec node "$TCM" "$@"

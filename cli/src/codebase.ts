@@ -841,11 +841,10 @@ export function sessionDirFor(root: string, branch: string): string {
 }
 
 /**
- * The codebase `TCM_CODEBASE` names, for running tcm from elsewhere (paths given to it are the caller's). Read once,
- * and taken out of the environment: what tcm runs (tests, programs, other tcms) works on its own directory's.
+ * The codebase `TCM_CODEBASE` names, for running tcm from elsewhere (paths given to it are the caller's). What tcm
+ * runs has it too (a tcm run from the codebase finds it), except tests, which work in directories of their own.
  */
 export const namedCodebase: string | undefined = (() => {
   const dir = process.env.TCM_CODEBASE;
-  delete process.env.TCM_CODEBASE;
   return dir ? path.resolve(dir) : undefined;
 })();

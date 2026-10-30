@@ -109,7 +109,8 @@ export function runSuite(cb: Codebase, s: Suite, entry: string): Promise<{ resul
   const coverage = fs.mkdtempSync(path.join(os.tmpdir(), "tcm-suite-"));
   const started = Date.now();
   // (run from a test, node:test's own setting would make this run report to that test's runner)
-  const { NODE_TEST_CONTEXT: _, ...env } = process.env;
+  // (nor TCM_CODEBASE: a suite works in directories of its own)
+  const { NODE_TEST_CONTEXT: _, TCM_CODEBASE: __, ...env } = process.env;
   const child = spawn(process.execPath, [...nodeArgs(cb.lay), writeRunner(s.hash, cb.source(), cb.lay)], {
     cwd: cb.lay.root,
     env: { ...env, [binVariable(s.bin)]: entry, NODE_V8_COVERAGE: coverage, NO_COLOR: "1", FORCE_COLOR: "0" },
