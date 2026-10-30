@@ -154,18 +154,13 @@ const TOOLS: Tool[] = [
   { name: "tcm_docs", description: "A definition's documentation, with its examples evaluated.", inputSchema: schema({ name: { type: "string" } }, ["name"]), argv: (a) => ["docs", str(a.name)] },
   {
     name: "tcm_edit",
-    description: "Write definitions to a scratch file for editing (default scratch.ts, or scratch.tsx for JSX), with lines saying where each goes back. Returns the file's path and contents: edit it with your file tools, then tcm_check and tcm_update.",
-    inputSchema: schema({ names: names, file: { type: "string", description: "the scratch file (relative to the project)" }, force: { type: "boolean", description: "overwrite a scratch file holding definitions that aren't saved" } }, ["names"]),
+    description: "Write definitions to a scratch file for editing (default scratch.ts, or scratch.tsx for JSX), with lines saying where each goes back. A scratch file holding unsaved work keeps it: the definitions are added to it. Returns the file's path and contents: edit it with your file tools, then tcm_check and tcm_update.",
+    inputSchema: schema({ names: names, file: { type: "string", description: "the scratch file (relative to the project)" }, force: { type: "boolean", description: "replace what a scratch file holds, even definitions that aren't saved, instead of adding to it" } }, ["names"]),
     run: async (a, ctx) => {
       const argv = (file?: string) => ["edit", ...strs(a.names), ...(file ? ["--file", file] : []), ...(a.force ? ["--force"] : [])];
-      let r = await ctx.tcm(argv(a.file ? str(a.file) : undefined));
-      // the default scratch file holds work: never overwrite it unasked, use another
-      for (let n = 2; !a.file && !a.force && r.code !== 0 && /is not empty/.test(r.out) && n < 50; n++) {
-        const ext = /scratch\.tsx/.test(r.out) ? "tsx" : "ts";
-        r = await ctx.tcm(argv(`scratch-${n}.${ext}`));
-      }
+      const r = await ctx.tcm(argv(a.file ? str(a.file) : undefined));
       if (r.code !== 0) return { text: r.out, isError: true };
-      const file = /wrote .* to (\S+)/.exec(r.out)?.[1] ?? str(a.file);
+      const file = /(?:wrote|added) .* to (\S+)/.exec(r.out)?.[1] ?? /in (\S+) already/.exec(r.out)?.[1] ?? str(a.file);
       const abs = file && path.resolve(ctx.root, file);
       const body = abs && fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : "";
       const shown = abs ? `\`${abs}\`:\n\n${fence(body.trimEnd(), LANG[path.extname(abs).slice(1)] ?? "")}\n\n` : "";

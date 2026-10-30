@@ -64,15 +64,15 @@ export const testAgentWorksThroughMcp = () =>
     assert.match((await s.call("tcm_status")).text, /3 named definitions[\s\S]*lib {2}3[\s\S]*nothing to do/);
     assert.match((await s.call("tcm_find", { query: ":(x: number) => number" })).text, /lib\.square/);
 
-    // edit: scratch.ts holds work already, so the definition goes to another scratch file
+    // edit: scratch.ts holds work already, which it keeps: the definition is added to it
     fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace lib\nexport const draft = 1;\n`);
     const edited = await s.call("tcm_edit", { names: ["lib.square"] });
     // (the file as a highlighted block, for clients that render Markdown)
-    assert.match(edited.text, /wrote lib\.square to scratch-2\.ts[\s\S]*scratch-2\.ts`:\n\n```ts\n\/\/ tcm: [\s\S]*export const square[\s\S]*\n```\n\nEdit the file, then tcm_check and tcm_update/);
-    const file = path.join(dir, "scratch-2.ts");
+    assert.match(edited.text, /added lib\.square to scratch\.ts[\s\S]*scratch\.ts`:\n\n```ts\n\/\/ tcm: namespace lib\nexport const draft = 1;\n\nexport const square[\s\S]*\n```\n\nEdit the file, then tcm_check and tcm_update/);
+    const file = path.join(dir, "scratch.ts");
     fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("x * x", "x ** 2"));
-    assert.match((await s.call("tcm_check", { file: "scratch-2.ts" })).text, /~ update +lib\.square[\s\S]*tcm_update saves it/);
-    const updated = await s.call("tcm_update", { file: "scratch-2.ts" });
+    assert.match((await s.call("tcm_check", { file: "scratch.ts" })).text, /~ update +lib\.square[\s\S]*tcm_update saves it/);
+    const updated = await s.call("tcm_update", { file: "scratch.ts" });
     assert.match(updated.text, /~ updated +lib\.area \(dependent\)[\s\S]*tcm_test runs the tests/);
     // a definition: its name, hash and where it runs, then its code
     assert.match((await s.call("tcm_view", { names: ["lib.square"] })).text, /^\*\*lib\.square\*\* `#\w+` · runs anywhere\n\n```ts\nexport const square = \(x: number\): number => x \*\* 2;?\n```$/);

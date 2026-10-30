@@ -52,6 +52,7 @@ import { onMirrorBranch } from "./mirror.ts";
 import { sessionDirFor } from "./codebase.ts";
 import { fileName } from "./files.ts";
 import { randomBytes } from "node:crypto";
+import assert from "node:assert/strict";
 
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
@@ -532,11 +533,14 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
   }
   // JSX only parses in a .tsx file: the default scratch file follows what's being edited
   const jsx = targets.some((t) => (t.startsWith("#") ? [cb.lookupOne(t)] : cb.lookup(t)).some((h) => cb.store.getDef(h)?.jsx));
-  const file = typeof target === "string" ? target : target(jsx);
-  // a scratch file holding only what's saved has nothing to lose
-  if (fs.existsSync(file) && fs.readFileSync(file, "utf8").trim() && !force && !holdsOnlySaved(cb, file)) {
-    throw new UsageError(`${path.basename(file)} is not empty; pass --force to overwrite or --file <other.ts>`);
-  }
+  const work = (f: string) => fs.existsSync(f) && !!fs.readFileSync(f, "utf8").trim();
+  // (a .tsx scratch file holding work takes code without JSX too: one file for all of it)
+  const file = typeof target === "string" ? target : !jsx && work(target(true)) && !work(target(false)) ? target(true) : target(jsx);
+  const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+  // a scratch file holding work keeps it, and what's edited now is added to it; one holding only what's saved has
+  // nothing to lose, and starts again (as --force does)
+  const adding = !!existing.trim() && !force && !holdsOnlySaved(cb, file);
+  const fileNs = adding ? (/^\/\/ tcm: namespace (\S+)/m.exec(existing)?.[1] ?? "") : "";
   const pathOf = new Map<string, string | undefined>();
   for (const t of targets) {
     // a name holding a type and a value edits both
@@ -554,8 +558,20 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
     }
   }
   const nsOf = (p: string) => (p.includes(".") ? p.slice(0, p.lastIndexOf(".")) : "");
+  // already in the file it's added to: there once is enough
+  const inFile = (p: string) => {
+    const leaf = p.slice(p.lastIndexOf(".") + 1).replaceAll("$", "\\$");
+    const declared = new RegExp(`^(?:export\\s+)?(?:declare\\s+)?(?:async\\s+)?(?:abstract\\s+)?(?:const|let|var|function\\*?|class|type|interface)\\s+${leaf}\\b`, "m");
+    return existing.includes(`// tcm: path ${p}\n`) || (nsOf(p) === fileNs && declared.test(existing));
+  };
+  if (adding) for (const [h, p] of pathOf) if (p !== undefined && inFile(p)) pathOf.delete(h);
+  if (!pathOf.size) {
+    console.log(`${targets.join(", ")} ${targets.length > 1 ? "are" : "is"} in ${path.relative(process.cwd(), file)} already`);
+    return;
+  }
   const nss = new Set([...pathOf.values()].filter((p) => p !== undefined).map(nsOf));
-  const ns = nss.size === 1 ? [...nss][0]! : "";
+  // (added to a file, the definitions say where they go unless it's the file's namespace)
+  const ns = adding ? fileNs : nss.size === 1 ? [...nss][0]! : "";
   const recs = [...pathOf.keys()].map((h) => cb.store.getDef(h)!);
   const text = render(recs, cb.source(), cb.lay, {
     style: "scratch",
@@ -570,9 +586,14 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
       return p && p !== joinName(ns, declaredAs) ? `// tcm: path ${p}` : undefined;
     },
   }).text;
-  fs.writeFileSync(file, (ns ? `// tcm: namespace ${ns}\n` : "") + text);
-  // (where it is from here: a session's is in its own directory)
-  console.log(`wrote ${targets.join(", ")} to ${path.relative(process.cwd(), file)}`);
+  if (adding) {
+    fs.writeFileSync(file, addToScratch(file, existing, text));
+    console.log(`added ${targets.join(", ")} to ${path.relative(process.cwd(), file)}`);
+  } else {
+    fs.writeFileSync(file, (ns ? `// tcm: namespace ${ns}\n` : "") + text);
+    // (where it is from here: a session's is in its own directory)
+    console.log(`wrote ${targets.join(", ")} to ${path.relative(process.cwd(), file)}`);
+  }
   if (cycle.size) {
     const them = [...cycle];
     console.log(dim(`  in a cycle with ${them.slice(0, 5).join(", ")}${them.length > 5 ? `, and ${them.length - 5} more` : ""}: saving ${targets.length > 1 ? "them" : "it"} saves ${them.length > 1 ? "those" : "that"} too, as ${them.length > 1 ? "they are" : "it is"} (\`tcm edit\` ${them.length > 1 ? "them" : "it"} to change ${them.length > 1 ? "them" : "it"} too)`));
@@ -1797,4 +1818,35 @@ export function importedPaths(file: string, text: string): string[] {
     for (const e of b.elements) out.push(joinName(ns, (e.propertyName ?? e.name).text));
   }
   return out;
+}
+
+/**
+ * A scratch file's text with more definitions in it (`text`, rendered as `tcm edit` writes them): their imports
+ * after the file's own (those it has already left out), and their code at the end.
+ */
+export function addToScratch(file: string, existing: string, text: string): string {
+  const lines = text.split("\n");
+  let body = 0;
+  while (body < lines.length && (lines[body]!.startsWith("import ") || !lines[body]!.trim())) body++;
+  const have = new Set(existing.split("\n").map((l) => l.trim()));
+  const imports = lines.slice(0, body).filter((l) => l.startsWith("import ") && !have.has(l.trim()));
+  const code = lines.slice(body).join("\n").trimEnd();
+  const last = parse_1(file, existing).statements.filter(ts_isImportDeclaration).at(-1);
+  // after the last import, or else the namespace line, or else at the top
+  const pragma = /^\/\/ tcm: namespace \S+\n/.exec(existing);
+  const at = last ? last.end + (existing[last.end] === "\n" ? 1 : 0) : pragma ? pragma[0].length : 0;
+  const head = existing.slice(0, at) + (imports.length ? imports.join("\n") + "\n" : "");
+  const rest = existing.slice(at);
+  return `${head}${!last && imports.length && rest.trim() ? "\n" : ""}${rest.trimEnd()}\n\n${code}\n`;
+}
+
+/**
+ * Definitions added to a scratch file go after what's in it, their imports with its imports, without repeating
+ * any it has.
+ */
+export const testAddToScratch = () => {
+  const existing = `// tcm: namespace lib\nimport { a } from "#codebase/lib";\n\nexport const b = (): number => a + 1;\n`;
+  const text = `import { a } from "#codebase/lib";\nimport fs from "node:fs";\n\nexport const c = (): string => fs.readFileSync("x", "utf8") + a;\n`;
+  assert.equal(addToScratch("s.ts", existing, text), `// tcm: namespace lib\nimport { a } from "#codebase/lib";\nimport fs from "node:fs";\n\nexport const b = (): number => a + 1;\n\nexport const c = (): string => fs.readFileSync("x", "utf8") + a;\n`);
+  assert.equal(addToScratch("s.ts", "export const x = 1;\n", `import fs from "node:fs";\n\nexport const y = fs;\n`), `import fs from "node:fs";\n\nexport const x = 1;\n\nexport const y = fs;\n`);
 }

@@ -226,10 +226,10 @@ export const perimeter = (ps: Point[]): number => ps.reduce((n, p, i) => n + dis
   const byType = await c.request("tcm/findByType", { query: "(a: Point, b: Point) => number" });
   assert.deepEqual(byType.hits.map((h: any) => [h.path, h.uri]), [["geo.dist", viewAt("geo/dist.ts")]]);
 
-  // edit: into a free scratch file, which the client then opens
+  // edit: added to the scratch file (it holds work: a watch expression), which the client then opens
   const edited = await c.request("workspace/executeCommand", { command: "tcm.edit", arguments: ["geo.dist"] });
-  assert.equal(edited, pathToFileURL(path.join(dir2, "edit.ts")).href, "scratch.ts is taken");
-  assert.match(fs.readFileSync(path.join(dir2, "edit.ts"), "utf8"), /const dist = \(a: Point, b: Point\)/);
+  assert.equal(edited, pathToFileURL(path.join(dir2, "scratch.ts")).href);
+  assert.match(fs.readFileSync(path.join(dir2, "scratch.ts"), "utf8"), /^import \{ perimeter \} from "#codebase\/geo";\n[\s\S]*perimeter\(\[\]\);\n\n[\s\S]*\/\/ tcm: path geo\.dist\n[\s\S]*const dist = \(a: Point, b: Point\)/);
 
   // a change made elsewhere (a terminal) reaches the client
   c.notes.length = 0;

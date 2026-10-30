@@ -43,8 +43,8 @@ The code lives in the codebase, not in files, so the server also shows the codeb
 - **Definitions are documents.** `.tcm/src/lib/square.ts` is `lib.square` rendered with current names (what
   `tcm view` prints), with a header line giving its names, hash and where it runs (`.tsx` for definitions with
   JSX). They're real files, so [debuggers](debugging.md) stop in them, and TypeScript reads them as the project
-  does. They're read-only (the extension marks `.tcm/src` so): to change one, **Edit** writes it into a scratch
-  file (`scratch.ts` if that's empty, else `edit.ts`, `edit-2.ts`, …; `scratch.tsx` and so on for JSX), where
+  does. They're read-only (the extension marks `.tcm/src` so): to change one, **Edit** writes it into the scratch
+  file (`scratch.ts`, or `scratch.tsx` for JSX), added to what's there if it holds work, where
   TypeScript checks it and the lens offers **Update codebase**. Clients can also ask for a definition as a
   `tcm:/lib/square.ts` document, with the same text.
 - **Go to Definition (Cmd/Ctrl+click) goes to the source.** On a codebase name in a scratch file it opens that

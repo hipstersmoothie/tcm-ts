@@ -23,8 +23,8 @@ export const testCycleUpdatedWhole = () => {
   assert.equal(ok("run", "lib.isOdd", "3"), "even 2\neven 0\ntrue\n", "isOdd runs the new isEven");
 
   // edit writes only what's asked for, and says what it's in a cycle with (scratch.ts holds the versions just
-  // replaced, which aren't saved as they are, so it takes --force)
-  assert.match(tcmIn(dir, "edit", "lib.isEven").out, /scratch\.ts is not empty/);
+  // replaced, which aren't saved as they are: isEven is in it already, and --force starts it again)
+  assert.match(tcmIn(dir, "edit", "lib.isEven").out, /lib\.isEven is in scratch\.ts already/);
   assert.match(ok("edit", "--force", "lib.isEven"), /in a cycle with lib\.isOdd: saving it saves that too, as it is/);
   const scratch = path.join(dir, "scratch.ts");
   assert.doesNotMatch(fs.readFileSync(scratch, "utf8"), /function isOdd/);
@@ -32,7 +32,7 @@ export const testCycleUpdatedWhole = () => {
   assert.match(ok("check"), /with lib\.isOdd: in a cycle with what changed[\s\S]*~ update +lib\.isOdd/);
   assert.match(ok("update"), /~ update +lib\.isEven[\s\S]*~ update +lib\.isOdd/);
   assert.equal(ok("run", "lib.isOdd", "1"), "even: 0\ntrue\n");
-};
+}
 
 /**
  * One member of a cycle with a class is edited alone, though alone it wouldn't check: the class has private state.

@@ -862,12 +862,13 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     }
   };
   /** A scratch file to edit in: scratch.ts if it's empty, else a fresh edit-N.ts (`.tsx` for JSX). */
+  // the scratch file what's edited goes to (added to what's in it): scratch.tsx for JSX, and for the rest too while
+  // it holds work and scratch.ts doesn't
   const editFile = (ext = ".ts") => {
     const root = cb!.lay.root;
-    for (let i = 0; ; i++) {
-      const f = path.join(root, `${i === 0 ? "scratch" : i === 1 ? "edit" : `edit-${i}`}${ext}`);
-      if (!fs.existsSync(f) || !fs.readFileSync(f, "utf8").trim()) return f;
-    }
+    const work = (f: string) => fs.existsSync(f) && !!fs.readFileSync(f, "utf8").trim();
+    const [plain, withJsx] = [path.join(root, "scratch.ts"), path.join(root, "scratch.tsx")];
+    return ext === ".tsx" || (work(withJsx) && !work(plain)) ? withJsx : plain;
   };
 
   /** Lenses on a definition's view: how many definitions use it (click for where), and edit / rename. */

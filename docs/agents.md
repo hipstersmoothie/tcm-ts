@@ -26,7 +26,7 @@ they finish.
 | `tcm_find` | names, docs and signatures; `:<type>` searches [by type](search.md) |
 | `tcm_view`, `tcm_docs` | definitions with current names and where they run, as Markdown: a line with each one's names, hash and placement, then its code (or a file's content) in a highlighted block; documentation, examples evaluated |
 | `tcm_deps`, `tcm_dependents` | what a definition uses, and what uses it |
-| `tcm_edit` | definitions into a scratch file, its path and contents returned (the contents in a highlighted block); a scratch file holding work is never overwritten: another is used |
+| `tcm_edit` | definitions into a scratch file, its path and contents returned (the contents in a highlighted block); a scratch file holding unsaved work keeps it: the definitions are added to it |
 | `tcm_check`, `tcm_update` | what saving a scratch file would do; saving it |
 | `tcm_todo` | conflicts, and dependents that stopped typechecking |
 | `tcm_test`, `tcm_run` | tests (cached by hash, `fresh` to run them all) and [suites](testing.md#suites-testing-a-command-as-a-program) (cached by the code they ran, `definitions` to leave them out); running a definition |

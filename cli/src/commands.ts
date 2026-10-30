@@ -86,7 +86,7 @@ export const commands = {
     toggle(name("check"), description("re-analyze the files: they must hash to what the codebase holds")),
     toggle(name("unlink"), description("stop writing back; the files stay as they are")),
   ),
-  edit: command(name("edit"), description("write definitions to a scratch file for editing"), argument(name("names"), description("names or #hashes"), multiple(), schema(words)), option(name("file"), description("the scratch file (default scratch.ts, or scratch.tsx for JSX)"), schema(text(null))), force("overwrite a scratch file that has unsaved definitions")),
+  edit: command(name("edit"), description("write definitions to a scratch file for editing"), argument(name("names"), description("names or #hashes"), multiple(), schema(words)), option(name("file"), description("the scratch file (default scratch.ts, or scratch.tsx for JSX)"), schema(text(null))), force("replace what a scratch file holds, unsaved definitions too, instead of adding to it")),
   view: command(name("view"), description("show definitions with current names"), argument(name("names"), description("names or #hashes"), multiple(), schema(words))),
   ls: command(name("ls"), description("list names"), namespace("a namespace (default: everything)")),
   find: command(name("find"), description("search names and signatures; ':<type>' searches by type, e.g. ':(xs: T[]) => T'"), argument(name("query"), description("words, or :<type>"), multiple(), schema(words))),
