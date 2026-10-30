@@ -597,3 +597,38 @@ export const perimeter = (ps: Point[]): number => ps.reduce((n, p, i) => n + dis
   const renamed = await c.request("tcm/searchCode", { query: "distance(p" });
   assert.deepEqual(renamed.hits.map((h: any) => h.path), ["geo.perimeter"]);
 });
+
+/**
+ * The Changes view's data: this branch's history, newest first, what an entry changed (an edit with its code before
+ * and after as documents, what was re-hashed because of it, a rename), and the branches with how many names differ.
+ */
+export const testChangesInEditor = () => withChildren(async (keep) => {
+  const dir = tempDir("lsp changes");
+  const tcm = (...args: string[]) => spawnSync(process.execPath, [tcmBin(), ...args], { cwd: dir, env: plainEnv(), encoding: "utf8" });
+  tcm("init");
+  fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace lib\nexport const square = (x: number): number => x * x;\nexport const area = (s: number): number => square(s);\n`);
+  assert.equal(tcm("add").status, 0);
+  fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace lib\nexport const square = (x: number): number => x ** 2;\n`);
+  assert.equal(tcm("update").status, 0);
+  assert.equal(tcm("mv", "lib.area", "lib.areaOf").status, 0);
+  assert.equal(tcm("branch", "idea").status, 0);
+  const c = client(keep);
+  await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir).href, capabilities: {}, clientInfo: { name: "Visual Studio Code" } });
+  c.notify("initialized", {});
+
+  const history = await c.request("tcm/history", { limit: 10 });
+  assert.deepEqual(history.map((h: any) => [h.command, h.back]), [["mv lib.area lib.areaOf", 0], ["update scratch.ts", 1], ["add scratch.ts", 2]]);
+  const update = await c.request("tcm/historyEntry", { hash: history[1].hash });
+  assert.deepEqual(update.map((x: any) => [x.change, x.path]), [["edited", "lib.square"], ["propagated", "lib.area"]]);
+  assert.deepEqual(update[1].because, ["lib.square"]);
+  // the code before and after, to diff
+  assert.match(fs.readFileSync(fileURLToPath(update[0].oldUri), "utf8"), /x \* x/);
+  assert.match(fs.readFileSync(fileURLToPath(update[0].uri), "utf8"), /x \*\* 2/);
+  const mv = await c.request("tcm/historyEntry", { hash: history[0].hash });
+  assert.deepEqual(mv.map((x: any) => [x.change, x.path, x.from]), [["renamed", "lib.areaOf", "lib.area"]]);
+
+  // a branch, created from this one: nothing differs until this one moves on
+  assert.deepEqual((await c.request("tcm/branches", {})).map((b: any) => [b.name, b.current, b.differs]), [["main", true, 0], ["idea", false, 0]]);
+  assert.equal(tcm("rm", "lib.areaOf").status, 0);
+  assert.deepEqual((await c.request("tcm/branches", {})).map((b: any) => [b.name, b.differs]), [["main", 0], ["idea", 1]]);
+});

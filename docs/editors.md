@@ -72,6 +72,7 @@ For clients that want to show more, the server answers:
 | `tcm/page` | a definition's page: rendered doc (links as `tcm-page:<hash>`), highlighted source with references (and imports) as links, placement, uses and used-by |
 | `tcm/namespace` | a namespace's page: its README rendered, and its definitions by role with doc summaries |
 | `tcm/find` | the finder: names, doc words and types |
+| `tcm/branches`, `tcm/history`, `tcm/historyEntry` | the Changes view: the branches (how many names differ from this one's), this branch's history entries, and the names an entry changed, an edit with its documents before and after |
 | `tcm/searchCode` | find in files for the codebase: the lines of definitions (as their documents read) and pages with some text, by definition; `caseSensitive`, `wholeWord`, `regex` |
 
 It sends `tcm/changed` when the codebase changes and `tcm/dataChanged` when the data store does, here or from a
@@ -130,6 +131,13 @@ The `#` icon in the activity bar opens these views:
   Server, Browser, Shared (runs anywhere), Tests and Files. Apps here show whether they're running, with the same start, open and stop buttons. Icons show kinds, endpoints (a cloud) and test results. Hover for details; click to open. Right-click (or
   the inline icons) for **Edit in a scratch file**, **Find usages**, **Run** (`tcm run` in a terminal), **Rename**
   (`tcm mv`, also for a whole namespace) and **Copy hash**.
+- **Changes.** What's changed, by [history](history.md). **Branches** lists every branch, this one first, each
+  with how many names differ from this one's and when it last changed; click one for the changes from this branch
+  to it (`tcm diff <branch>`), or right-click to merge it here. **History** is this branch's entries, newest first:
+  each is the command that made it, and opens to the names it changed (edited, re-hashed because of what it uses,
+  added, removed, renamed). An edited definition opens in VS Code's diff editor, its code before and after with
+  current names; anything else opens its page. An entry's diff button shows all of what it changed as text, and
+  **Reset names to here** brings the names back to it, as a new entry on top (`tcm reset`).
 - **Data.** Every table: declared ones and ones with rows. Each shows its row count and how many rows are still
   stored as an older row type; **Migrate rows** brings those up to date (`tcm data migrate`), and **Go to
   definition** opens the `table<…>()` that declares it. Click a table to open it in the **table viewer**: a grid

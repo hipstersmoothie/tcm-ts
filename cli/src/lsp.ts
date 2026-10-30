@@ -31,6 +31,7 @@ import { formatText } from "./fmt.ts";
 import { ensureView, hashesOfViewFile, srcDir, viewText, type View } from "./views.ts";
 import { resultKey } from "./vitest.ts";
 import { searchCode } from "./pages.ts";
+import { entryChanges, historyList, branchList } from "./changes.ts";
 
 /** What the language server needs from the CLI (passed in, so this module doesn't import the CLI's entry). */
 export interface LspTools {
@@ -1062,6 +1063,16 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       }
       case "tcm/find":
         send({ id: m.id, result: cb ? find(cb, String(p?.query ?? ""), viewUri) : [] });
+        return;
+      // the Changes view: branches, this branch's history, and what an entry changed
+      case "tcm/branches":
+        send({ id: m.id, result: cb ? branchList(cb) : [] });
+        return;
+      case "tcm/history":
+        send({ id: m.id, result: cb ? historyList(cb, Number(p?.limit ?? 30)) : [] });
+        return;
+      case "tcm/historyEntry":
+        send({ id: m.id, result: cb ? entryChanges(cb, String(p?.hash ?? ""), viewUri) : [] });
         return;
       // find in files, for the codebase: lines of definitions and pages with the text in them
       case "tcm/searchCode":

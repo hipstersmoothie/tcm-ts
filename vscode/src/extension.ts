@@ -9,6 +9,7 @@ import { refreshTables, showTable } from "./data-panel.ts";
 import { Pages } from "./pages-panel.ts";
 import { DraftLenses, ReleasesTree, type PublishedPackage, type ReleaseCheck, type Request } from "./releases.ts";
 import { SearchView } from "./search.ts";
+import { changesCommands, ChangesTree } from "./changes.ts";
 
 /** The language client, while the extension is active. */
 export const session: { client?: LanguageClient } = {};
@@ -357,6 +358,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const views = new vscode.EventEmitter<vscode.Uri>();
   const apps = new AppsTree(running);
   const search = new SearchView(request, (hash) => pages.open({ hash }));
+  const changes = new ChangesTree(request);
   const data = new DataTree();
   const packages = new PackagesTree();
   const releases = new ReleasesTree(request);
@@ -479,6 +481,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return search.show(selected);
     }),
     vscode.window.createTreeView("tcm.codebase", { treeDataProvider: tree, showCollapseAll: true }),
+    vscode.window.createTreeView("tcm.changes", { treeDataProvider: changes }),
+    ...changesCommands(changes, folder),
     vscode.window.createTreeView("tcm.apps", { treeDataProvider: apps }),
     vscode.window.createTreeView("tcm.data", { treeDataProvider: data }),
     vscode.window.createTreeView("tcm.packages", { treeDataProvider: packages }),
@@ -712,6 +716,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   client.onNotification("tcm/changed", () => {
     tree.refresh();
     search.refresh();
+    changes.refresh();
     apps.refresh();
     data.refresh();
     packages.refresh();
