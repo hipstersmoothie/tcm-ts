@@ -160,7 +160,7 @@ export function declarations(file: string, text: string): Map<string, Decl> {
 const docComment = (doc: string) => `/**\n${doc.split("\n").map((l) => (l ? ` * ${l}` : " *")).join("\n")}\n */\n`;
 
 /** How a module is imported, for an import tcm adds: `node:fs`, `react/jsx-runtime`, `#tcm/server`. */
-function specifierOf(ext: ExtRef): string {
+export function specifierOf(ext: ExtRef): string {
   if (ext.module === SERVER_API_MODULE) return "#tcm/server";
   const npm = /^npm:(.+)@[^@]+$/.exec(ext.module);
   const base = npm ? npm[1]! : ext.module;

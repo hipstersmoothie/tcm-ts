@@ -60,6 +60,7 @@ import { pruneImports } from "./mirror.ts";
 import { lineDiff } from "./diff.ts";
 import { hashesOfViewFile, srcDir } from "./views.ts";
 import { superviseMcp, registerMcpServer, liveMcpServers } from "./mcp.ts";
+import { specifierOf } from "./mirror.ts";
 
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
@@ -2063,6 +2064,53 @@ export function applyPatch(text: string, edits: PatchEdit[], all = false): { tex
 }
 
 /**
+ * Where the codebase's own code imports `name` from outside it (a package's or Node's export), most often: the import
+ * (`import { spawnSync } from "node:child_process"`, or `import fs from "node:fs"` for a default export the code
+ * calls `fs`), or undefined if nothing does.
+ */
+export function importedFrom(cb: Codebase, name: string): string | undefined {
+  const counts = new Map<string, number>();
+  for (const h of new Set(cb.store.names().map((n) => n.hash))) {
+    const rec = cb.store.getDef(h);
+    for (const s of rec?.spans ?? []) {
+      if (!s.ext) continue;
+      const spec = JSON.stringify(specifierOf(s.ext));
+      const line = s.ext.export === name ? `import { ${name} } from ${spec};` : s.ext.export === "default" && rec!.sourceText.slice(s.start, s.end) === name ? `import ${name} from ${spec};` : undefined;
+      if (line) counts.set(line, (counts.get(line) ?? 0) + 1);
+    }
+  }
+  return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+}
+
+/**
+ * Names a scratch file uses but doesn't have (TypeScript can't find them), imported: from the codebase, the one in
+ * `near`'s namespace, else the only definition by that name; from outside it (`spawnSync`, `createRequire`), where the
+ * codebase's own code imports it from most. The imports added; a name with several candidates is left to say so.
+ */
+export function importMissing(cb: Codebase, file: string, near: string): string[] {
+  cb.refreshShim();
+  const a = cb.analyze(file, cb.scratchSalts());
+  const missing = new Set(a.diagnostics.filter((d) => d.code === 2304 || d.code === 2552).map((d) => /'([^']+)'/.exec(d.message)?.[1]).filter((n): n is string => !!n));
+  if (!missing.size) return [];
+  const ns = near.slice(0, Math.max(0, near.lastIndexOf(".")));
+  const lines: string[] = [];
+  for (const n of missing) {
+    const found = cb.store.names().filter((x) => x.path.slice(x.path.lastIndexOf(".") + 1) === n);
+    const pick = found.find((x) => x.path === joinName(ns, n)) ?? (found.length === 1 ? found[0] : undefined);
+    if (!pick) {
+      if (found.length) continue;
+      const line = importedFrom(cb, n);
+      if (line) lines.push(line);
+      continue;
+    }
+    const from = pick.path.slice(0, Math.max(0, pick.path.lastIndexOf(".")));
+    lines.push(`import ${pick.kind === "type" ? "type " : ""}{ ${n} } from "#codebase${from ? `/${from.replaceAll(".", "/")}` : ""}";`);
+  }
+  if (lines.length) fs.writeFileSync(file, addToScratch(file, fs.readFileSync(file, "utf8"), `${lines.join("\n")}\n`).trimEnd() + "\n");
+  return lines;
+}
+
+/**
  * `tcm patch <name>`: change a definition by find-and-replace on its code as `tcm view` shows it (current names),
  * then save it as `tcm update` does: checked, its dependents re-hashed. Nothing is saved if an edit doesn't apply
  * or the result doesn't typecheck. The change is shown as lines removed and added.
@@ -2087,6 +2135,8 @@ export function patch(cb: Codebase, name: string, edits: PatchEdit[], all: boole
       return true;
     }
     fs.writeFileSync(file, r.text);
+    // names the new code uses that the definition didn't import: imported from where the codebase has them
+    for (const line of importMissing(cb, file, name)) console.log(dim(`  ${line}`));
     console.log(dim(`${name}:`));
     for (const [op, line] of lineDiff(before.split("\n"), r.text.split("\n"))) {
       if (op === "-") console.log(red(`  - ${line}`));
