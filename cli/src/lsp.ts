@@ -548,7 +548,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     if (sym && sym.flags & ts.SymbolFlags.Alias) sym = checker.getAliasedSymbol(sym);
     return (sym && cacheRefOf(checker)(sym)) || undefined;
   };
-  const SYMBOL_KIND = (rec: DefRecord) => (rec.kind === "class" ? 5 : rec.kind === "type" ? 11 : /^(<[^>]*>)?\(|^\{ ?[(<]/.test(rec.signature) ? 12 : 13);
+  const SYMBOL_KIND = (rec: DefRecord) => (rec.kind === "file" ? 1 : rec.kind === "class" ? 5 : rec.kind === "type" ? 11 : /^(<[^>]*>)?\(|^\{ ?[(<]/.test(rec.signature) ? 12 : 13);
   const viewSymbols = (uri: string) => {
     const v = view(uri);
     if (!v) return [];
@@ -584,7 +584,8 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     const prefix = ns ? `${ns}.` : "";
     const namespaces = new Map<string, number>();
     const defs: { path: string; hash: string; kind: string }[] = [];
-    for (const n of c.store.names()) {
+    // (files too: pages, configuration, images)
+    for (const n of c.store.names(undefined, true)) {
       if (!n.path.startsWith(prefix)) continue;
       const rest = n.path.slice(prefix.length);
       const dot = rest.indexOf(".");
@@ -618,7 +619,8 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     const isTest = rec.kind !== "type" && isTestPath(p);
     const place = rec.kind === "term" ? placement.placeOf(hash).place : undefined;
     const test = isTest ? c.store.testResult(hash, resultKey(c)) : undefined;
-    const role = isTest ? "test"
+    const role = rec.kind === "file" ? "file"
+      : isTest ? "test"
       : rec.kind !== "term" ? "type"
       : rec.table ? "table"
       : isSchedule(rec) ? "schedule"

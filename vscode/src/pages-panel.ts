@@ -137,6 +137,7 @@ export function html(webview: vscode.Webview): string {
   .doc blockquote { margin: 6px 0; padding: 2px 10px; border-left: 3px solid var(--vscode-editorWarning-foreground); }
   .doc table { border-collapse: collapse; } .doc th, .doc td { border: 1px solid var(--vscode-panel-border); padding: 3px 8px; }
   .src { margin: 0 14px 10px; white-space: pre; }
+  .file-image { display: block; margin: 8px 14px 12px; max-width: calc(100% - 28px); max-height: 60vh; }
   /* VS Code doesn't give webviews the theme's syntax colours, so these are its default themes' (Dark+, Light+,
      High Contrast), picked by the theme's kind. Code in rendered docs (highlight.js classes) uses the same. */
   body { --k: #569cd6; --x: #c586c0; --s: #ce9178; --n: #b5cea8; --c: #6a9955; --f: #dcdcaa; --t: #4ec9b0; }
@@ -217,12 +218,12 @@ function link(item, from) {
 function defCard(c) {
   const p = c.page;
   const badges = [
-    '<span class="badge">' + (p.kind === "type" ? "type" : p.kind === "class" ? "class" : "term") + "</span>",
+    '<span class="badge">' + (p.kind === "file" ? esc(p.format || "file") + " file" : p.kind === "type" ? "type" : p.kind === "class" ? "class" : "term") + "</span>",
     p.place && p.place !== "anywhere" ? '<span class="badge ' + p.place + '">' + p.place + "</span>" : "",
     p.endpoint ? '<span class="badge">' + (p.streaming ? "streaming endpoint" : "endpoint") + "</span>" : "",
     p.test ? '<span class="badge ' + p.test + '">test ' + p.test + "</span>" : "",
   ].join("");
-  const actions = ["source", "edit", "usages", p.kind === "term" ? "run" : "", p.kind === "term" ? "debug" : "", "rename", "copy"].filter(Boolean)
+  const actions = (p.kind === "file" ? ["edit", "rename", "copy"] : ["source", "edit", "usages", p.kind === "term" ? "run" : "", p.kind === "term" ? "debug" : "", "rename", "copy"]).filter(Boolean)
     .map((a) => '<button data-action="' + a + '">' + a[0].toUpperCase() + a.slice(1) + "</button>").join("");
   let h = '<div class="head"><h2>' + esc(p.names[0] ?? p.short) + '</h2><span class="hash">' + esc(p.short) + "</span>" + badges +
     '<div class="actions">' + actions + "</div></div>";
@@ -230,7 +231,9 @@ function defCard(c) {
   if (p.place) h += '<div class="section why">Runs ' + RUNS[p.place] + (p.why ? ": it " + esc(p.why) : "") + "." + (p.endpoint ? " The browser calls it by hash." : "") + "</div>";
   if (c.docHtml) h += '<div class="doc">' + c.docHtml + "</div>";
   for (const prob of p.docProblems) h += '<div class="problem">' + esc(prob) + "</div>";
-  h += '<pre class="src">' + p.sourceHtml + "</pre>";
+  // (a file: its image, or its text; a Markdown file is its doc, above)
+  if (p.image) h += '<img class="file-image" src="' + esc(p.image) + '">';
+  if (p.sourceHtml) h += '<pre class="src">' + p.sourceHtml + "</pre>";
   const lists = [];
   if (p.uses.length) lists.push('<div class="list"><h4>Uses</h4><ul>' + p.uses.map((u) => "<li>" + link(u, c.key) + "</li>").join("") + "</ul></div>");
   if (p.usedBy.length) lists.push('<div class="list"><h4>Used by</h4><ul>' + p.usedBy.map((u) => "<li>" + link(u, c.key) + "</li>").join("") + "</ul></div>");
@@ -241,7 +244,7 @@ function defCard(c) {
   return h;
 }
 
-const ROLES = [["app", "Apps"], ["type", "Types"], ["table", "Data"], ["schedule", "Jobs"], ["server", "Server"], ["browser", "Browser"], ["shared", "Shared"], ["test", "Tests"]];
+const ROLES = [["app", "Apps"], ["type", "Types"], ["table", "Data"], ["schedule", "Jobs"], ["server", "Server"], ["browser", "Browser"], ["shared", "Shared"], ["test", "Tests"], ["file", "Files"]];
 function packageCard(c) {
   const p = c.page;
   let h = '<div class="head"><h2>' + esc(p.name) + '</h2><span class="badge">range ' + esc(p.range) + '</span><span class="hash">' + esc(p.version) + "</span>" +

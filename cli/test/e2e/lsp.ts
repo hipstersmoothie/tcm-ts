@@ -351,6 +351,9 @@ export type README = never;
 `,
   );
   assert.equal(tcm("add").status, 0);
+  // and a page, kept as written, linking to code
+  fs.writeFileSync(path.join(dir4, "guide.md"), "<!-- tcm: namespace geo -->\n# Guide\n\nMeasure with {@link dist}.\n");
+  assert.equal(tcm("add", "guide.md").status, 0);
   const dist = spawnSync("sqlite3", [path.join(dir4, ".tcm", "codebase.sqlite"), "select hash from names where path = 'geo.dist'"], { encoding: "utf8" }).stdout.trim();
   const pointHash = spawnSync("sqlite3", [path.join(dir4, ".tcm", "codebase.sqlite"), "select hash from names where path = 'geo.Point'"], { encoding: "utf8" }).stdout.trim();
 
@@ -370,12 +373,21 @@ export type README = never;
   assert.match(page.sourceHtml, /<a class="ref s" data-namespace="geo">&quot;#codebase\/geo&quot;<\/a>/);
   assert.equal(page.sourceHtml.split(`data-hash="${pointHash}">Point</a>`).length - 1, 3, "Point in the import, and in both parameters");
   assert.deepEqual(page.uses.map((u: any) => u.name), ["geo.Point"]);
-  assert.deepEqual(page.usedBy.map((u: any) => u.name), ["geo.perimeter"]);
+  // (the page linking to it uses it too)
+  assert.deepEqual(page.usedBy.map((u: any) => u.name), ["geo.guide", "geo.perimeter"]);
+
+  // files are in the tree, with pages of their own: Markdown rendered, its links to code opening their pages
+  const tree = await c.request("tcm/tree", { namespace: "geo" });
+  assert.ok(tree.definitions.some((d: any) => d.name === "guide" && d.kind === "file" && d.role === "file"), JSON.stringify(tree.definitions));
+  const guide = await c.request("tcm/page", { path: "geo.guide" });
+  assert.equal(guide.kind, "file");
+  assert.equal(guide.format, "md");
+  assert.match(guide.docMarkdown, new RegExp(`Measure with \\[\`geo\\.dist\`\\]\\(tcm-page:${dist}\\)`));
 
   // a namespace's page: its README rendered, then what's in it by role
   const ns = await c.request("tcm/namespace", { namespace: "geo" });
   assert.match(ns.readme, /^# Geometry\n\nPoints and distances\. Start with \[`dist`\]\(tcm-page:/);
-  assert.deepEqual(ns.definitions.map((d: any) => [d.name, d.role]), [["Point", "type"], ["dist", "shared"], ["perimeter", "shared"]]);
+  assert.deepEqual(ns.definitions.map((d: any) => [d.name, d.role]), [["Point", "type"], ["dist", "shared"], ["guide", "file"], ["perimeter", "shared"]]);
   assert.equal(ns.definitions[0].summary, "A point on the plane.");
 
   // the finder: names (best first), words in docs, and types

@@ -238,6 +238,13 @@ class Spelling {
     if (s.hash === selfHash) return selfLeaf;
     const key = this.keyOf(s);
     if (!key) return written;
+    // a definition this file's namespace has a name for reads as that name, here: an identical one elsewhere (one
+    // hash, two names) mustn't bring in its other name
+    if (s.hash) {
+      const prefix = this.ns ? `${this.ns}.` : "";
+      const own = this.cb.store.pathsOf(s.hash).find((p) => p.startsWith(prefix) && !p.slice(prefix.length).includes("."));
+      if (own) return this.remember(key, own.slice(prefix.length));
+    }
     const known = this.exact.get(key);
     if (known) {
       const w = this.wanted.find((x) => x.key === key);

@@ -87,8 +87,11 @@ codebase changes.
   highlighted with every reference a link, in its own colour and underlined on hover (its imports too: each name to its definition, `#codebase/…` to the
   namespace's page, a package to its page), and lists of what it **uses**, what it's **used by**, and the packages
   it imports. Buttons: Source (the `tcm:` document), Edit, Usages, Run, Rename, Copy (the hash).
+- **A file's page:** its format, then its content: a Markdown page rendered (its `{@link}`s and links to other
+  pages open their pages), an image shown, other text as it is (highlighted when it's code or JSON). What it
+  links to and what links to it are listed too. Buttons: Edit, Rename, Copy.
 - **A namespace's page:** its `README` definition's doc, if it has one, then what's in it, grouped by role (apps,
-  types, data, jobs, server, browser, shared, tests), each with the first paragraph of its doc, and its
+  types, data, jobs, server, browser, shared, tests, files), each with the first paragraph of its doc, and its
   sub-namespaces.
 
 Clicking a definition in the Codebase view opens its page (**Open source** in its menu opens the text document);
@@ -114,9 +117,9 @@ The `#` icon in the activity bar opens these views:
   status bar shows running apps. **Open** (also in an external browser), **Log** and **Stop** act on a running
   one. Clicking an app opens it if it runs, and its source otherwise. An app only expands to show problems that
   would stop it building; what it's made of is in the other two views.
-- **Codebase.** Namespaces, and the definitions in each. Namespaces with more than a few definitions are grouped
-  by what they're for: Apps, Types, Data (tables), Jobs (schedules), Server, Browser, Shared (runs anywhere) and
-  Tests. Apps here show whether they're running, with the same start, open and stop buttons. Icons show kinds, endpoints (a cloud) and test results. Hover for details; click to open. Right-click (or
+- **Codebase.** Namespaces, and the definitions and [files](pages.md) (pages, configuration, images) in each.
+  Namespaces with more than a few are grouped by what they're for: Apps, Types, Data (tables), Jobs (schedules),
+  Server, Browser, Shared (runs anywhere), Tests and Files. Apps here show whether they're running, with the same start, open and stop buttons. Icons show kinds, endpoints (a cloud) and test results. Hover for details; click to open. Right-click (or
   the inline icons) for **Edit in a scratch file**, **Find usages**, **Run** (`tcm run` in a terminal), **Rename**
   (`tcm mv`, also for a whole namespace) and **Copy hash**.
 - **Data.** Every table: declared ones and ones with rows. Each shows its row count and how many rows are still

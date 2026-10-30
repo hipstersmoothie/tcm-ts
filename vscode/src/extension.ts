@@ -28,7 +28,7 @@ export function tcmCommand(): string[] {
 
 export const quote = (s: string) => (/^[\w./:@=+-]+$/.test(s) ? s : `'${s.replaceAll("'", "'\\''")}'`);
 
-export type Role = "app" | "type" | "table" | "schedule" | "server" | "browser" | "shared" | "test";
+export type Role = "app" | "type" | "table" | "schedule" | "server" | "browser" | "shared" | "test" | "file";
 
 /** How definitions are grouped in a namespace: by what they're for, the app's entry points first. */
 export const ROLES: [Role, string, string][] = [
@@ -40,6 +40,7 @@ export const ROLES: [Role, string, string][] = [
   ["browser", "Browser", "browser"],
   ["shared", "Shared", "symbol-function"],
   ["test", "Tests", "beaker"],
+  ["file", "Files", "file"],
 ];
 /** Namespaces with more definitions than this are shown in role groups. */
 export const GROUP_OVER = 8;
@@ -48,7 +49,7 @@ export const short = (s: string, n = 80) => (s.length > n ? s.slice(0, n - 1) + 
 
 /** A definition, as the language server lists it (tcm/tree). */
 export interface DefinitionEntry {
-  kind: "term" | "type" | "class";
+  kind: "term" | "type" | "class" | "file";
   name: string;
   path: string;
   hash: string;
@@ -66,7 +67,7 @@ export interface DefinitionEntry {
 /** An item for one definition (shared by both views). */
 export function definitionItem(e: DefinitionEntry, label: string = e.name): vscode.TreeItem {
   const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-  item.description = e.kind === "type" ? "type" : short(e.signature);
+  item.description = e.kind === "type" ? "type" : e.kind === "file" ? e.signature : short(e.signature);
   item.iconPath =
     e.test === "passed" ? new vscode.ThemeIcon("testing-passed-icon", new vscode.ThemeColor("testing.iconPassed"))
     : e.test === "failed" ? new vscode.ThemeIcon("testing-failed-icon", new vscode.ThemeColor("testing.iconFailed"))
@@ -75,10 +76,10 @@ export function definitionItem(e: DefinitionEntry, label: string = e.name): vsco
     : e.role === "table" ? new vscode.ThemeIcon("database")
     : e.role === "schedule" ? new vscode.ThemeIcon("watch")
     : e.endpoint ? new vscode.ThemeIcon(e.streaming ? "radio-tower" : "cloud")
-    : new vscode.ThemeIcon(e.kind === "type" ? "symbol-interface" : e.kind === "class" ? "symbol-class" : e.symbolKind === 12 ? "symbol-function" : "symbol-variable");
+    : new vscode.ThemeIcon(e.kind === "file" ? "file" : e.kind === "type" ? "symbol-interface" : e.kind === "class" ? "symbol-class" : e.symbolKind === 12 ? "symbol-function" : "symbol-variable");
   const tip = new vscode.MarkdownString();
   tip.appendMarkdown(`**${e.path}** \`#${e.hash.slice(0, 8)}\`\n\n`);
-  tip.appendCodeblock(e.kind === "type" ? e.signature : `: ${e.signature}`, "typescript");
+  if (e.kind !== "file") tip.appendCodeblock(e.kind === "type" ? e.signature : `: ${e.signature}`, "typescript");
   if (e.place) tip.appendMarkdown(`\n\nRuns ${e.place === "anywhere" ? "anywhere" : e.place === "server" ? "on the server" : "in the browser"}.`);
   if (e.endpoint) tip.appendMarkdown(` The browser calls it by hash${e.streaming ? ", streaming" : ""}.`);
   if (e.test) tip.appendMarkdown(`\n\nTest: ${e.test}.`);

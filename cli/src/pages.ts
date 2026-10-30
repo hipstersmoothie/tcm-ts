@@ -11,6 +11,7 @@ import { renderDoc } from "./docs.ts";
 import { searchByType } from "./search.ts";
 import { isTestPath } from "./testing.ts";
 import { isTypeOnlyImport, parse } from "../../core/src/ts.ts";
+import { linkedName, markdownLinks, isBytes, formatOf } from "./files.ts";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
@@ -90,6 +91,37 @@ export function definitionPage(cb: Codebase, hash: string, placement: Placement,
   const isTest = rec.kind !== "type" && names.some(isTestPath);
   const test = isTest ? cb.store.testResult(hash, resultKey(cb)) : undefined;
   const item = (h: string) => ({ hash: h, name: nameOf(h), kind: cb.store.getDef(h)?.kind, signature: cb.store.getDef(h)?.signature, uri: links.viewUri(h) });
+  // a file kept as written: its content (Markdown rendered, an image shown, other text as it is)
+  if (rec.kind === "file") {
+    const format = formatOf(rec);
+    const page = { hash, short: shortHash(hash), names, kind: rec.kind, format, signature: rec.signature, docProblems: [] as string[], externals: [] as string[] };
+    const related = { uses: deps.map(item).sort((a, b) => (a.name < b.name ? -1 : 1)), usedBy: [...new Set(cb.store.dependents(hash))].filter((d) => cb.store.pathsOf(d).length).map(item).sort((a, b) => (a.name < b.name ? -1 : 1)), uri: links.viewUri(hash) };
+    if (isBytes(rec)) {
+      const mime = IMAGE_TYPES[format];
+      return { ...page, ...related, ...(mime ? { image: `data:${mime};base64,${rec.sourceText}` } : { sourceHtml: esc(`(${format || "bytes"}, ${Buffer.from(rec.sourceText, "base64").length} bytes)`) }) };
+    }
+    const text = rec.sourceText;
+    if (format === "svg") return { ...page, ...related, image: `data:image/svg+xml;base64,${Buffer.from(text).toString("base64")}`, sourceHtml: esc(text) };
+    if (format !== "md") return { ...page, ...related, sourceHtml: ["ts", "tsx", "js", "json"].includes(format) ? highlight(text, [], new Set()) : esc(text) };
+    // Markdown: its links to code and to other pages open their pages
+    // (a span is the name in `{@link name}`: the whole of it becomes the link)
+    const edits: { start: number; end: number; text: string }[] = rec.spans.flatMap((sp) => {
+      if (!sp.hash) return [];
+      const open = /\{@link\s+$/.exec(text.slice(Math.max(0, sp.start - 20), sp.start));
+      const close = /^\s*\}/.exec(text.slice(sp.end));
+      return [{ start: open ? sp.start - open[0].length : sp.start, end: close ? sp.end + close[0].length : sp.end, text: `[\`${nameOf(sp.hash)}\`](tcm-page:${sp.hash})` }];
+    });
+    const name = names[0] ?? "";
+    for (const l of markdownLinks(text)) {
+      if (l.code) continue;
+      const to = linkedName(name, l.target);
+      const h = to && cb.store.hashesAt(to.name).find((x) => cb.store.getDef(x)?.kind === "file");
+      if (h) edits.push({ start: l.start, end: l.end, text: `tcm-page:${h}` });
+    }
+    let md = text;
+    for (const e of edits.sort((x, y) => y.start - x.start)) md = md.slice(0, e.start) + e.text + md.slice(e.end);
+    return { ...page, ...related, docMarkdown: md };
+  }
   return {
     hash,
     short: shortHash(hash),
@@ -207,3 +239,8 @@ export function importRefs(cb: Codebase, text: string, rec: DefRecord): Highligh
   }
   return out;
 }
+
+/**
+ * Images a page shows, by format.
+ */
+export const IMAGE_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", ico: "image/x-icon" }
