@@ -71,8 +71,10 @@ pnpm tcm mv tcmts.core.semver.meetsComparator tcmts.core.semver.matchesComparato
 pnpm tcm test tcmts                            # the tests and suites the change reaches, the rest cached
 ```
 
-Agents work on tcm the same way: the repository's `.mcp.json` runs [`tcm mcp`](agents.md) on this codebase
-(`pnpm tcm mcp`), so an MCP client opened in the repository gets tcm's tools and instructions.
+Agents work on tcm the same way: the repository's `.mcp.json` runs [`tcm mcp --session`](agents.md) on this
+codebase, so an MCP client opened in the repository gets tcm's tools and instructions, in a
+[session](agents.md#several-agents-at-once-sessions) of its own: several agents work at once, each on its own
+branch, and `tcm_merge` lands one's work on `main` (and so in the files) once the tests it reaches pass.
 
 Editing the files directly still works, and so do git's changes to them (a pull, a checkout): the next
 `pnpm tcm` command imports what changed first. Delete `codebase/` to start over from the files (and if a newer

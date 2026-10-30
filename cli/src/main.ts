@@ -48,6 +48,10 @@ import { exportFiles } from "./files.ts";
 import { assetName, assetFiles } from "./mirror.ts";
 import { assetFormat } from "./mirror.ts";
 import { FILE_PATH } from "./files.ts";
+import { onMirrorBranch } from "./mirror.ts";
+import { sessionDirFor } from "./codebase.ts";
+import { fileName } from "./files.ts";
+import { randomBytes } from "node:crypto";
 
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
@@ -567,7 +571,8 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
     },
   }).text;
   fs.writeFileSync(file, (ns ? `// tcm: namespace ${ns}\n` : "") + text);
-  console.log(`wrote ${targets.join(", ")} to ${path.basename(file)}`);
+  // (where it is from here: a session's is in its own directory)
+  console.log(`wrote ${targets.join(", ")} to ${path.relative(process.cwd(), file)}`);
   if (cycle.size) {
     const them = [...cycle];
     console.log(dim(`  in a cycle with ${them.slice(0, 5).join(", ")}${them.length > 5 ? `, and ${them.length - 5} more` : ""}: saving ${targets.length > 1 ? "them" : "it"} saves ${them.length > 1 ? "those" : "that"} too, as ${them.length > 1 ? "they are" : "it is"} (\`tcm edit\` ${them.length > 1 ? "them" : "it"} to change ${them.length > 1 ? "them" : "it"} too)`));
@@ -807,7 +812,9 @@ export async function main(argv: string[]): Promise<number> {
 
 async function dispatch(argv: string[]): Promise<number> {
   const cwd = process.cwd();
-  const scratch = (f?: string) => path.resolve(cwd, f ?? "scratch.ts");
+  // a session's scratch files are its own, in its directory (`tcm mcp --branch`, TCM_BRANCH): a file named by
+  // itself is there, and one with a path is where the path says
+  const scratch = (f = "scratch.ts") => path.resolve(process.env.TCM_BRANCH && !/[\\/]/.test(f) ? sessionDirFor(Codebase.findRoot(cwd), process.env.TCM_BRANCH) : cwd, f);
   // the test runner's child process (see vitest.ts), not a command anyone types
   if (argv[0] === "internal-vitest") return (await vitestChild(argv[1]!), 0);
 
@@ -852,8 +859,18 @@ square(12);
   // the editor says where the workspace is (initialize), so the codebase is found then
   // agents connect before there may be a codebase; each tool runs tcm itself, so this stays out of the way
   if (cmd === "mcp") {
-    execute(cmd, parse(commands.mcp, { argv: rest }));
-    await serveMcp(cwd, [process.execPath, ...process.execArgv, process.argv[1]!], `TypeScript ${TS_VERSION}`);
+    const { model } = execute(cmd, parse(commands.mcp, { argv: rest }));
+    // a session: every command it runs works on its own branch, made from the codebase's own if it's new (with
+    // --session, a new one for each server: every agent sharing one .mcp.json gets its own)
+    const branch = model.branch ?? (model.session ? `session/${new Date().toISOString().slice(0, 10)}-${randomBytes(3).toString("hex")}` : undefined);
+    if (branch) {
+      delete process.env.TCM_BRANCH;
+      const cb = Codebase.find(cwd);
+      if (!cb.store.hasBranch(branch)) cb.store.createBranch(branch);
+      cb.store.close();
+      process.env.TCM_BRANCH = branch;
+    }
+    await serveMcp(cwd, [process.execPath, ...process.execArgv, process.argv[1]!], `TypeScript ${TS_VERSION}`, process.env.TCM_BRANCH || undefined);
     return 0;
   }
   if (cmd === "lsp") {
@@ -1457,7 +1474,8 @@ export async function runCli(...argv: string[]): Promise<void> {
  */
 export function followMirror(cb: Codebase) {
   const m = loadMirror(cb);
-  const changed = m ? changedFiles(m) : [];
+  // (a session on another branch doesn't take the files' changes: they're the mirror's branch's)
+  const changed = m && onMirrorBranch(cb, m) ? changedFiles(m) : [];
   if (!m || !changed.length) return;
   const log = console.log;
   const write = process.stdout.write;
@@ -1676,12 +1694,14 @@ export function editFiles(cb: Codebase, targets: string[], file: string | undefi
     const name = cb.store.pathsOf(h)[0] ?? t;
     const ns = name.slice(0, Math.max(0, name.lastIndexOf(".")));
     const format = formatOf(rec);
-    const out = file ?? `${name.slice(name.lastIndexOf(".") + 1)}.${format}`;
+    // as it's named, here (or in a session's own directory)
+    const out = file ?? path.join(cb.sessionDir ?? process.cwd(), fileName(name.slice(name.lastIndexOf(".") + 1), rec));
     const content = fileContent(cb, rec, ns);
     const body = format === "md" ? Buffer.concat([Buffer.from(`<!-- tcm: path ${name} -->\n`), content]) : content;
     if (fs.existsSync(out) && !force && !fs.readFileSync(out).equals(body)) throw new UsageError(`${path.basename(out)} exists; pass --force to overwrite it, or --file <other>`);
     fs.writeFileSync(out, body);
-    console.log(`wrote ${name} to ${path.basename(out)}${format === "md" ? "" : dim(` (saved with \`tcm update ${path.basename(out)} --into ${ns}\`)`)}`);
+    const shown = path.relative(process.cwd(), out);
+    console.log(`wrote ${name} to ${shown}${format === "md" ? "" : dim(` (saved with \`tcm update ${shown} --into ${ns}\`)`)}`);
   }
 }
 

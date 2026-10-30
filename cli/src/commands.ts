@@ -251,7 +251,12 @@ export const commands = {
     toggle(name("insecure"), description("allow clear-text tokens beyond localhost")),
     option(name("site"), description("a directory of static files (a docs site) to answer GET requests from, to anyone"), schema(text(null))),
   ),
-  mcp: command(name("mcp"), description("tools for AI agents to work in the codebase: a Model Context Protocol server (stdio)")),
+  mcp: command(
+    name("mcp"),
+    description("tools for AI agents to work in the codebase: a Model Context Protocol server (stdio)"),
+    option(name("branch"), description("a session: work on this branch (made from the codebase's own if it's new), with its own scratch files; tcm_merge lands it"), schema(text(null))),
+    toggle(name("session"), description("a session on a new branch of its own (session/<date>-<id>): what an .mcp.json every agent shares asks for")),
+  ),
   lsp: command(name("lsp"), description("language server for editors (stdio)"), toggle(name("stdio"), description("accepted for editors that pass it; stdio is the only transport"))),
   complete: command(name("complete"), description("shell completion: `source <(tcm complete zsh)` (or bash, fish, powershell)"), argument(name("shell"), description("zsh, bash, fish or powershell"), schema(text(null)))),
 }

@@ -62,6 +62,8 @@ export interface Mirror {
   log: number;
   /** by path relative to `dir` */
   files: Record<string, MirrorFile>;
+  /** the branch whose names the files are: sessions on other branches (`TCM_BRANCH`) leave them alone */
+  branch: string;
 }
 
 const KEY = "mirror";
@@ -117,7 +119,7 @@ export function linkMirror(cb: Codebase, dir: string, into: string, tests: boole
     const h = following?.held.get(name) ?? cb.store.hashesAt(name).find((x) => cb.store.getDef(x)?.kind === "file");
     files[path.relative(root, f)] = { ns: name.slice(0, name.lastIndexOf(".")), sha: sha(fs.readFileSync(f, "utf8")), names: h ? { [fileLeaf(f)]: h } : {} };
   }
-  saveMirror(cb, { dir: root, into, tests, exclude, log: following?.log ?? cb.store.logHead(), files });
+  saveMirror(cb, { dir: root, into, tests, exclude, log: following?.log ?? cb.store.logHead(), files, branch: cb.store.branch().name });
 }
 
 // ---- writing back ---------------------------------------------------------------------------------------
@@ -375,7 +377,7 @@ function untextual(cb: Codebase, log: number): Set<string> {
  */
 export function syncMirror(cb: Codebase): boolean {
   const m = loadMirror(cb);
-  if (!m || cb.store.logHead() === m.log) return true;
+  if (!m || !onMirrorBranch(cb, m) || cb.store.logHead() === m.log) return true;
   const abs = (rel: string) => path.join(m.dir, rel);
   // never overwrite a hand edit: until the file is imported again, the mirror waits
   const handEdited = Object.entries(m.files).filter(([rel, f]) => !fs.existsSync(abs(rel)) || sha(fs.readFileSync(abs(rel), "utf8")) !== f.sha);
@@ -1131,3 +1133,8 @@ export const FILES_MARK = ".tcm-files";
  * A file's format as a file of the codebase: its extension (any, in a directory marked as holding files).
  */
 export const assetFormat = (file: string): string => fileFormat(file) ?? path.extname(path.basename(file).replace(/^\./, "")).slice(1).toLowerCase();
+
+/**
+ * Whether this process works on the branch a mirror's files are (a session on another doesn't touch them).
+ */
+export const onMirrorBranch = (cb: Codebase, m: Mirror): boolean => cb.store.branch().name === m.branch;

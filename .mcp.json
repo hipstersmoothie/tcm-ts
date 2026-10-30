@@ -2,7 +2,7 @@
   "mcpServers": {
     "tcm": {
       "command": "sh",
-      "args": ["scripts/codebase.sh", "mcp"]
+      "args": ["scripts/codebase.sh", "mcp", "--session"]
     }
   }
 }

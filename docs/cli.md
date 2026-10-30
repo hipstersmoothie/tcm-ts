@@ -21,7 +21,7 @@ or option a command doesn't take is an error naming it.
 | `tcm init` | set up a codebase here: `.tcm/codebase.sqlite`, `package.json` `#codebase` imports, `tsconfig.json`, `scratch.ts` |
 | `tcm` / `tcm watch [--fresh]` | watch `*.ts` scratch files: typecheck, hash, report, evaluate watch expressions and tests. Their results are cached by hash; `--fresh` re-runs them |
 | `tcm lsp [--stdio]` | language server for editors, over stdio ([editors](editors.md)) |
-| `tcm mcp` | tools for AI agents to work in the codebase: a Model Context Protocol server, over stdio ([agents](agents.md)) |
+| `tcm mcp [--branch b \| --session]` | tools for AI agents to work in the codebase: a Model Context Protocol server, over stdio ([agents](agents.md)); as a [session](agents.md#several-agents-at-once-sessions) on its own branch, with `tcm_merge` to land it |
 | `tcm complete <shell>` | a completion script for zsh, bash, fish or powershell, completing names from the codebase too |
 | `tcm check [file] [--fresh]` | one-shot version of watch. Reports each definition as `new` / `identical` / `update` / `alias` / `conflict` |
 | `tcm add [file] [--into ns]` | save new definitions from a scratch file (default `scratch.ts`) |
@@ -67,7 +67,7 @@ See [history, branches and merging](history.md).
 | `tcm diff <n\|#hash> \| <branch> \| <a> <b>` | changes since a history entry, to another branch, or between two branches or entries |
 | `tcm history [n]` | this branch's history: an entry per command, with its hash, how many back it is, and what it changed |
 | `tcm reset <n\|#hash>` | bring back the names as of an entry (`tcm reset 1` undoes the last command), as a new entry |
-| `tcm branch [name]` / `tcm switch <name>` | list or create branches / switch |
+| `tcm branch [name]` / `tcm switch <name>` | list or create branches / switch (not in a session: `TCM_BRANCH` keeps a process on its own branch) |
 | `tcm merge <branch>` | merge into this branch: nothing if it has the other's history, a fast-forward if the other has its, otherwise three-way from their common ancestor |
 
 ## Sync and remote execution

@@ -88,12 +88,27 @@ export const IDENT_PATH = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
 export class Codebase {
   readonly lay: Layout;
   readonly store: Store;
+  /** a session's own directory (`TCM_BRANCH`): its scratch files and `#codebase` shim */
+  readonly sessionDir: string | undefined;
   /** scratch files are checked over and over (the watcher): unchanged files aren't parsed again */
   private compile = incrementalCompiler();
 
   private constructor(root: string) {
-    this.lay = layout(root);
+    const session = process.env.TCM_BRANCH;
+    this.sessionDir = session ? sessionDirFor(root, session) : undefined;
+    this.lay = this.sessionDir ? { ...layout(root), shimDir: path.join(this.sessionDir, "codebase") } : layout(root);
     this.store = new Store(this.lay.dbFile);
+    // a session's scratch files resolve `#codebase` to its own shim, and the rest as the codebase's do
+    if (this.sessionDir) {
+      fs.mkdirSync(this.sessionDir, { recursive: true });
+      const rootPkg = path.join(root, "package.json");
+      const imports = fs.existsSync(rootPkg) ? ((JSON.parse(fs.readFileSync(rootPkg, "utf8")) as { imports?: Record<string, string> }).imports ?? {}) : {};
+      const up = path.relative(this.sessionDir, root).split(path.sep).join("/");
+      const local = Object.fromEntries(Object.entries(imports).map(([k, v]) => [k, v.startsWith("./") ? `${up}/${v.slice(2)}` : v]));
+      const pkg = { private: true, type: "module", imports: { ...local, "#codebase": "./codebase/index.ts", "#codebase/*": "./codebase/*.ts" } };
+      writeIfChanged(path.join(this.sessionDir, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
+      writeIfChanged(path.join(this.sessionDir, "tsconfig.json"), JSON.stringify({ extends: `${up}/tsconfig.json`, include: ["*.ts", "*.tsx"] }, null, 2) + "\n");
+    }
     // the versions generated modules run with
     usePackageLock(this.lay, {
       get: (name, range) => this.store.lockedVersion(name, range),
@@ -230,11 +245,14 @@ export class Codebase {
   /** Keep `.tcm/codebase` (the `#codebase` import shim) and the mirror, if there is one, in sync with the branch's names. */
   refreshShim(force = false) {
     const stamp = `${this.store.branch().name}:${this.store.logHead()}`;
-    if (!force && this.store.getSetting("shim_stamp") === stamp && fs.existsSync(path.join(this.lay.shimDir, "index.ts"))) return;
+    // (each session has its own shim)
+    const key = this.sessionDir ? `shim_stamp:${this.store.branch().name}` : "shim_stamp";
+    if (!force && this.store.getSetting(key) === stamp && fs.existsSync(path.join(this.lay.shimDir, "index.ts"))) return;
     // code imports files too: they're values
     writeShim(this.store.names(undefined, true), this.source(), this.lay);
-    writeViews(this, force);
-    this.store.setSetting("shim_stamp", stamp);
+    // the views (definitions as files, for editors and debuggers) are the codebase's own branch's
+    if (!this.sessionDir) writeViews(this, force);
+    this.store.setSetting(key, stamp);
     if (this.syncsMirror) syncMirror(this);
   }
 
@@ -811,3 +829,11 @@ export function fileProblem(rec: DefRecord): string | undefined {
   return at === rec.sourceText.length && link === rec.spans.length ? undefined : "has text that isn't its own";
 }
 
+
+/**
+ * Where a session (a process working on its own branch, `TCM_BRANCH`) keeps what's its own: its scratch files, and
+ * the `#codebase` shim they import its branch's names through.
+ */
+export function sessionDirFor(root: string, branch: string): string {
+  return path.join(root, ".tcm", "sessions", branch.replace(/[^\w.-]/g, "_"));
+}

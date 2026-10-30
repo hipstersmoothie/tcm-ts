@@ -53,6 +53,9 @@ and the rest of each file stays as written (comments, import style, barrels):
   mark's lines are patterns of what to leave out (`*.vsix`). A file whose name can't be a name (a dot before its
   extension) is reported, and nothing is imported until it's renamed or left out.
 - **Dependents re-hashed** by an update, and packages upgraded, don't change any text: their files stay as they are.
+- **The files are one branch's:** the branch the mirror was linked on (`main`, usually). A
+  [session](agents.md#several-agents-at-once-sessions) on another branch neither writes to them nor takes their
+  changes; its work reaches them when it's merged there.
 - **The files' style is kept:** a mirrored codebase stores code as written (not reformatted), and `tcm edit`
   gives it back that way. Code edited in a scratch file is stored as its file spells it once it's written back,
   so a scratch file's spellings (`import nodePath from "node:path"`) don't reach the files later.

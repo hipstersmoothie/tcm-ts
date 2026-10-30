@@ -83,8 +83,10 @@ interface Result {
 
 interface Ctx {
   root: string;
-  /** run a tcm command; `onLine` hears its output as it comes */
-  tcm: (argv: string[], onLine?: (line: string) => void) => Promise<{ code: number; out: string }>;
+  /** the session's branch (`tcm mcp --branch`), if this server is one */
+  branch?: string;
+  /** run a tcm command; `onLine` hears its output as it comes; `env` adds to its environment */
+  tcm: (argv: string[], onLine?: (line: string) => void, env?: Record<string, string>) => Promise<{ code: number; out: string }>;
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : v === undefined ? "" : String(v));
@@ -203,6 +205,32 @@ const TOOLS: Tool[] = [
   { name: "tcm_rm", description: "Remove names (refused while something depends on them).", inputSchema: schema({ names: names }, ["names"]), argv: (a) => ["rm", ...strs(a.names)] },
   { name: "tcm_history", description: "This branch's history: an entry per command and what it changed. tcm_cli [\"reset\", \"<n>\"] goes back.", inputSchema: schema({ n: { type: "number" } }), argv: (a) => ["history", String(a.n ?? 10)] },
   {
+    name: "tcm_merge",
+    description:
+      "Land this session's branch on main (or `into`): main is merged into the branch first (conflicts and broken dependents are the session's to fix, then tcm_merge again), then the tests the change reaches run, and only if they pass is the branch merged into main, which the repository's files follow. Only in a session (`tcm mcp --branch`).",
+    inputSchema: schema({ into: { type: "string", description: "the branch to land on (default main)" } }),
+    run: async (a, ctx) => {
+      if (!ctx.branch) return { text: "tcm_merge lands a session's branch: start this server as a session (`tcm mcp --branch <name>`)", isError: true };
+      const into = str(a.into) || "main";
+      if (into === ctx.branch) return { text: `this session is on ${into} already`, isError: true };
+      const said: string[] = [];
+      // what's on the target since the branch was made, here first: it's tested together
+      const up = await ctx.tcm(["merge", into]);
+      said.push(`merging ${into} into ${ctx.branch}:\n${up.out}`);
+      if (up.code !== 0) return { text: `${said.join("\n\n")}\n\nFix the conflicts on ${ctx.branch} (tcm_todo, tcm_cli ["resolve", …]), then tcm_merge again.`, isError: true };
+      const todo = await ctx.tcm(["todo"]);
+      if (todo.out.trim() && !/^nothing to do$/.test(todo.out.trim())) return { text: `${said.join("\n\n")}\n\n${todo.out}\n\nFix these on ${ctx.branch} (tcm_edit, tcm_update), then tcm_merge again.`, isError: true };
+      const tests = await ctx.tcm(["test"]);
+      if (tests.code !== 0) return { text: `${said.join("\n\n")}\n\ntesting ${ctx.branch}:\n${tests.out}\n\nThese fail on ${ctx.branch}: nothing landed on ${into}.`, isError: true };
+      said.push(`testing ${ctx.branch}: ${tests.out.split("\n").filter((l) => /passed|no tests/.test(l)).join("; ")}`);
+      // then the branch, on the target, as the target's own (its session is TCM_BRANCH, for this one command)
+      const land = await ctx.tcm(["merge", ctx.branch], undefined, { TCM_BRANCH: into });
+      said.push(`landing on ${into}:\n${land.out}`);
+      if (land.code !== 0) return { text: `${said.join("\n\n")}\n\n${into} moved meanwhile, and merging into it conflicts: tcm_merge again brings it in.`, isError: true };
+      return { text: `${said.join("\n\n")}\n\n${ctx.branch} is on ${into}.` };
+    },
+  },
+  {
     name: "tcm_cli",
     description: 'Any tcm command, as its arguments (["help"] lists them; ["<command>", "--help"] explains one): branches, merges, apps, packages, releases, lint, fmt, verify.',
     inputSchema: schema({ args: { type: "array", items: { type: "string" } } }, ["args"]),
@@ -223,10 +251,10 @@ const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
  * Serve MCP on stdin/stdout. Each tool runs `tcm` (this same program: `bin`) in `root`, so a tool does exactly
  * what the command does at a terminal, without its output reaching the protocol channel.
  */
-export function serveMcp(root: string, bin: string[], version: string) {
-  const tcm = (argv: string[], onLine?: (line: string) => void) =>
+export function serveMcp(root: string, bin: string[], version: string, branch?: string) {
+  const tcm = (argv: string[], onLine?: (line: string) => void, env: Record<string, string> = {}) =>
     new Promise<{ code: number; out: string }>((resolve) => {
-      const child = spawn(bin[0]!, [...bin.slice(1), ...argv], { cwd: root, env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" }, stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn(bin[0]!, [...bin.slice(1), ...argv], { cwd: root, env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", ...env }, stdio: ["ignore", "pipe", "pipe"] });
       let out = "";
       let heard = 0;
       const hear = (d: Buffer) => {
@@ -241,7 +269,7 @@ export function serveMcp(root: string, bin: string[], version: string) {
       child.stderr.on("data", hear);
       child.on("close", (code) => resolve({ code: code ?? 1, out: plain(out).trim() }));
     });
-  const ctx: Ctx = { root, tcm };
+  const ctx: Ctx = { root, tcm, ...(branch ? { branch } : {}) };
   const send = (msg: unknown) => process.stdout.write(JSON.stringify(msg) + "\n");
   const handle = async (m: { id?: number | string; method?: string; params?: Record<string, unknown> }) => {
     const reply = (result: unknown) => m.id !== undefined && send({ jsonrpc: "2.0", id: m.id, result });
@@ -252,7 +280,9 @@ export function serveMcp(root: string, bin: string[], version: string) {
           protocolVersion: (m.params?.protocolVersion as string | undefined) ?? "2025-06-18",
           capabilities: { tools: {} },
           serverInfo: { name: "tcm", version: `${version} (hash format v${IR_VERSION})` },
-          instructions: INSTRUCTIONS,
+          instructions: branch
+            ? `${INSTRUCTIONS}\n\nThis is a session on its own branch, ${branch}: your changes stay on it, and out of the repository's files, while other agents work on other branches of the same codebase. When your change is done and its tests pass, tcm_merge lands it on main (merging main in first, then testing).`
+            : INSTRUCTIONS,
         });
       case "ping":
         return reply({});
@@ -268,7 +298,7 @@ export function serveMcp(root: string, bin: string[], version: string) {
           let progress = 0;
           const onLine = token === undefined ? undefined : (line: string) => send({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token, progress: ++progress, message: line } });
           let r: Result;
-          if (tool.run) r = await tool.run(args, { ...ctx, tcm: (argv: string[], heard?: (line: string) => void) => tcm(argv, heard ?? onLine) });
+          if (tool.run) r = await tool.run(args, { ...ctx, tcm: (argv: string[], heard?: (line: string) => void, env?: Record<string, string>) => tcm(argv, heard ?? onLine, env) });
           else {
             const argv = tool.argv!(args);
             const { code, out } = await tcm(argv, onLine);

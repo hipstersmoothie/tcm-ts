@@ -31,8 +31,28 @@ they finish.
 | `tcm_todo` | conflicts, and dependents that stopped typechecking |
 | `tcm_test`, `tcm_run` | tests (cached by hash, `fresh` to run them all) and [suites](testing.md#suites-testing-a-command-as-a-program) (cached by the code they ran, `definitions` to leave them out); running a definition |
 | `tcm_mv`, `tcm_rm`, `tcm_history` | renaming, removing, history |
+| `tcm_merge` | in a [session](#several-agents-at-once-sessions): land its branch on `main`, once the tests the change reaches pass |
 | `tcm_cli` | any other command ([CLI](cli.md)) |
 | `tcm_guide` | longer explanations, by topic: the model, editing, testing, apps, packages and releases, mirrors, troubleshooting |
+
+## Several agents at once: sessions
+
+Agents can work in one codebase at the same time, each in a session: `tcm mcp --branch agent/a`, or
+`tcm mcp --session` for a new branch of its own each time it starts (`session/<date>-<id>`), which is what an
+`.mcp.json` every agent shares wants. A session:
+
+- **works on its own branch** (made from the codebase's own if it's new), whatever the others do: `tcm switch` is
+  refused there, and every command it runs is on its branch (`TCM_BRANCH` names it, for the CLI too);
+- **has its own scratch files and `#codebase` imports**, in `.tcm/sessions/<branch>/`: a scratch file named by
+  itself (`scratch.ts`) is there, one with a path is where the path says;
+- **leaves the repository's files alone**: a [mirror](importing.md#mirrors) follows the branch it was linked on
+  (`main`), so a session's work reaches the files when it lands there;
+- **lands with `tcm_merge`**: `main` is merged into the session's branch first (conflicts, and dependents it broke,
+  are the session's to fix, then `tcm_merge` again), the tests the change reaches run, and only if they pass is
+  the branch merged into `main`. The agent's instructions say all this.
+
+Test results are cached by hash, for everyone: a test one session ran doesn't run again in another for the same
+code.
 
 ## Without MCP
 

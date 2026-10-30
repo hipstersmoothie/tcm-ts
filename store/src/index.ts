@@ -206,7 +206,8 @@ export class Store {
 
   constructor(file: string) {
     this.db = new DatabaseSync(file);
-    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+    // several processes share a codebase (agents in sessions, an editor, a terminal): a write waits for another's
+    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 15000;");
     // a codebase whose tables another tcm laid out differently can't be read (tcm is v0: there are no
     // migrations): say so, rather than fail on a missing column later
     if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'definitions'").get()) {
@@ -406,10 +407,16 @@ export class Store {
 
   // ---- branches --------------------------------------------------------------
 
+  /**
+   * The branch this process works on: a session's (`TCM_BRANCH`), which no other process can move, or else the
+   * codebase's own (`tcm switch`).
+   */
   branch(): { id: number; name: string } {
     if (!this.branchCache) {
-      const name = (this.db.prepare("SELECT value FROM settings WHERE key = 'branch'").get() as { value: string }).value;
-      const row = this.db.prepare("SELECT id FROM branches WHERE name = ?").get(name) as { id: number };
+      const session = process.env.TCM_BRANCH;
+      const name = session || (this.db.prepare("SELECT value FROM settings WHERE key = 'branch'").get() as { value: string }).value;
+      const row = this.db.prepare("SELECT id FROM branches WHERE name = ?").get(name) as { id: number } | undefined;
+      if (!row) throw new Error(`no branch named '${name}'${session ? " (TCM_BRANCH)" : ""}`);
       this.branchCache = { id: row.id, name };
     }
     return this.branchCache;
@@ -434,6 +441,7 @@ export class Store {
   }
 
   switchBranch(name: string) {
+    if (process.env.TCM_BRANCH) throw new Error(`this is a session on ${process.env.TCM_BRANCH} (TCM_BRANCH): it stays on its branch, and \`tcm switch\` would move the codebase's own, which it doesn't use`);
     if (!this.db.prepare("SELECT 1 FROM branches WHERE name = ?").get(name)) throw new Error(`no branch named '${name}'`);
     this.db.prepare("UPDATE settings SET value = ? WHERE key = 'branch'").run(name);
     this.branchCache = undefined;

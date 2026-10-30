@@ -52,3 +52,7 @@ What isn't done yet, or is deliberately out of scope:
 - **Packages that use each other** depend on each other's releases; one that uses another's internals, or
   changes to it that aren't released yet, can't be packed until they are.
 - **Transactions lock per process** ([data](data.md#transactions)).
+- **Sessions** ([agents](agents.md#several-agents-at-once-sessions)): `tcm_merge` tests the session's branch with
+  `main` merged in, then merges it into `main`; if another session landed in between, what lands is that merge,
+  untested together. Editors and debuggers see the codebase's own branch (the language server and the definition
+  views aren't per session), and a `--session` branch that never landed stays until it's removed.
