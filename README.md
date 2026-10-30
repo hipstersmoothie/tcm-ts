@@ -75,4 +75,4 @@ New here? Read the [introduction](docs/introduction.md), then follow the tutoria
 (`examples/notes/setup.sh /tmp/notes`), or packages with their releases and changelogs
 (`examples/geometry/setup.sh /tmp/geometry`).
 
-All documentation: [docs/](docs/README.md), also at [hipstersmoothie.github.io/tcm-ts](https://hipstersmoothie.github.io/tcm-ts/). Open items: [limitations](docs/limitations.md).
+All documentation: [docs/](docs/README.md), also at [tcm-server-production.up.railway.app](https://tcm-server-production.up.railway.app/). Open items: [limitations](docs/limitations.md).

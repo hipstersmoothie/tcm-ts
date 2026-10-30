@@ -508,3 +508,34 @@ export function hashProject(dir?: string): void {
   console.error(`typescript ${TS_VERSION}: ${a.defs.length} definitions`);
   for (const d of a.defs.map((d) => `${path.relative(root, d.file)}:${d.nameHint} ${d.hash}`).sort()) console.log(d);
 }
+
+/**
+ * Deploy tcm's server: `tcm serve` of tcm's codebase, and the docs site, on Railway (`server/`). What's uploaded is
+ * the server's files, the known-good tcm's package (the build the last passing `pnpm verify` tested) and the docs
+ * site built from the codebase, to the `tcm-server` service of the Railway project the repository is linked to
+ * (`railway link`). `pnpm server:deploy`.
+ */
+export async function deployServer(): Promise<void> {
+  const tcm = process.env.TCM_BIN;
+  if (!tcm) throw new Error("run this with `tcm run`, which gives it the codebase's own tcm (TCM_BIN)");
+  const repo = repository();
+  const good = path.join(repo, "dist", "known-good");
+  const tgz = fs.existsSync(good) ? fs.readdirSync(good).find((f) => f.endsWith(".tgz")) : undefined;
+  if (!tgz) throw new Error("no known-good tcm to deploy: `pnpm verify` makes one");
+  // the project and environment the repository is linked to (uploading from elsewhere, railway needs them said)
+  const status = sh("railway", ["status", "--json"], repo);
+  if (!status.ok) throw new Error(`railway status: ${status.out.trim()} (link the repository with \`railway link\`)`);
+  const linked = JSON.parse(status.out.slice(status.out.indexOf("{"))) as { id: string; environments: { edges: { node: { id: string; name: string } }[] } };
+  const environment = linked.environments.edges.find((e) => e.node.name === "production")?.node.id;
+  if (!environment) throw new Error("the linked Railway project has no production environment");
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), "tcm-server-"));
+  const files = sh(process.execPath, [tcm, "export", "tcmts.server", stage], process.cwd());
+  if (!files.ok) throw new Error(`tcm export tcmts.server: ${files.out.trim()}`);
+  fs.copyFileSync(path.join(good, tgz), path.join(stage, "tcm-ts.tgz"));
+  const site = await buildSite(path.join(stage, "site"));
+  if (site.problems.length) throw new Error(`docs site:\n${site.problems.join("\n")}`);
+  const up = sh("railway", ["up", "--project", linked.id, "--environment", environment, "--service", "tcm-server", "--detach", "--yes"], stage);
+  console.log(up.out.trim());
+  if (up.ok) console.log(`deploying the known-good tcm: ${fs.readFileSync(path.join(good, "VERIFIED"), "utf8").trim()}`);
+  process.exitCode = up.ok ? 0 : 1;
+}

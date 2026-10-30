@@ -18,6 +18,7 @@ docs/       user documentation, one page per feature area (tcmts.docs)
 dev.ts      verifying, the docs site and comparing compilers, as definitions
 index.ts    the tcm-ts package's manifest
 scripts/    codebase.sh (`pnpm tcm`)
+server/     tcm's server, as deployed to Railway (below)
 ```
 
 The command line is declared once, in `cli/src/commands.ts`: each command's arguments and options as a
@@ -114,6 +115,22 @@ moved into an exported `runCli`. Running from a codebase also means a module's e
 code that tells another process where to import something from says which export too: `transpileModule()` gives
 the module hook its URL and export name (a function in a codebase carries its hash at runtime, and the hash names
 its export).
+
+## tcm's server
+
+tcm's codebase is served by [`tcm serve`](sync.md#serving-a-codebase) on Railway, at
+`https://tcm-server-production.up.railway.app`: its history, branches, contributions and releases (with the token),
+and its docs site (to anyone, at `/`). The repository on GitHub is a mirror of it, for finding tcm.
+
+- `server/` is what's deployed: a Dockerfile that installs the known-good tcm, `start.sh` (it makes the codebase on
+  the service's volume, `/data`, the first time, and serves it with `--no-run` and `--site`), and `railway.json`.
+  Railway terminates TLS, so inside it's plain HTTP (`--insecure`).
+- `pnpm server:deploy` (`tcmts.dev.deployServer`) builds the docs site from the codebase and uploads it, the server's
+  files and the known-good tcm's package to the `tcm-server` service of the Railway project the repository is linked
+  to (`railway link`, to `tcm-ts`). The docs it serves are as of the last deploy.
+- The token is the service's `TCM_TOKEN` (`railway variables list --service tcm-server`). With it,
+  `pnpm tcm remote add origin https://tcm-server-production.up.railway.app --token <token>`, then `pnpm tcm push`,
+  `pull` and `contribute` work against it.
 
 ## Packaging
 
