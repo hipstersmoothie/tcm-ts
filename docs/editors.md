@@ -115,7 +115,7 @@ The `#` icon in the activity bar opens these views:
   the browser, takes no arguments and isn't called by other code, like `polls.main`). **▶ Start** runs `tcm dev`
   for it on a free port, with its log in an output channel, and opens it in VS Code's built-in browser; the
   status bar shows running apps. **Open** (also in an external browser), **Log** and **Stop** act on a running
-  one. Clicking an app opens it if it runs, and its source otherwise. An app only expands to show problems that
+  one. Clicking an app opens its [page](#pages); right-click to open its source or edit it. An app only expands to show problems that
   would stop it building; what it's made of is in the other two views.
 - **Codebase.** Namespaces, and the definitions and [files](pages.md) (pages, configuration, images) in each.
   Namespaces with more than a few are grouped by what they're for: Apps, Types, Data (tables), Jobs (schedules),

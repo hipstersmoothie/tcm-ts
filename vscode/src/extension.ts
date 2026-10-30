@@ -202,8 +202,8 @@ export class AppsTree implements vscode.TreeDataProvider<AppNode> {
       `**${e.path}**${run?.url ? ` — running at ${run.url}` : ""}\n\n${e.endpoints.length} endpoint(s), ${e.browser.length} browser definition(s), ` +
         `${e.tables.length} table(s), ${e.schedules.length} recurring job(s). Its parts are in the Codebase and Data views.`,
     );
-    // clicking an app opens it when it runs, and its source otherwise
-    item.command = run?.url ? { command: "tcm.openApp", title: "Open", arguments: [e.path] } : { command: "vscode.open", title: "Open source", arguments: [vscode.Uri.parse(e.uri)] };
+    // clicking an app opens its page; running it, opening it and its source are its actions
+    item.command = { command: "tcm.openPage", title: "Open page", arguments: [e.path] };
     return item;
   }
 }
