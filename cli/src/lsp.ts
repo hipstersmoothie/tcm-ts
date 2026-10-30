@@ -33,6 +33,7 @@ import { resultKey } from "./vitest.ts";
 import { searchCode } from "./pages.ts";
 import { entryChanges, historyList, branchList } from "./changes.ts";
 import { branchChanges } from "./changes.ts";
+import { joinName } from "./mirror.ts";
 
 /** What the language server needs from the CLI (passed in, so this module doesn't import the CLI's entry). */
 export interface LspTools {
@@ -467,6 +468,12 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         return ok;
       })();
     }
+    // a definition added to a scratch file (its saved copy on disk: the editor saves it first)
+    if (command === "tcm.editInto") {
+      const r = capture(() => tools.edit(c, [String(args[1])], fileURLToPath(String(args[0])), false));
+      message(r.ok ? 3 : 1, r.output.trim() || (r.ok ? "added" : "failed"));
+      return r.ok ? String(args[0]) : null;
+    }
     if (command === "tcm.mv") {
       const r = capture(() => tools.mv(c, String(args[0]), String(args[1])));
       message(r.ok ? 3 : 1, r.output || (r.ok ? "renamed" : "failed"));
@@ -873,6 +880,61 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     return ext === ".tsx" || (work(withJsx) && !work(plain)) ? withJsx : plain;
   };
 
+  /**
+   * Quick fixes in a scratch file: a codebase name it doesn't import (TypeScript can't find it), imported from the
+   * namespace that has it; and a name it imports from the codebase, edited here too (added to this file).
+   */
+  const codeActions = (doc: DocState, range: { start: Position; end: Position }) => {
+    const c = cb!;
+    const s = fresh(doc);
+    const out: unknown[] = [];
+    const imports = ts.parse(doc.file, doc.text).statements.filter(ts.isImportDeclaration);
+    const { pos, offset } = lines(doc.text);
+    // a new import goes after the file's others, or its namespace line
+    const last = imports.at(-1);
+    const pragma = /^\/\/ tcm: namespace \S+\n/.exec(doc.text);
+    const at = pos(last ? last.end + (doc.text[last.end] === "\n" ? 1 : 0) : pragma ? pragma[0].length : 0);
+    for (const d of s.analysis?.diagnostics ?? []) {
+      // "Cannot find name 'x'" (and "… Did you mean"), on these lines
+      if (d.code !== 2304 && d.code !== 2552) continue;
+      // (where it is: `file:line:col` in the formatted message, without its colours)
+      const where = /:(\d+):(\d+)/.exec(d.formatted.replace(/\x1b\[[0-9;]*m/g, ""));
+      const name = /'([^']+)'/.exec(d.message)?.[1];
+      const line = where ? Number(where[1]) - 1 : -1;
+      if (!name || line < range.start.line || line > range.end.line) continue;
+      const found = c.store.names().filter((n) => n.path.slice(n.path.lastIndexOf(".") + 1) === name);
+      for (const n of found.slice(0, 8)) {
+        const ns = n.path.slice(0, Math.max(0, n.path.lastIndexOf(".")));
+        const spec = ns ? `#codebase/${ns.replaceAll(".", "/")}` : "#codebase";
+        const newText = `import ${n.kind === "type" ? "type " : ""}{ ${name} } from "${spec}";\n`;
+        out.push({ title: `Import ${name} from "${spec}"`, kind: "quickfix", isPreferred: found.length === 1, edit: { changes: { [doc.uri]: [{ range: { start: at, end: at }, newText }] } } });
+      }
+    }
+    // the name at the cursor, if the file imports it from the codebase
+    const o = offset(range.start);
+    const word = /[\w$]*$/.exec(doc.text.slice(0, o))![0] + /^[\w$]*/.exec(doc.text.slice(o))![0];
+    for (const st of word ? imports : []) {
+      const spec = ts.isStringLiteral(st.moduleSpecifier) ? st.moduleSpecifier.text : "";
+      const b = st.importClause?.namedBindings;
+      if (!spec.startsWith("#codebase") || !b || !ts.isNamedImports(b)) continue;
+      const e = b.elements.find((x) => x.name.text === word);
+      if (!e) continue;
+      const target = joinName(spec.slice("#codebase".length).replace(/^\//, "").replaceAll("/", "."), (e.propertyName ?? e.name).text);
+      let hashes: string[] = [];
+      try {
+        hashes = c.lookup(target);
+      } catch {
+        continue;
+      }
+      // (a file is edited as the file it is; JSX goes only in a .tsx file)
+      const recs = hashes.map((h) => c.store.getDef(h));
+      if (!recs.length || recs.some((r) => !r || r.kind === "file" || (r.jsx && !doc.file.endsWith(".tsx")))) continue;
+      const title = `Edit ${target} here too`;
+      out.push({ title, kind: "refactor", command: { title, command: "tcm.editThisToo", arguments: [doc.uri, target] } });
+    }
+    return out;
+  };
+
   /** Lenses on a definition's view: how many definitions use it (click for where), and edit / rename. */
   const viewLenses = (uri: string) => {
     const v = view(uri);
@@ -927,8 +989,9 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
               documentFormattingProvider: true,
               hoverProvider: true,
               codeLensProvider: { resolveProvider: false },
+              codeActionProvider: { codeActionKinds: ["quickfix", "refactor"] },
               inlayHintProvider: true,
-              executeCommandProvider: { commands: ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.dataMigrate", "tcm.upgrade", "tcm.release", "tcm.releaseDraft", "tcm.pack"] },
+              executeCommandProvider: { commands: ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.editInto", "tcm.dataMigrate", "tcm.upgrade", "tcm.release", "tcm.releaseDraft", "tcm.pack"] },
               definitionProvider: true,
               referencesProvider: true,
               documentSymbolProvider: true,
@@ -976,6 +1039,11 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         if (!doc) return;
         docs.delete(doc.uri);
         notify("textDocument/publishDiagnostics", { uri: doc.uri, diagnostics: [] });
+        return;
+      }
+      case "textDocument/codeAction": {
+        const doc = docAt(p);
+        send({ id: m.id, result: cb && doc && p?.range ? codeActions(doc, p.range as { start: Position; end: Position }) : [] });
         return;
       }
       case "textDocument/codeLens": {

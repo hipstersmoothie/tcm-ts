@@ -314,6 +314,11 @@
         "command": "tcm.showChangesText",
         "title": "Show changes as text",
         "category": "tcm"
+      },
+      {
+        "command": "tcm.editThisToo",
+        "title": "Edit a definition here too",
+        "category": "tcm"
       }
     ],
     "menus": {
@@ -623,6 +628,10 @@
         {
           "command": "tcm.showChanges",
           "when": "false"
+        },
+        {
+          "command": "tcm.editThisToo",
+          "when": "false"
         }
       ]
     },
@@ -657,6 +666,12 @@
     "configurationDefaults": {
       "files.readonlyInclude": {
         "**/.tcm/src/**": true
+      },
+      "[typescript]": {
+        "editor.foldingImportsByDefault": true
+      },
+      "[typescriptreact]": {
+        "editor.foldingImportsByDefault": true
       }
     }
   },

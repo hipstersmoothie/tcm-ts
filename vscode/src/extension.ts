@@ -653,6 +653,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       releases.refresh();
     }),
     vscode.commands.registerCommand("tcm.openDefinition", (item) => item && vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(item.uri))),
+    // a quick fix in a scratch file: a definition it imports, added to it (saved first: tcm adds to what's on disk)
+    vscode.commands.registerCommand("tcm.editThisToo", async (uri: string, name: string) => {
+      const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri);
+      if (doc?.isDirty) await doc.save();
+      await run("tcm.editInto", [uri, name]);
+    }),
     vscode.commands.registerCommand("tcm.editDefinition", async (x) => {
       const name = pathOf(x) ?? (await pickDefinition("Edit which definition?"));
       if (!name) return;

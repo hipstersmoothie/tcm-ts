@@ -44,8 +44,12 @@ The code lives in the codebase, not in files, so the server also shows the codeb
   `tcm view` prints), with a header line giving its names, hash and where it runs (`.tsx` for definitions with
   JSX). They're real files, so [debuggers](debugging.md) stop in them, and TypeScript reads them as the project
   does. They're read-only (the extension marks `.tcm/src` so): to change one, **Edit** writes it into the scratch
-  file (`scratch.ts`, or `scratch.tsx` for JSX), added to what's there if it holds work, where
-  TypeScript checks it and the lens offers **Update codebase**. Clients can also ask for a definition as a
+  file (`scratch.ts`, or `scratch.tsx` for JSX), added to what's there if it holds work (what's in it saved as it
+  is goes), where TypeScript checks it and the lens offers **Update codebase**. Imports are folded out of sight
+  (the extension sets `editor.foldingImportsByDefault` for TypeScript).
+- **Quick fixes in scratch files** (Cmd/Ctrl+.): a codebase name the file doesn't import yet gets **Import x from
+  "#codebase/…"** (one per namespace that has it), and a name it imports from the codebase gets **Edit x here
+  too**, which adds that definition to the file. Clients can also ask for a definition as a
   `tcm:/lib/square.ts` document, with the same text.
 - **Go to Definition (Cmd/Ctrl+click) goes to the source.** On a codebase name in a scratch file it opens that
   definition's document; in a definition's document every reference is a link, since tcm knows exactly where

@@ -86,7 +86,7 @@ square(12);
   const c = client(keep);
   const init = await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir).href, capabilities: {}, clientInfo: { name: "test" } });
   assert.ok(init.capabilities.codeLensProvider && init.capabilities.inlayHintProvider && init.capabilities.hoverProvider);
-  assert.deepEqual(init.capabilities.executeCommandProvider.commands, ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.dataMigrate", "tcm.upgrade", "tcm.release", "tcm.releaseDraft", "tcm.pack"]);
+  assert.deepEqual(init.capabilities.executeCommandProvider.commands, ["tcm.add", "tcm.update", "tcm.mv", "tcm.edit", "tcm.editInto", "tcm.dataMigrate", "tcm.upgrade", "tcm.release", "tcm.releaseDraft", "tcm.pack"]);
   c.notify("initialized", {});
   c.notify("textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text } });
   const doc = { textDocument: { uri } };
@@ -639,4 +639,42 @@ export const testChangesInEditor = () => withChildren(async (keep) => {
   assert.deepEqual(toIdea.map((x: any) => [x.change, x.path]), [["added", "lib.areaOf"]]);
   // (its code, with this branch's names: here it has none, so it reads as it was written)
   assert.match(fs.readFileSync(fileURLToPath(toIdea[0].uri), "utf8"), /=> square\(s\)/);
+});
+
+/**
+ * Quick fixes in a scratch file: a codebase name it doesn't import yet is imported from where it is, and a name
+ * it imports is edited here too, added to the file.
+ */
+export const testScratchQuickFixes = () => withChildren(async (keep) => {
+  const dir = tempDir("lsp fixes");
+  const tcm = (...args: string[]) => spawnSync(process.execPath, [tcmBin(), ...args], { cwd: dir, env: plainEnv(), encoding: "utf8" });
+  tcm("init");
+  fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace geo\nexport type Point = { x: number; y: number };\nexport const norm = (p: Point): number => Math.hypot(p.x, p.y);\n`);
+  assert.equal(tcm("add").status, 0);
+  const c = client(keep);
+  await c.request("initialize", { processId: null, rootUri: pathToFileURL(dir).href, capabilities: {}, clientInfo: { name: "Visual Studio Code" } });
+  c.notify("initialized", {});
+
+  // `norm` isn't imported: importing it is offered, after the namespace line
+  const file = path.join(dir, "scratch.ts");
+  const uri = pathToFileURL(file).href;
+  const unimported = `// tcm: namespace app\nexport const far = (p: { x: number; y: number }): boolean => norm(p) > 10;\n`;
+  fs.writeFileSync(file, unimported);
+  c.notify("textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text: unimported } });
+  const fixes = await c.request("textDocument/codeAction", { textDocument: { uri }, range: { start: { line: 1, character: 62 }, end: { line: 1, character: 66 } }, context: { diagnostics: [] } });
+  const fix = fixes.find((a: any) => a.title === `Import norm from "#codebase/geo"`);
+  assert.ok(fix, JSON.stringify(fixes));
+  assert.deepEqual(fix.edit.changes[uri], [{ range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } }, newText: `import { norm } from "#codebase/geo";\n` }]);
+
+  // with it imported, on the name: edit it here too, and it's added to the file
+  const imported = `// tcm: namespace app\nimport { norm } from "#codebase/geo";\nexport const far = (p: { x: number; y: number }): boolean => norm(p) > 10;\n`;
+  fs.writeFileSync(file, imported);
+  c.notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: imported }] });
+  const actions = await c.request("textDocument/codeAction", { textDocument: { uri }, range: { start: { line: 2, character: 63 }, end: { line: 2, character: 63 } }, context: { diagnostics: [] } });
+  const edit = actions.find((a: any) => a.title === "Edit geo.norm here too");
+  assert.deepEqual(edit?.command, { title: "Edit geo.norm here too", command: "tcm.editThisToo", arguments: [uri, "geo.norm"] });
+  assert.equal(await c.request("workspace/executeCommand", { command: "tcm.editInto", arguments: [uri, "geo.norm"] }), uri);
+  const now = fs.readFileSync(file, "utf8");
+  assert.match(now, /export const far = [\s\S]*\/\/ tcm: path geo\.norm\nexport const norm = \(p: Point\): number => Math\.hypot/);
+  assert.match(now, /^import type \{ Point \} from "#codebase\/geo";$/m);
 });
