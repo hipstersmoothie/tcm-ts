@@ -33,6 +33,8 @@ if [ ! -f .tcm/codebase.sqlite ]; then
   node "$TCM" remote add origin "$ORIGIN" --token "$TCM_TOKEN" >&2
   node "$TCM" pull >&2
 fi
+# `pnpm tcm` works in codebase/ too (its package.json is the codebase's own)
+node -e 'const fs = require("fs"); const p = JSON.parse(fs.readFileSync("package.json", "utf8")); if (!p.scripts?.tcm) fs.writeFileSync("package.json", JSON.stringify({ ...p, scripts: { ...p.scripts, tcm: "sh ../scripts/codebase.sh" } }, null, 2) + "\n");'
 # run from where it was called (pnpm says where: INIT_CWD), so paths given to it are the caller's; TCM_CODEBASE says
 # which codebase (tcm leaves it out of what tests run, so they work on their own)
 export TCM_CODEBASE="$REPO/codebase"

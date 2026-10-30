@@ -66,7 +66,8 @@ tcm add           # save new definitions from scratch.ts
 - **Deploy and roll back by moving a name;** old tabs keep working. [Production](https://tcm-server-production.up.railway.app/production.html)
 - **Self-hosting:** tcm-ts is developed in tcm: all of it is in its own codebase, served by tcm's server, and
   this repository only says how to get it (`pnpm tcm`). It verifies itself, and its tests run against its own
-  build. [Developing](https://tcm-server-production.up.railway.app/developing.html)
+  build. [Browse its code](https://tcm-server-production.up.railway.app/code/index.html) ·
+  [developing](https://tcm-server-production.up.railway.app/developing.html)
 
 New here? Read the [introduction](https://tcm-server-production.up.railway.app/introduction.html), then follow the tutorials:
 [your first codebase](https://tcm-server-production.up.railway.app/tutorial-codebase.html) and [your first web app](https://tcm-server-production.up.railway.app/tutorial-app.html). Or try the
