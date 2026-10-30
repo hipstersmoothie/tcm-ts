@@ -63,13 +63,15 @@ export const testAgentWorksThroughMcp = () =>
     // edit: scratch.ts holds work already, so the definition goes to another scratch file
     fs.writeFileSync(path.join(dir, "scratch.ts"), `// tcm: namespace lib\nexport const draft = 1;\n`);
     const edited = await s.call("tcm_edit", { names: ["lib.square"] });
-    assert.match(edited.text, /wrote lib\.square to scratch-2\.ts[\s\S]*export const square[\s\S]*tcm_check and tcm_update/);
+    // (the file as a highlighted block, for clients that render Markdown)
+    assert.match(edited.text, /wrote lib\.square to scratch-2\.ts[\s\S]*scratch-2\.ts`:\n\n```ts\n\/\/ tcm: [\s\S]*export const square[\s\S]*\n```\n\nEdit the file, then tcm_check and tcm_update/);
     const file = path.join(dir, "scratch-2.ts");
     fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("x * x", "x ** 2"));
     assert.match((await s.call("tcm_check", { file: "scratch-2.ts" })).text, /~ update +lib\.square[\s\S]*tcm_update saves it/);
     const updated = await s.call("tcm_update", { file: "scratch-2.ts" });
     assert.match(updated.text, /~ updated +lib\.area \(dependent\)[\s\S]*tcm_test runs the tests/);
-    assert.match((await s.call("tcm_view", { names: ["lib.square"] })).text, /x \*\* 2/);
+    // a definition: its name, hash and where it runs, then its code
+    assert.match((await s.call("tcm_view", { names: ["lib.square"] })).text, /^\*\*lib\.square\*\* `#\w+` · runs anywhere\n\n```ts\nexport const square = \(x: number\): number => x \*\* 2;?\n```$/);
     // a client that asks for progress hears a long command's output as it comes
     assert.match((await s.call("tcm_test", { namespace: "lib", fresh: true }, { progressToken: "t1" })).text, /1 passed, 0 failed/);
     const progress = s.notes.filter((n) => n.method === "notifications/progress" && n.params.progressToken === "t1");

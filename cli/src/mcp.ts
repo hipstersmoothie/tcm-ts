@@ -142,7 +142,10 @@ const TOOLS: Tool[] = [
     name: "tcm_view",
     description: "Show definitions as code, with current names, where each runs (server, browser, anywhere) and its hash.",
     inputSchema: schema({ names: names }, ["names"]),
-    argv: (a) => ["view", ...strs(a.names)],
+    run: async (a, ctx) => {
+      const r = await ctx.tcm(["view", ...strs(a.names)]);
+      return r.code === 0 ? { text: viewMarkdown(r.out) } : { text: r.out, isError: true };
+    },
   },
   { name: "tcm_deps", description: "What a definition uses (codebase definitions, packages).", inputSchema: schema({ name: { type: "string" } }, ["name"]), argv: (a) => ["deps", str(a.name)] },
   { name: "tcm_dependents", description: "What uses a definition: what a change to it re-hashes.", inputSchema: schema({ name: { type: "string" } }, ["name"]), argv: (a) => ["dependents", str(a.name)] },
@@ -163,7 +166,8 @@ const TOOLS: Tool[] = [
       const file = /wrote .* to (\S+)/.exec(r.out)?.[1] ?? str(a.file);
       const abs = file && path.resolve(ctx.root, file);
       const body = abs && fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : "";
-      return { text: `${r.out}\n\n${abs ? `${abs}:\n\n${body}` : ""}\nEdit the file, then tcm_check and tcm_update.` };
+      const shown = abs ? `\`${abs}\`:\n\n${fence(body.trimEnd(), LANG[path.extname(abs).slice(1)] ?? "")}\n\n` : "";
+      return { text: `${r.out}\n\n${shown}Edit the file, then tcm_check and tcm_update.` };
     },
   },
   {
@@ -301,4 +305,43 @@ export function serveMcp(root: string, bin: string[], version: string) {
     }
   });
   return new Promise<void>((resolve) => process.stdin.on("end", () => resolve()));
+}
+
+/**
+ * The language a client highlights a file in, by its extension (or a file definition's format).
+ */
+export const LANG: Record<string, string> = { ts: "ts", tsx: "tsx", js: "js", md: "markdown", json: "json", yml: "yaml", yaml: "yaml", toml: "toml", sh: "sh", css: "css", html: "html", svg: "xml", csv: "csv" }
+
+/**
+ * `text` as a Markdown code block in `lang`: its fence longer than any run of backticks inside it.
+ */
+export function fence(text: string, lang: string): string {
+  const longest = Math.max(0, ...[...text.matchAll(/`+/g)].map((m) => m[0].length));
+  const f = "`".repeat(Math.max(3, longest + 1));
+  return `${f}${lang}\n${text}\n${f}`;
+}
+
+/**
+ * `tcm view`'s output as Markdown, for clients that render it: for each definition a line with its names, hash and
+ * where it runs, then its code (or a file's content) as a highlighted block.
+ */
+export function viewMarkdown(out: string): string {
+  const header = /^\/\/ (\S+(?:, \S+)*) (#[a-z2-7]{8,}) ?(.*)$/;
+  const blocks: { names: string; hash: string; rest: string; lines: string[] }[] = [];
+  for (const line of out.split("\n")) {
+    const m = header.exec(line);
+    if (m) blocks.push({ names: m[1]!, hash: m[2]!, rest: m[3]!, lines: [] });
+    else if (blocks.length) blocks.at(-1)!.lines.push(line);
+  }
+  if (!blocks.length) return out;
+  return blocks
+    .map((b) => {
+      while (b.lines.length && !b.lines.at(-1)!.trim()) b.lines.pop();
+      // code says its type after a colon; a file, its format
+      const file = !b.rest.startsWith(":");
+      const runs = !file && b.lines[0]?.startsWith("// runs ") ? b.lines.shift()!.slice(3) : undefined;
+      const about = file ? `${b.rest || "text"} file` : runs;
+      return `**${b.names}** \`${b.hash}\`${about ? ` · ${about}` : ""}\n\n${fence(b.lines.join("\n"), file ? (LANG[b.rest] ?? "") : "ts")}`;
+    })
+    .join("\n\n");
 }
