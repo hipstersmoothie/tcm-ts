@@ -10,7 +10,7 @@ importers:
     dependencies:
       '@tcm/cli':
         specifier: workspace:*
-        version: link:packages/cli
+        version: link:cli
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -28,7 +28,7 @@ importers:
         specifier: npm:typescript@^6.0.3
         version: typescript@6.0.3
 
-  packages/cli:
+  cli:
     dependencies:
       '@bomb.sh/router':
         specifier: ^0.8.0
@@ -52,7 +52,7 @@ importers:
         specifier: ^8.3.5
         version: 8.3.5(@types/node@24.19.2)
 
-  packages/core:
+  core:
     dependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -61,7 +61,7 @@ importers:
         specifier: 7.1.0-beta
         version: 7.1.0-beta
 
-  packages/loader:
+  loader:
     dependencies:
       '@tcm/core':
         specifier: workspace:*
@@ -70,13 +70,13 @@ importers:
         specifier: workspace:*
         version: link:../store
 
-  packages/store:
+  store:
     dependencies:
       '@tcm/core':
         specifier: workspace:*
         version: link:../core
 
-  packages/vscode:
+  vscode:
     dependencies:
       vscode-languageclient:
         specifier: ^9.0.1

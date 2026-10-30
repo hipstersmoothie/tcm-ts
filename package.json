@@ -6,7 +6,7 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "test": "node --test --disable-warning=ExperimentalWarning 'packages/*/test/**/*.test.ts'",
+    "test": "sh scripts/codebase.sh test",
     "typecheck": "tsc -p tsconfig.json",
     "tcm": "scripts/codebase.sh",
     "verify": "sh scripts/codebase.sh run tcmts.dev.verify",
@@ -23,7 +23,7 @@
     "typescript6": "npm:typescript@^6.0.3"
   },
   "bin": {
-    "tcm": "packages/cli/bin/tcm.js"
+    "tcm": "cli/bin/tcm.js"
   },
   "dependencies": {
     "@tcm/cli": "workspace:*"

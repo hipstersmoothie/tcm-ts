@@ -4,7 +4,7 @@ name: docs
 on:
   push:
     branches: [main]
-    paths: ["packages/docs/**", "packages/dev.ts", "package.json", "pnpm-lock.yaml", ".github/workflows/docs.yml"]
+    paths: ["docs/**", "dev.ts", "package.json", "pnpm-lock.yaml", ".github/workflows/docs.yml"]
   workflow_dispatch:
 
 permissions:
@@ -29,7 +29,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # makes tcm's codebase from packages/ (the first `pnpm tcm`), then builds the site from it; fails on any
+      # makes tcm's codebase from the repository (the first `pnpm tcm`), then builds the site from it; fails on any
       # broken link or anchor
       - run: pnpm docs:site "$PWD/dist/site"
       - uses: actions/upload-pages-artifact@v3

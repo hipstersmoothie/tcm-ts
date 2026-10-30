@@ -1,0 +1,552 @@
+{
+  "name": "tcm-ts",
+  "displayName": "tcm-ts",
+  "description": "The tcm-ts codebase in VS Code: a namespace sidebar, definitions as documents, usages, type search, and Unison-style status, watch values and save commands for scratch files",
+  "version": "0.10.0",
+  "publisher": "tcm-ts",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.143.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./index.js",
+  "activationEvents": [
+    "workspaceContains:.tcm/codebase.sqlite"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "tcm",
+          "title": "tcm",
+          "icon": "media/tcm.svg"
+        }
+      ]
+    },
+    "views": {
+      "tcm": [
+        {
+          "id": "tcm.apps",
+          "name": "Apps"
+        },
+        {
+          "id": "tcm.codebase",
+          "name": "Codebase"
+        },
+        {
+          "id": "tcm.data",
+          "name": "Data"
+        },
+        {
+          "id": "tcm.packages",
+          "name": "Packages"
+        },
+        {
+          "id": "tcm.releases",
+          "name": "Releases"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "tcm.codebase",
+        "contents": "The codebase is empty. Write definitions in a scratch file (scratch.ts) and use **Add to codebase** above them."
+      },
+      {
+        "view": "tcm.apps",
+        "contents": "No apps yet. An app is a browser entry point: a function that runs in the browser, takes no arguments, and isn't called by other code (like `app.main`)."
+      },
+      {
+        "view": "tcm.data",
+        "contents": "No data yet. Tables are declared with `table<Row>(\"name\")` from `#tcm/server`; their rows appear here once an app writes some."
+      },
+      {
+        "view": "tcm.packages",
+        "contents": "No packages yet. Import one in a scratch file (`import ms from \"ms\"`); there's nothing to install: tcm provides it, and it appears here."
+      },
+      {
+        "view": "tcm.releases",
+        "contents": "No packages to release yet. A definition named `manifest` makes its namespace an npm package:\n```\nexport const manifest = { name: \"geo\" };\n```\nIts releases' versions and changelogs come from what changes in its API."
+      }
+    ],
+    "commands": [
+      {
+        "command": "tcm.add",
+        "title": "Add this file's definitions to the codebase",
+        "category": "tcm"
+      },
+      {
+        "command": "tcm.update",
+        "title": "Update the codebase from this file",
+        "category": "tcm"
+      },
+      {
+        "command": "tcm.findByType",
+        "title": "Find by type",
+        "category": "tcm",
+        "icon": "$(search)"
+      },
+      {
+        "command": "tcm.refresh",
+        "title": "Refresh",
+        "category": "tcm",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "tcm.openDefinition",
+        "title": "Open source",
+        "category": "tcm"
+      },
+      {
+        "command": "tcm.editDefinition",
+        "title": "Edit in a scratch file",
+        "category": "tcm",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "tcm.rename",
+        "title": "Rename",
+        "category": "tcm"
+      },
+      {
+        "command": "tcm.findUsages",
+        "title": "Find usages",
+        "category": "tcm",
+        "icon": "$(references)"
+      },
+      {
+        "command": "tcm.copyHash",
+        "title": "Copy hash",
+        "category": "tcm"
+      },
+      {
+        "command": "tcm.runDefinition",
+        "title": "Run",
+        "category": "tcm",
+        "icon": "$(play)"
+      },
+      {
+        "command": "tcm.startApp",
+        "title": "Start app",
+        "category": "tcm",
+        "icon": "$(play)"
+      },
+      {
+        "command": "tcm.stopApp",
+        "title": "Stop app",
+        "category": "tcm",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "tcm.openApp",
+        "title": "Open app",
+        "category": "tcm",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "tcm.openAppExternal",
+        "title": "Open app in external browser",
+        "category": "tcm",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "tcm.showAppLog",
+        "title": "Show app log",
+        "category": "tcm",
+        "icon": "$(output)"
+      },
+      {
+        "command": "tcm.showTable",
+        "title": "Open table",
+        "category": "tcm",
+        "icon": "$(table)"
+      },
+      {
+        "command": "tcm.migrateTable",
+        "title": "Migrate rows to the current row type",
+        "category": "tcm",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "tcm.openTableDefinition",
+        "title": "Go to definition",
+        "category": "tcm",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "tcm.openPage",
+        "title": "Open page",
+        "category": "tcm",
+        "icon": "$(book)"
+      },
+      {
+        "command": "tcm.openNamespacePage",
+        "title": "Open namespace page",
+        "category": "tcm",
+        "icon": "$(book)"
+      },
+      {
+        "command": "tcm.find",
+        "title": "Find",
+        "category": "tcm",
+        "icon": "$(search)"
+      },
+      {
+        "command": "tcm.openPackagePage",
+        "title": "Open package page",
+        "category": "tcm",
+        "icon": "$(book)"
+      },
+      {
+        "command": "tcm.upgradePackage",
+        "title": "Upgrade within its range",
+        "category": "tcm",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "tcm.upgradePackageTo",
+        "title": "Move code to another range…",
+        "category": "tcm",
+        "icon": "$(versions)"
+      },
+      {
+        "command": "tcm.debugDefinition",
+        "title": "Debug",
+        "category": "tcm",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "tcm.debugTest",
+        "title": "Debug test",
+        "category": "tcm",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "tcm.debugTests",
+        "title": "Debug this file's tests",
+        "category": "tcm",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "tcm.debugApp",
+        "title": "Debug app (server and browser)",
+        "category": "tcm",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "tcm.openReleasePage",
+        "title": "Open package page",
+        "category": "tcm",
+        "icon": "$(book)"
+      },
+      {
+        "command": "tcm.releasePackage",
+        "title": "Release",
+        "category": "tcm",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "tcm.draftRelease",
+        "title": "Draft release notes",
+        "category": "tcm",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "tcm.packPackage",
+        "title": "Pack",
+        "category": "tcm",
+        "icon": "$(package)"
+      },
+      {
+        "command": "tcm.saveChangelog",
+        "title": "Save changelog…",
+        "category": "tcm",
+        "icon": "$(save)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "tcm.find",
+          "when": "view == tcm.codebase",
+          "group": "navigation@0"
+        },
+        {
+          "command": "tcm.refresh",
+          "when": "view == tcm.codebase",
+          "group": "navigation@2"
+        },
+        {
+          "command": "tcm.refresh",
+          "when": "view == tcm.apps",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tcm.refresh",
+          "when": "view == tcm.data",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tcm.refresh",
+          "when": "view == tcm.releases",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "tcm.editDefinition",
+          "when": "(view == tcm.codebase || view == tcm.apps) && viewItem =~ /^definition/",
+          "group": "inline@1"
+        },
+        {
+          "command": "tcm.findUsages",
+          "when": "(view == tcm.codebase || view == tcm.apps) && viewItem =~ /^definition/",
+          "group": "inline@2"
+        },
+        {
+          "command": "tcm.openDefinition",
+          "when": "(view == tcm.codebase || view == tcm.apps) && viewItem =~ /^definition/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "tcm.editDefinition",
+          "when": "(view == tcm.codebase || view == tcm.apps) && viewItem =~ /^definition/",
+          "group": "1_open@2"
+        },
+        {
+          "command": "tcm.findUsages",
+          "when": "(view == tcm.codebase || view == tcm.apps) && viewItem =~ /^definition/",
+          "group": "2_navigate@1"
+        },
+        {
+          "command": "tcm.runDefinition",
+          "when": "(view == tcm.codebase || view == tcm.apps) && viewItem =~ /^definition/",
+          "group": "2_navigate@2"
+        },
+        {
+          "command": "tcm.rename",
+          "when": "view == tcm.codebase && (viewItem == definition || viewItem == namespace)",
+          "group": "3_change@1"
+        },
+        {
+          "command": "tcm.copyHash",
+          "when": "(view == tcm.codebase || view == tcm.apps) && viewItem =~ /^definition/",
+          "group": "4_copy@1"
+        },
+        {
+          "command": "tcm.startApp",
+          "when": "view == tcm.apps && viewItem == app.stopped",
+          "group": "inline@1"
+        },
+        {
+          "command": "tcm.openApp",
+          "when": "view == tcm.apps && viewItem == app.running",
+          "group": "inline@1"
+        },
+        {
+          "command": "tcm.showAppLog",
+          "when": "view == tcm.apps && viewItem == app.running",
+          "group": "inline@2"
+        },
+        {
+          "command": "tcm.stopApp",
+          "when": "view == tcm.apps && viewItem == app.running",
+          "group": "inline@3"
+        },
+        {
+          "command": "tcm.openAppExternal",
+          "when": "view == tcm.apps && viewItem == app.running",
+          "group": "1_open@1"
+        },
+        {
+          "command": "tcm.startApp",
+          "when": "view == tcm.codebase && viewItem == definition.app",
+          "group": "inline@0"
+        },
+        {
+          "command": "tcm.showTable",
+          "when": "view == tcm.data && viewItem =~ /^table/",
+          "group": "inline@1"
+        },
+        {
+          "command": "tcm.migrateTable",
+          "when": "view == tcm.data && viewItem == table.older",
+          "group": "inline@2"
+        },
+        {
+          "command": "tcm.openTableDefinition",
+          "when": "view == tcm.data && viewItem =~ /^table/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "tcm.migrateTable",
+          "when": "view == tcm.data && viewItem == table.older",
+          "group": "2_change@1"
+        },
+        {
+          "command": "tcm.openApp",
+          "when": "view == tcm.codebase && viewItem == definition.app.running",
+          "group": "inline@0"
+        },
+        {
+          "command": "tcm.stopApp",
+          "when": "view == tcm.codebase && viewItem == definition.app.running",
+          "group": "inline@1"
+        },
+        {
+          "command": "tcm.openNamespacePage",
+          "when": "view == tcm.codebase && viewItem == namespace",
+          "group": "inline@0"
+        },
+        {
+          "command": "tcm.openNamespacePage",
+          "when": "view == tcm.codebase && viewItem == namespace",
+          "group": "1_open@0"
+        },
+        {
+          "command": "tcm.upgradePackage",
+          "when": "view == tcm.packages && viewItem =~ /^package/",
+          "group": "inline@1"
+        },
+        {
+          "command": "tcm.openPackagePage",
+          "when": "view == tcm.packages && viewItem =~ /^package/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "tcm.upgradePackage",
+          "when": "view == tcm.packages && viewItem =~ /^package/",
+          "group": "2_change@1"
+        },
+        {
+          "command": "tcm.upgradePackageTo",
+          "when": "view == tcm.packages && viewItem =~ /^package/",
+          "group": "2_change@2"
+        },
+        {
+          "command": "tcm.debugDefinition",
+          "when": "(view == tcm.codebase || view == tcm.apps) && viewItem =~ /^definition/",
+          "group": "2_navigate@3"
+        },
+        {
+          "command": "tcm.debugApp",
+          "when": "view == tcm.apps && viewItem == app.stopped",
+          "group": "inline@2"
+        },
+        {
+          "command": "tcm.debugApp",
+          "when": "view == tcm.apps && viewItem =~ /^app/",
+          "group": "1_open@2"
+        },
+        {
+          "command": "tcm.releasePackage",
+          "when": "view == tcm.releases && viewItem == releasePackage",
+          "group": "inline@1"
+        },
+        {
+          "command": "tcm.draftRelease",
+          "when": "view == tcm.releases && viewItem == releasePackage",
+          "group": "inline@2"
+        },
+        {
+          "command": "tcm.releasePackage",
+          "when": "view == tcm.releases && viewItem == releasePackage",
+          "group": "1_release@1"
+        },
+        {
+          "command": "tcm.draftRelease",
+          "when": "view == tcm.releases && viewItem == releasePackage",
+          "group": "1_release@2"
+        },
+        {
+          "command": "tcm.packPackage",
+          "when": "view == tcm.releases && (viewItem == releasePackage || viewItem == release)",
+          "group": "2_pack@1"
+        },
+        {
+          "command": "tcm.saveChangelog",
+          "when": "view == tcm.releases && viewItem == releasePackage",
+          "group": "2_pack@2"
+        },
+        {
+          "command": "tcm.openReleasePage",
+          "when": "view == tcm.releases && viewItem == releasePackage",
+          "group": "3_open@1"
+        },
+        {
+          "command": "tcm.packPackage",
+          "when": "view == tcm.releases && viewItem == release",
+          "group": "inline@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "tcm.openDefinition",
+          "when": "false"
+        },
+        {
+          "command": "tcm.copyHash",
+          "when": "false"
+        },
+        {
+          "command": "tcm.findUsages",
+          "when": "false"
+        },
+        {
+          "command": "tcm.showTable",
+          "when": "false"
+        },
+        {
+          "command": "tcm.openAppExternal",
+          "when": "false"
+        },
+        {
+          "command": "tcm.showAppLog",
+          "when": "false"
+        },
+        {
+          "command": "tcm.migrateTable",
+          "when": "false"
+        },
+        {
+          "command": "tcm.openTableDefinition",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "tcm-ts",
+      "properties": {
+        "tcm.path": {
+          "type": "string",
+          "default": "tcm",
+          "description": "The tcm executable: `tcm` on your PATH, or the path to tcm's cli/bin/tcm.js (run with Node; spaces are fine), or a command line with \"quotes\" around words containing spaces."
+        }
+      }
+    },
+    "typescriptServerPlugins": [
+      {
+        "name": "tcm-ts-plugin",
+        "enableForWorkspaceTypeScriptVersions": true
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "tcm.find",
+        "key": "ctrl+alt+u",
+        "mac": "cmd+alt+u"
+      }
+    ],
+    "configurationDefaults": {
+      "files.readonlyInclude": {
+        "**/.tcm/src/**": true
+      }
+    }
+  },
+  "dependencies": {
+    "tcm-ts-plugin": "file:./plugin"
+  }
+}
