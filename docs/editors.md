@@ -137,8 +137,7 @@ The `#` icon in the activity bar opens these views:
   then tabs (the one you chose stays chosen as the page refreshes):
   - **README**: the package's (the `@types` package's, when it has none);
   - **API**: as its types declare it, every export with its signature (highlighted) and JSDoc, in a foldable
-    section per kind (functions, classes, interfaces, types, enums, values, namespaces; folded to start with when
-    there are many);
+    section per kind (functions, classes, interfaces, types, enums, values, namespaces), all open to start with;
   - **Used by**: the definitions using it, linking to their pages.
 
   A definition page's **Packages** list links to these pages too.

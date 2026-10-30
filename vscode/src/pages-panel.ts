@@ -255,13 +255,12 @@ function packageCard(c) {
     let api = "";
     const entry = (a, i) => '<div class="section"><b class="f">' + esc(a.name) + '</b> <span class="badge">' + esc(a.kind) + "</span>" +
       (a.signature ? '<pre class="src">' + (a.html || esc(a.signature)) + "</pre>" : "") + (c.docs[i] ? '<div class="doc">' + c.docs[i] + "</div>" : "") + "</div>";
-    // by kind, each section folding; a big API starts folded, to read as an overview
-    const open = p.api.length <= 20 ? " open" : "";
+    // by kind, each section folding
     const known = API_KINDS.map(([k]) => k);
     for (const [kind, label] of [...API_KINDS, ["", "Other"]]) {
       const items = p.api.map((a, i) => [a, i]).filter(([a]) => (kind ? a.kind === kind : !known.includes(a.kind)));
       if (!items.length) continue;
-      api += '<details class="kind"' + open + '><summary>' + label + ' <span class="muted">' + items.length + "</span></summary>" + items.map(([a, i]) => entry(a, i)).join("") + "</details>";
+      api += '<details class="kind" open><summary>' + label + ' <span class="muted">' + items.length + "</span></summary>" + items.map(([a, i]) => entry(a, i)).join("") + "</details>";
     }
     tabs.push(["api", 'API <span class="muted">' + p.api.length + "</span>", api]);
   }
