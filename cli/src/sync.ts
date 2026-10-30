@@ -14,6 +14,7 @@ import { diffNamespaces, printDiff, stateOf } from "./diff.ts";
 import { mergeBranch } from "./merge.ts";
 import { closeContribution, commentOn, mergeContribution, openContribution, reviewPage, viewContribution, type ContributionView } from "./contributions.ts";
 import { bold, dim, green, red, yellow } from "./style.ts";
+import { FILE_PATH } from "./files.ts";
 
 
 export type Output = (stream: "stdout" | "stderr", data: string) => void;
@@ -175,12 +176,15 @@ export class Peer {
   }
 }
 
-/** Names from another codebase: paths must be valid and every hash must already be stored here; kinds come from the local store. */
+/**
+ * Names from another codebase: paths must be valid (a file's as files are named: `docs.getting-started`) and every
+ * hash must already be stored here; kinds come from the local store.
+ */
 function validNames(cb: Codebase, names: NameRow[]): NameRow[] {
   return names.map((n) => {
-    if (!IDENT_PATH.test(n.path)) throw new Error(`invalid name '${n.path}'`);
     const rec = cb.store.getDef(n.hash);
     if (!rec) throw new Error(`${n.path} refers to ${shortHash(n.hash)}, which was not sent`);
+    if (!(rec.kind === "file" ? FILE_PATH : IDENT_PATH).test(n.path)) throw new Error(`invalid name '${n.path}'`);
     return { path: n.path, hash: n.hash, kind: rec.kind };
   });
 }

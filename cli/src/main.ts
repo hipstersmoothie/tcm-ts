@@ -47,6 +47,7 @@ import { fileFormat, followMove, linkingTo, fileContent, formatOf, fileDefinitio
 import { exportFiles } from "./files.ts";
 import { assetName, assetFiles } from "./mirror.ts";
 import { assetFormat } from "./mirror.ts";
+import { FILE_PATH } from "./files.ts";
 
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
@@ -1661,11 +1662,6 @@ export function pathsIn(file: string, text: string, into: string | undefined): s
   }
   return out;
 }
-
-/**
- * A name a file can have: a namespace path, then its own name (letters, digits, `_`, `-`).
- */
-export const FILE_PATH = /^([A-Za-z_$][\w$]*\.)*[\w$-]+$/;
 
 /**
  * `tcm edit` of files kept as written: each into a file of its own, named as it is (or `file`). A Markdown

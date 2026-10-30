@@ -42,19 +42,22 @@ export const testFilesTravel = () => {
   const a = codebase(root, "a");
   a.scratch(`// tcm: namespace lib\nexport const square = (x: number) => x * x;\n`);
   a.tcm("add");
-  fs.writeFileSync(path.join(a.dir, "guide.md"), "# Guide\n\nUse {@link lib.square}.\n");
-  a.tcm("add", "guide.md", "--into", "docs");
+  fs.writeFileSync(path.join(a.dir, "getting-started.md"), "# Guide\n\nUse {@link lib.square}.\n");
+  a.tcm("add", "getting-started.md", "--into", "docs");
   const b = codebase(root, "b");
   fs.rmSync(path.join(b.dir, "scratch.ts"));
   b.tcm("remote", "add", "origin", a.dir);
   b.tcm("pull");
-  assert.match(b.tcm("view", "docs.guide"), /Use \{@link lib\.square\}\./);
+  assert.match(b.tcm("view", "docs.getting-started"), /Use \{@link lib\.square\}\./);
   // a change to a file alone is a change to the history
-  fs.writeFileSync(path.join(a.dir, "guide.md"), "<!-- tcm: path docs.guide -->\n# The guide\n\nUse {@link lib.square}.\n");
-  assert.match(a.tcm("update", "guide.md"), /update +docs\.guide/);
-  b.tcm("pull");
-  assert.match(b.tcm("view", "docs.guide"), /# The guide/);
-};
+  fs.writeFileSync(path.join(a.dir, "getting-started.md"), "<!-- tcm: path docs.getting-started -->\n# The guide\n\nUse {@link lib.square}.\n");
+  assert.match(a.tcm("update", "getting-started.md"), /update +docs\.getting-started/);
+  // what the pull changed reads as the page's text
+  const pulled = b.tcm("pull");
+  assert.match(pulled, /- # Guide\n\s+\+ # The guide/);
+  assert.doesNotMatch(pulled, /export/);
+  assert.match(b.tcm("view", "docs.getting-started"), /# The guide/);
+}
 
 /** pull, push and divergence between codebase directories */
 export const testPullPushDivergence = () => {

@@ -305,3 +305,8 @@ export function relinked(cb: Codebase, name: string, rec: DefRecord, from: strin
   }
   return out === text ? undefined : out;
 }
+
+/**
+ * A name a file can have: a namespace path, then its own name (letters, digits, `_`, `-`).
+ */
+export const FILE_PATH = /^([A-Za-z_$][\w$]*\.)*[\w$-]+$/;

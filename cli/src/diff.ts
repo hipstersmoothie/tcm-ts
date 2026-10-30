@@ -3,6 +3,7 @@ import type { NameRow } from "@tcm/store";
 import { render } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 import { bold, cyan, dim, green, red, yellow } from "./style.ts";
+import { formatOf, isBytes, fileContent } from "./files.ts";
 
 /**
  * A namespace at some point: name → the hashes it points to (more than one means conflicted). Types are keyed
@@ -129,8 +130,16 @@ export function diffReport(cb: Codebase, d: NamespaceDiff, before: NameState, af
   if (isEmpty(d)) return [...out, [["dim", "  no changes"]]];
   const src = cb.source();
   const [oldNames, newNames] = [namesIn(before), namesIn(after)];
-  const body = (hash: string, nameOf: (h: string) => string | undefined) =>
-    render([src.get(hash)!], src, cb.lay, { style: "scratch", omitImports: true, nameOf, exportDeclarations: true }).text.trimEnd().split("\n");
+  const body = (hash: string, nameOf: (h: string) => string | undefined) => {
+    const rec = src.get(hash)!;
+    // a file is its text (links naming what they reach now), or its size if it's bytes
+    if (rec.kind === "file") {
+      const at = nameOf(hash) ?? "";
+      const content = fileContent(cb, rec, at.slice(0, Math.max(0, at.lastIndexOf("."))));
+      return isBytes(rec) ? [`(${formatOf(rec) || "bytes"}, ${content.length} bytes)`] : content.toString("utf8").trimEnd().split("\n");
+    }
+    return render([rec], src, cb.lay, { style: "scratch", omitImports: true, nameOf, exportDeclarations: true }).text.trimEnd().split("\n");
+  };
   const name = (hash: string) => newNames(hash) ?? shortHash(hash);
   const section = (label: string, n: number) => n && out.push([], [["plain", "  "], ["dim", label]]);
 
