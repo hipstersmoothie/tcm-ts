@@ -15,7 +15,8 @@ vscode/     the VS Code extension (a thin client for `tcm lsp`), a package of it
 examples/   polls, notes, geometry: example projects, kept as written (their directory has a .tcm-files mark),
             built by their setup scripts, run by e2e/examples.ts
 docs/       user documentation, one page per feature area (tcmts.docs)
-dev.ts      verifying, the docs site and comparing compilers, as definitions
+dev.ts      verifying, building the docs site and comparing compilers, as definitions
+site.tsx    the docs site: its pages, how they render, and the app serving them (tcmts.site.Docs)
 index.ts    the tcm-ts package's manifest
 scripts/    codebase.sh (`pnpm tcm`)
 server/     tcm's server, as deployed to Railway (below)
@@ -44,8 +45,8 @@ written to `.tcm/cache/tcm-server.js`. It must stay self-contained: everything i
 | `pnpm verify` | everything a commit needs, from tcm's codebase ([below](#verifying-a-change)); names failing tests. When all pass, the package tested becomes the [known-good tcm](#the-known-good-tcm) |
 | `pnpm test` | `tcm test tcmts`: the tests a change reaches (hashing invariants, frozen golden hashes, and end-to-end CLI scenarios: sync, merge, web apps in real Chrome, production, jobs, data, import), the rest cached |
 | `pnpm typecheck` | typecheck the repo (TypeScript 7's `tsc`) |
-| `pnpm docs:dev` | serve the docs site locally (port 4321, or the next free one), building it again and reloading open pages when a page or an example changes |
-| `pnpm docs:site` | build the docs site (`tcmts.docs`, from the codebase, and the examples page) into `dist/site`; it fails on any broken link or anchor. `pnpm server:deploy` builds it into what [tcm's server](#tcms-server) serves |
+| `pnpm docs:dev` | serve the docs site as a tcm app (`tcm dev tcmts.site.Docs`): each page rendered on the server from the codebase's pages, the browser reloading when one is updated |
+| `pnpm docs:site` | build the docs site (`tcmts.docs`, from the codebase, and the examples page) into `dist/site` as static files, the same markup the app renders; it fails on any broken link or anchor. `pnpm server:deploy` builds it into what [tcm's server](#tcms-server) serves |
 | `pnpm compare-compilers` | hash tcm's source with TypeScript 7 and with [tsrs](compiler-options.md#the-compiler), and run the golden tests with tsrs; hashes must match (`tcmts.dev.compareCompilers`) |
 
 `pnpm verify` should pass before a commit: it checks the codebase, its tests against its own tcm, and the

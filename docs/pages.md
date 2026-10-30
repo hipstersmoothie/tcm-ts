@@ -68,6 +68,8 @@ codebase, written back as it changes (in a git repository, every one git keeps).
 with a `.tcm-files` file in it, code included: example projects, an editor extension, kept as written. The mark's
 lines are patterns of what to leave out, as in a `.gitignore` (`*.vsix`).
 
-tcm's own docs are files of its codebase (`tcmts.docs`, mirrored to `docs/`), and its docs site is built
-from them by a definition (`pnpm docs:site`, which is `pnpm tcm run tcmts.dev.site`). `pnpm verify` builds it too,
-and fails on any link or anchor that doesn't resolve.
+tcm's own docs are files of its codebase (`tcmts.docs`, mirrored to `docs/`), and its docs site is code that
+imports them (`tcmts.site`): a React app, `tcmts.site.Docs`, that renders each page on the server (`pnpm docs:dev`
+serves it with `tcm dev`), and the same pages built as static files (`pnpm docs:site`, which is `pnpm tcm run
+tcmts.dev.site`). It depends on each page by hash, so updating one re-renders the site. `pnpm verify` builds it
+too, and fails on any link or anchor that doesn't resolve.

@@ -17,13 +17,17 @@
     "compare-compilers": "sh scripts/codebase.sh run tcmts.dev.compareCompilers",
     "build": "sh scripts/codebase.sh pack tcm-ts --out ../dist/package",
     "docs:site": "sh scripts/codebase.sh run tcmts.dev.site",
-    "docs:dev": "sh scripts/codebase.sh run tcmts.dev.siteDev",
+    "docs:dev": "sh scripts/codebase.sh dev tcmts.site.Docs",
     "server:deploy": "sh scripts/codebase.sh run tcmts.dev.deployServer",
     "mirror:commit": "sh scripts/codebase.sh run tcmts.dev.mirrorCommit"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "marked": "^18.1.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "shiki": "^4.5.0",
     "typescript": "7.1.0-beta",
     "typescript6": "npm:typescript@^6.0.3"

@@ -9,6 +9,7 @@
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
+    "jsx": "react-jsx",
     "types": ["node"]
   },
   "include": ["index.ts", "*/src/**/*.ts", "*/test/**/*.ts"]
