@@ -13,10 +13,12 @@ In the sidebar: apps to start, the codebase, data, the npm packages it runs, and
 own packages, what each one's next release would be and why (every semver finding), drafting notes, releasing,
 packing and changelogs.
 
-Full documentation: `docs/editors.md` in the tcm-ts repository.
+Full documentation: `packages/docs/editors.md` in the tcm-ts repository. It needs VS Code 1.143 or later. In
+that repository:
 
 ```sh
-cd editors/vscode && npm install && npx @vscode/vsce package
+pnpm tcm pack tcm-ts-vscode --out ../dist/vscode
+cd dist/vscode && npm install && npx @vscode/vsce package
 code --install-extension tcm-ts-*.vsix     # or Extensions → … → Install from VSIX…
 ```
 
