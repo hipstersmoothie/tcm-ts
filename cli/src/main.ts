@@ -1132,10 +1132,13 @@ square(12);
     }
     case "serve": {
       const { model } = execute(cmd, parse(commands.serve, { argv: rest }));
-      const token = model.token ?? process.env.TCM_TOKEN ?? newToken();
+      const given = model.token ?? process.env.TCM_TOKEN;
+      const token = given ?? newToken();
       const tls = model.tls || model["tls-cert"] ? tlsMaterial(cb, model["tls-cert"], model["tls-key"]) : undefined;
       // --insecure acknowledges clear-text tokens beyond localhost
-      serve(cb, { host: model.host, port: model.port, token, allowRun: model.run, tls }, model.insecure);
+      const site = model.site ? path.resolve(cwd, model.site) : undefined;
+      if (site && !fs.existsSync(path.join(site, "index.html"))) throw new UsageError(`--site ${model.site}: there's no index.html there`);
+      serve(cb, { host: model.host, port: model.port, token, allowRun: model.run, tls, showToken: !given, ...(site ? { site } : {}) }, model.insecure);
       return -1; // keep running
     }
     case "edit": {

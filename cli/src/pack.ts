@@ -12,7 +12,7 @@ import { createProgram, exportId, ts, type DefKind } from "@tcm/core";
 import { externalsOf, npmAlias, parseModule, render, type DefSource } from "@tcm/loader";
 import type { NameRow } from "@tcm/store";
 import type { Codebase } from "./codebase.ts";
-import { exportFiles, fileContent, filesIn, formatOf } from "./files.ts";
+import { exportFiles, fileContent, fileName, filesIn } from "./files.ts";
 
 export interface PackOptions {
   name: string;
@@ -314,7 +314,7 @@ export function pack(cb: Codebase, opts: PackOptions): { dir: string; modules: n
     if (!fs.existsSync(from) && filesIn(cb, f).size) {
       const leaf = f.slice(f.lastIndexOf(".") + 1);
       const file = cb.store.hashesAt(f).map((h) => cb.store.getDef(h)!).find((d) => d.kind === "file");
-      if (file) fs.writeFileSync(path.join(dir, `${leaf}.${formatOf(file)}`), fileContent(cb, file, f.slice(0, Math.max(0, f.lastIndexOf(".")))));
+      if (file) fs.writeFileSync(path.join(dir, fileName(leaf, file)), fileContent(cb, file, f.slice(0, Math.max(0, f.lastIndexOf(".")))));
       exportFiles(cb, f, path.join(dir, leaf), false);
       continue;
     }

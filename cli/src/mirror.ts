@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 import { createProgram, ts, SERVER_API_MODULE, type DefRecord, type ExtRef, type Span } from "@tcm/core";
 import type { Codebase } from "./codebase.ts";
 import { dim, red, yellow } from "./style.ts";
-import { filesIn, fileFormat, fileDefinition, fileLeaf, fileContent, formatOf, dirSegment } from "./files.ts";
+import { filesIn, fileFormat, fileDefinition, fileLeaf, fileContent, fileName, formatOf, dirSegment } from "./files.ts";
 
 // ---- what a project's files are, as namespaces ---------------------------------------------------------
 
@@ -533,7 +533,7 @@ export function syncMirror(cb: Codebase): boolean {
   for (const [name, rec] of filesIn(cb, m.into)) {
     if (recorded.has(name)) continue;
     const rest = (m.into ? name.slice(m.into.length + 1) : name).split(".");
-    const rel = path.join(...rest.slice(0, -1), `${rest.at(-1)}${formatOf(rec) ? `.${formatOf(rec)}` : ""}`);
+    const rel = path.join(...rest.slice(0, -1), fileName(rest.at(-1)!, rec));
     if (fs.existsSync(abs(rel))) {
       problems.push(`${name} would be written to ${rel}, which is there already`);
       continue;

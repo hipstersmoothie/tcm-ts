@@ -83,7 +83,7 @@ See [sync](sync.md).
 | `tcm contribute [remote] [--to main] [--as name] [--title t] [--description d]` | push this branch and open a contribution of it on the remote (pushing again updates it) ([contributions](contributions.md)) |
 | `tcm contribution [--remote origin] [--all]` | the remote's contributions |
 | `tcm contribution view\|comment\|merge\|close\|reopen <id>` | a contribution's changes, whether it merges, and comments; comment (`--about <name>`); merge it on the remote by history (refused on conflicts); close or reopen it |
-| `tcm serve [--port 7737] [--host 127.0.0.1] [--token t] [--no-run] [--tls [--tls-cert f --tls-key f]] [--insecure]` | serve this codebase over HTTP(S) |
+| `tcm serve [--port 7737] [--host 127.0.0.1] [--token t] [--no-run] [--tls [--tls-cert f --tls-key f]] [--insecure] [--site dir]` | serve this codebase over HTTP(S), and a static site (`--site`) to anyone ([sync](sync.md#serving-a-codebase)) |
 
 ## Apps, data and jobs
 

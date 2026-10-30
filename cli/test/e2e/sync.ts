@@ -148,3 +148,49 @@ export const testServeTlsPinning = () =>
 
     assert.throws(() => server.tcm("serve", "--host", "0.0.0.0", "--port", "0"), /without TLS would send the token in clear text/);
   });
+
+/**
+ * tcm serve --site: a static site to anyone, beside the codebase's routes (which still need the token); a token
+ * that was given isn't printed
+ */
+export const testServeSite = () =>
+  withChildren(async (keep) => {
+    const root = tempDir("serve site");
+    const server = codebase(root, "server");
+    const site = path.join(root, "site");
+    fs.mkdirSync(path.join(site, "guide"), { recursive: true });
+    fs.writeFileSync(path.join(site, "index.html"), "<h1>docs</h1>");
+    fs.writeFileSync(path.join(site, "cli.html"), "<h1>cli</h1>");
+    fs.writeFileSync(path.join(site, "guide", "index.html"), "<h1>guide</h1>");
+    fs.writeFileSync(path.join(root, "secret.txt"), "not served");
+    const child = keep(spawn(process.execPath, [tcmBin(), "serve", "--port", "0", "--token", "sitetok", "--site", site], { cwd: server.dir, env: plainEnv() }));
+    let out = "";
+    const url = await new Promise<string>((resolve, reject) => {
+      child.stdout.setEncoding("utf8").on("data", (d: string) => {
+        out += d;
+        const m = /url\s+(https?:\/\/[\d.]+:\d+)/.exec(out);
+        if (m && /on another machine/.test(out)) resolve(m[1]!);
+      });
+      child.on("exit", (code) => reject(new Error(`server exited ${code}: ${out}`)));
+    });
+    assert.doesNotMatch(out, /sitetok/, "a given token isn't printed");
+    const get = async (p: string) => {
+      const r = await fetch(url + p);
+      return { status: r.status, type: r.headers.get("content-type"), body: await r.text() };
+    };
+    assert.deepEqual(await get("/"), { status: 200, type: "text/html; charset=utf-8", body: "<h1>docs</h1>" });
+    assert.equal((await get("/cli.html")).body, "<h1>cli</h1>");
+    assert.equal((await get("/cli")).body, "<h1>cli</h1>");
+    assert.equal((await get("/guide/")).body, "<h1>guide</h1>");
+    assert.equal((await get("/nope.html")).status, 404);
+    assert.equal((await get("/%2e%2e/secret.txt")).status, 404, "nothing outside the site");
+    // the codebase's routes still need the token
+    assert.equal((await fetch(`${url}/missing`, { method: "POST", body: "{}" })).status, 401);
+    server.scratch(`// tcm: namespace lib\nexport const one = 1;\n`);
+    server.tcm("add");
+    const client = codebase(root, "client");
+    fs.rmSync(path.join(client.dir, "scratch.ts"));
+    client.tcm("remote", "add", "origin", url, "--token", "sitetok");
+    assert.match(client.tcm("pull"), /lib\.one|fast-forward|received/);
+    assert.match(client.tcm("ls", "lib"), /lib\.one/);
+  });

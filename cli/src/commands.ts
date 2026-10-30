@@ -249,6 +249,7 @@ export const commands = {
     toggle(name("run"), description("refuse to run code for clients"), schema(on)),
     ...tls,
     toggle(name("insecure"), description("allow clear-text tokens beyond localhost")),
+    option(name("site"), description("a directory of static files (a docs site) to answer GET requests from, to anyone"), schema(text(null))),
   ),
   mcp: command(name("mcp"), description("tools for AI agents to work in the codebase: a Model Context Protocol server (stdio)")),
   lsp: command(name("lsp"), description("language server for editors (stdio)"), toggle(name("stdio"), description("accepted for editors that pass it; stdio is the only transport"))),

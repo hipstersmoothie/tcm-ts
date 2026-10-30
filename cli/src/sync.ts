@@ -288,7 +288,7 @@ class HttpRemote implements Remote {
    * POST and resolve with the response stream. With a pinned fingerprint the server's certificate is checked
    * as soon as TLS is up, before any of the request (including the token) is written.
    */
-  private post(route: string, body: unknown): Promise<http.IncomingMessage> {
+  private post(route: string, body: unknown, retried = false): Promise<http.IncomingMessage> {
     const target = new URL(route, this.url);
     const payload = JSON.stringify(body);
     const headers = { "content-type": "application/json", "content-length": Buffer.byteLength(payload), ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) };
@@ -308,7 +308,12 @@ class HttpRemote implements Remote {
           reject(res.statusCode === 409 ? new ConflictError(msg) : new Error(`${this.label}: ${msg}`));
         });
       });
-      req.on("error", (e) => reject(e instanceof ConflictError ? e : new Error(`cannot reach ${this.label}: ${e.message}`)));
+      req.on("error", (e: NodeJS.ErrnoException) => {
+        // a kept-alive connection the server closed while this side was busy (verifying what it received):
+        // the request never reached it, so it's sent again, once, on a new one
+        if (req.reusedSocket && e.code === "ECONNRESET" && !retried) return void this.post(route, body, true).then(resolve, reject);
+        reject(e instanceof ConflictError ? e : new Error(`cannot reach ${this.label}: ${e.message}`));
+      });
       // a server that accepts and then stalls must not hang the client; `run` may legitimately be quiet for long
       if (route !== "run") req.setTimeout(60_000, () => req.destroy(new Error("no response for 60s")));
       const send = () => req.end(payload);
@@ -675,6 +680,50 @@ export interface ServeOptions {
   token: string;
   allowRun: boolean;
   tls?: { cert: string; key: string };
+  /** a directory GET requests are answered from (a docs site), beside the codebase's routes */
+  site?: string;
+  /** whether to print the token (one made up for this run; not one the caller gave) */
+  showToken?: boolean;
+}
+
+const SITE_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json",
+  ".txt": "text/plain; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".woff2": "font/woff2",
+};
+
+/** Answer a GET from a static site's directory: `/` and directories by their index.html, `/a` by a.html too. */
+function serveSite(root: string, req: http.IncomingMessage, res: http.ServerResponse) {
+  const base = path.resolve(root);
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(new URL(req.url ?? "/", "http://site").pathname);
+  } catch {
+    res.writeHead(400).end();
+    return;
+  }
+  let file = path.resolve(base, `.${pathname}`);
+  // (nothing outside it)
+  if (file !== base && !file.startsWith(base + path.sep)) {
+    res.writeHead(404).end();
+    return;
+  }
+  if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, "index.html");
+  if (!fs.existsSync(file) && fs.existsSync(`${file}.html`)) file = `${file}.html`;
+  if (!fs.existsSync(file)) {
+    const missing = path.join(base, "404.html");
+    res.writeHead(404, { "content-type": SITE_TYPES[".html"]! });
+    res.end(fs.existsSync(missing) ? fs.readFileSync(missing) : "not found");
+    return;
+  }
+  res.writeHead(200, { "content-type": SITE_TYPES[path.extname(file)] ?? "application/octet-stream" });
+  res.end(req.method === "HEAD" ? undefined : fs.readFileSync(file));
 }
 
 const isLoopback = (host: string) => host === "localhost" || host === "::1" || host.startsWith("127.");
@@ -725,6 +774,8 @@ export function serve(cb: Codebase, opts: ServeOptions, insecure = false): http.
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'" });
       return res.end(reviewPage());
     }
+    // the site, to anyone: it's what the server publishes (docs), not the codebase
+    if (opts.site && (req.method === "GET" || req.method === "HEAD")) return serveSite(opts.site, req, res);
     if (!authorized(req)) return reply(401, { error: "missing or wrong token" });
     if (req.method !== "POST") return reply(405, { error: "use POST" });
     let size = 0;
@@ -827,6 +878,10 @@ export function serve(cb: Codebase, opts: ServeOptions, insecure = false): http.
     }
   };
   const server = opts.tls ? https.createServer({ cert: opts.tls.cert, key: opts.tls.key }, handler) : http.createServer(handler);
+  // idle connections stay open longer than a client takes between requests (re-hashing what it received), and
+  // than a proxy in front of it expects (Railway's, say)
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
   const fingerprint = opts.tls && new X509Certificate(opts.tls.cert).fingerprint256;
   const scheme = opts.tls ? "https" : "http";
   server.listen(opts.port, opts.host, () => {
@@ -834,11 +889,12 @@ export function serve(cb: Codebase, opts: ServeOptions, insecure = false): http.
     console.log(`${bold("tcm serve")} ${cb.lay.root}`);
     console.log(`  url    ${scheme}://${opts.host}:${port}`);
     if (fingerprint) console.log(`  cert   sha256 ${fingerprint}`);
-    console.log(`  token  ${opts.token}`);
+    console.log(`  token  ${opts.showToken === false ? dim("(as given)") : opts.token}`);
+    if (opts.site) console.log(`  site   ${opts.site}`);
     console.log(`  run    ${opts.allowRun ? yellow("enabled: clients with the token can execute code here") : "disabled"}`);
     if (!isLoopback(opts.host)) console.log(opts.tls ? yellow("  listening beyond localhost") : red("  warning: listening beyond localhost without TLS"));
     const pin = fingerprint ? ` --fingerprint ${fingerprint}` : "";
-    console.log(dim(`\n  on another machine: tcm remote add <name> ${scheme}://<this-host>:${port} --token ${opts.token}${pin}`));
+    console.log(dim(`\n  on another machine: tcm remote add <name> ${scheme}://<this-host>:${port} --token ${opts.showToken === false ? "<token>" : opts.token}${pin}`));
   });
   return server;
 }

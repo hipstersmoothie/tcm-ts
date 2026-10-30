@@ -27,14 +27,21 @@ directory. `tcm remote` lists them; `tcm remote rm <name>` removes one.
 ## Serving a codebase
 
 `tcm serve [--port 7737] [--host 127.0.0.1] [--token t] [--no-run] [--tls [--tls-cert f --tls-key f]]
-[--insecure]` serves the codebase over HTTP(S).
+[--insecure] [--site dir]` serves the codebase over HTTP(S).
 
-- A token is required. Clients with it can push, pull and, unless `--no-run`, run code.
+- A token is required. Clients with it can push, pull and, unless `--no-run`, run code. Without `--token` or
+  `$TCM_TOKEN` it makes one up and prints it; one it was given isn't printed (so it stays out of a host's logs).
 - `--tls` uses `--tls-cert`/`--tls-key`, or a self-signed certificate it creates, and prints the certificate's
   fingerprint. Clients pin it with `tcm remote add … --fingerprint`, and the token is only written after the pin
   checks out.
 - Serving beyond localhost without TLS is refused unless `--insecure`.
 - `/contributions` is the [review page](contributions.md#the-review-page) for contributions pushed to it.
+- `--site <dir>` answers GET requests from a directory of static files, to anyone: a docs site published beside
+  the codebase. `/` and directories are their `index.html`, `/cli` is `cli.html` too, and nothing outside the
+  directory is served. Everything else still needs the token. tcm's own server serves its docs this way
+  ([developing](developing.md#tcms-server)).
+- Idle connections are kept open for 65 seconds, and a client resends a request once if the connection it reused
+  was closed meanwhile, so a client re-hashing a big pull, or a proxy in front of the server, doesn't break it.
 
 ## Running remotely
 

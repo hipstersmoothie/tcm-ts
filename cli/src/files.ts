@@ -117,6 +117,12 @@ export function fileLeaf(file: string): string {
 }
 
 /**
+ * A file's name on disk: its name in the codebase, and its format as the extension (none for a file without one,
+ * like `Dockerfile`).
+ */
+export const fileName = (leaf: string, rec: DefRecord): string => (formatOf(rec) ? `${leaf}.${formatOf(rec)}` : leaf);
+
+/**
  * Whether a file definition holds bytes (an image, or anything that isn't text) rather than text.
  */
 export const isBytes = (rec: DefRecord): boolean => (JSON.parse(rec.ir) as unknown[][])[2]?.[0] === "Bytes";
@@ -224,7 +230,7 @@ export function exportFiles(cb: Codebase, ns: string, dir: string, own = true): 
   if (!own) files.delete(ns);
   for (const [name, rec] of files) {
     const rel = (name === ns ? name.slice(name.lastIndexOf(".") + 1) : ns ? name.slice(ns.length + 1) : name).split(".");
-    const file = path.join(dir, ...rel.slice(0, -1), `${rel.at(-1)}.${formatOf(rec)}`);
+    const file = path.join(dir, ...rel.slice(0, -1), fileName(rel.at(-1)!, rec));
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, fileContent(cb, rec, name.slice(0, Math.max(0, name.lastIndexOf(".")))));
   }
