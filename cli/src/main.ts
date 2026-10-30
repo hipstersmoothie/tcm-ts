@@ -53,6 +53,10 @@ import { sessionDirFor } from "./codebase.ts";
 import { fileName } from "./files.ts";
 import { randomBytes } from "node:crypto";
 import assert from "node:assert/strict";
+import { groupImports } from "@tcm/loader";
+import { isNamedImports } from "typescript/ast";
+import type { ImportDeclaration } from "typescript/ast";
+import { pruneImports } from "./mirror.ts";
 
 
 // ---- scratch files: check / add / update ----------------------------------------------------------
@@ -541,6 +545,8 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
   // nothing to lose, and starts again (as --force does)
   const adding = !!existing.trim() && !force && !holdsOnlySaved(cb, file);
   const fileNs = adding ? (/^\/\/ tcm: namespace (\S+)/m.exec(existing)?.[1] ?? "") : "";
+  // what's in it saved as it is goes: the file holds what's being worked on
+  const { text: kept, cleared } = adding ? clearSaved(cb, file, existing) : { text: existing, cleared: [] as string[] };
   const pathOf = new Map<string, string | undefined>();
   for (const t of targets) {
     // a name holding a type and a value edits both
@@ -562,7 +568,7 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
   const inFile = (p: string) => {
     const leaf = p.slice(p.lastIndexOf(".") + 1).replaceAll("$", "\\$");
     const declared = new RegExp(`^(?:export\\s+)?(?:declare\\s+)?(?:async\\s+)?(?:abstract\\s+)?(?:const|let|var|function\\*?|class|type|interface)\\s+${leaf}\\b`, "m");
-    return existing.includes(`// tcm: path ${p}\n`) || (nsOf(p) === fileNs && declared.test(existing));
+    return kept.includes(`// tcm: path ${p}\n`) || (nsOf(p) === fileNs && declared.test(kept));
   };
   if (adding) for (const [h, p] of pathOf) if (p !== undefined && inFile(p)) pathOf.delete(h);
   if (!pathOf.size) {
@@ -587,8 +593,8 @@ function edit(cb: Codebase, targets: string[], target: string | ((jsx: boolean) 
     },
   }).text;
   if (adding) {
-    fs.writeFileSync(file, addToScratch(file, existing, text));
-    console.log(`added ${targets.join(", ")} to ${path.relative(process.cwd(), file)}`);
+    fs.writeFileSync(file, addToScratch(file, kept, text));
+    console.log(`added ${targets.join(", ")} to ${path.relative(process.cwd(), file)}${cleared.length ? dim(` (took out ${cleared.join(", ")}: saved as ${cleared.length > 1 ? "they are" : "it is"})`) : ""}`);
   } else {
     fs.writeFileSync(file, (ns ? `// tcm: namespace ${ns}\n` : "") + text);
     // (where it is from here: a session's is in its own directory)
@@ -1822,22 +1828,23 @@ export function importedPaths(file: string, text: string): string[] {
 
 /**
  * A scratch file's text with more definitions in it (`text`, rendered as `tcm edit` writes them): their imports
- * after the file's own (those it has already left out), and their code at the end.
+ * after the file's own, without the names it imports already, and their code at the end.
  */
 export function addToScratch(file: string, existing: string, text: string): string {
-  const lines = text.split("\n");
-  let body = 0;
-  while (body < lines.length && (lines[body]!.startsWith("import ") || !lines[body]!.trim())) body++;
-  const have = new Set(existing.split("\n").map((l) => l.trim()));
-  const imports = lines.slice(0, body).filter((l) => l.startsWith("import ") && !have.has(l.trim()));
-  const code = lines.slice(body).join("\n").trimEnd();
-  const last = parse_1(file, existing).statements.filter(ts_isImportDeclaration).at(-1);
+  const have = parse_1(file, existing).statements.filter(ts_isImportDeclaration);
+  // (names it imports, or declares itself)
+  const bound = new Set([...have.flatMap((st) => importedLocals(st)), ...declarations(file, existing).keys()]);
+  const added = parse_1(file, text).statements.filter(ts_isImportDeclaration);
+  const lines = added.flatMap((st) => importLines(st, text).filter((l) => !bound.has(l.local)).map((l) => l.line));
+  const imports = lines.length ? groupImports(lines) : [];
+  const code = text.slice(added.at(-1)?.end ?? 0).trim();
+  const last = have.at(-1);
   // after the last import, or else the namespace line, or else at the top
   const pragma = /^\/\/ tcm: namespace \S+\n/.exec(existing);
   const at = last ? last.end + (existing[last.end] === "\n" ? 1 : 0) : pragma ? pragma[0].length : 0;
   const head = existing.slice(0, at) + (imports.length ? imports.join("\n") + "\n" : "");
   const rest = existing.slice(at);
-  return `${head}${!last && imports.length && rest.trim() ? "\n" : ""}${rest.trimEnd()}\n\n${code}\n`;
+  return `${head}${!last && imports.length && rest.trim() ? "\n" : ""}${rest.trimEnd()}\n\n${code}\n`.replace(/\n{3,}/g, "\n\n");
 }
 
 /**
@@ -1848,5 +1855,69 @@ export const testAddToScratch = () => {
   const existing = `// tcm: namespace lib\nimport { a } from "#codebase/lib";\n\nexport const b = (): number => a + 1;\n`;
   const text = `import { a } from "#codebase/lib";\nimport fs from "node:fs";\n\nexport const c = (): string => fs.readFileSync("x", "utf8") + a;\n`;
   assert.equal(addToScratch("s.ts", existing, text), `// tcm: namespace lib\nimport { a } from "#codebase/lib";\nimport fs from "node:fs";\n\nexport const b = (): number => a + 1;\n\nexport const c = (): string => fs.readFileSync("x", "utf8") + a;\n`);
+  // a name the file imports already, in an import of several, isn't imported again; the others are, together
+  const grouped = `import { a, d } from "#codebase/lib";\nimport type { T } from "#codebase/lib";\n\nexport const e = (t: T): number => a + d + t.n;\n`;
+  assert.equal(addToScratch("s.ts", existing, grouped), `// tcm: namespace lib\nimport { a } from "#codebase/lib";\nimport { d } from "#codebase/lib";\nimport type { T } from "#codebase/lib";\n\nexport const b = (): number => a + 1;\n\nexport const e = (t: T): number => a + d + t.n;\n`);
   assert.equal(addToScratch("s.ts", "export const x = 1;\n", `import fs from "node:fs";\n\nexport const y = fs;\n`), `import fs from "node:fs";\n\nexport const x = 1;\n\nexport const y = fs;\n`);
+}
+
+/**
+ * A scratch file's text without the definitions in it saved as they are (their docs and `// tcm: path` lines
+ * with them, and imports only they used), so it holds what's being worked on; one the rest of the file mentions
+ * (a watch expression, another definition) stays. The names taken out.
+ */
+export function clearSaved(cb: Codebase, file: string, text: string): { text: string; cleared: string[] } {
+  cb.refreshShim();
+  const a = cb.analyze(file, cb.scratchSalts());
+  if (a.errors.length || a.diagnostics.length) return { text, cleared: [] };
+  const decls = declarations(file, text);
+  const spans = classify(cb, a.defs, a.namespace ?? "").flatMap((r) => {
+    // (the file's own definitions, as analyzed: each a whole statement, with its doc)
+    const def = r.def as ProjectDef;
+    const d = decls.get(def.nameHint);
+    if (r.status !== "identical" || def.file !== file || !d || d.shared) return [];
+    let start = d.doc?.start ?? d.start;
+    const pragma = /(?:^|\n)\/\/ tcm: path \S+\n$/.exec(text.slice(0, start));
+    if (pragma) start = pragma.index + (text[pragma.index] === "\n" ? 1 : 0);
+    let end = d.end;
+    while (text[end] === "\n") end++;
+    return [{ start, end, name: def.nameHint, path: r.path }];
+  });
+  const without = (keep: typeof spans) => {
+    let out = text;
+    for (const sp of [...keep].sort((x, y) => y.start - x.start)) out = out.slice(0, sp.start) + out.slice(sp.end);
+    return out;
+  };
+  const rest = without(spans);
+  const gone = spans.filter((sp) => !new RegExp(`\\b${sp.name.replaceAll("$", "\\$")}\\b`).test(rest));
+  if (!gone.length) return { text, cleared: [] };
+  return { text: pruneImports(file, text, without(gone)).replace(/\n{3,}/g, "\n\n"), cleared: gone.map((sp) => sp.path) };
+}
+
+/**
+ * An import declaration as one import per name it binds (for grouping), each with the name.
+ */
+export function importLines(st: ImportDeclaration, text: string): { local: string; line: string }[] {
+  const c = st.importClause;
+  if (!c) return [];
+  const from = text.slice(st.moduleSpecifier.getStart(), st.moduleSpecifier.end);
+  const type = isTypeOnlyImport(c) ? "type " : "";
+  const b = c.namedBindings;
+  return [
+    ...(c.name ? [{ local: c.name.text, line: `import ${type}${c.name.text} from ${from};` }] : []),
+    ...(b && ts_isNamespaceImport(b) ? [{ local: b.name.text, line: `import ${type}* as ${b.name.text} from ${from};` }] : []),
+    ...(b && isNamedImports(b)
+      ? b.elements.map((e) => ({ local: e.name.text, line: `import ${type || (e.isTypeOnly ? "type " : "")}{ ${e.propertyName ? `${text.slice(e.propertyName.getStart(), e.propertyName.end)} as ` : ""}${e.name.text} } from ${from};` }))
+      : []),
+  ];
+}
+
+/**
+ * The names an import declaration binds.
+ */
+export function importedLocals(st: ImportDeclaration): string[] {
+  const c = st.importClause;
+  if (!c) return [];
+  const b = c.namedBindings;
+  return [...(c.name ? [c.name.text] : []), ...(b && ts_isNamespaceImport(b) ? [b.name.text] : b && isNamedImports(b) ? b.elements.map((e) => e.name.text) : [])];
 }

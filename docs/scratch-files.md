@@ -88,8 +88,10 @@ nothing to do
 
 `tcm edit <name>...` is also how you change anything: it writes definitions into `scratch.ts`. A scratch file
 holding work (anything not saved as it is) keeps it: what you edit next is added to it, its imports with the
-file's (none twice), and a definition already in it isn't added again. One holding only what's saved starts
-again. `--file other.ts` picks another file, `--force` replaces what it holds. Code with JSX goes to
+file's (none twice), and a definition already in it isn't added again. What's in the file saved as it is goes
+(with imports only it used), unless the rest of the file uses it, so it holds what you're working on. One
+holding only what's saved starts again. A scratch file's imports are one statement per module, wrapped when
+long. `--file other.ts` picks another file, `--force` replaces what it holds. Code with JSX goes to
 `scratch.tsx`, which takes the rest too while it holds work and `scratch.ts` doesn't. Edit, then
 `tcm update`. You can edit several at once, from different namespaces: each gets a `// tcm: path a.b.c` comment
 when its path isn't the file's namespace plus its name, so `update` puts it back where it came from.

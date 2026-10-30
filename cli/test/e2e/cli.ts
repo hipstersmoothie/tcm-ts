@@ -185,3 +185,26 @@ export const testMovedCodebaseFindsNodeTypes = () => {
   const roots: string[] = JSON.parse(fs.readFileSync(file, "utf8")).compilerOptions.typeRoots;
   assert.ok(roots.every((r) => fs.existsSync(r)), roots.join(", "));
 }
+
+/**
+ * Edit adds to the scratch file that holds work: what's in it saved as it is goes (with imports only it used),
+ * what's changed stays, and the definition comes in with its imports, one statement per module.
+ */
+export const testEditAddsToTheScratchFile = () => {
+  const dir = tempDir("edit adds");
+  const ok = (...args: string[]) => okIn(dir, ...args);
+  const scratch = path.join(dir, "scratch.ts");
+  ok("init");
+  fs.writeFileSync(scratch, `// tcm: namespace lib\nimport fs from "node:fs";\n\nexport const exists = (p: string): boolean => fs.existsSync(p);\nexport const one = (): number => 1;\nexport const two = (): number => 2;\nexport const both = (): number => one() + two();\n`);
+  ok("add");
+  // one changed (work), one saved as it is
+  fs.writeFileSync(scratch, `// tcm: namespace lib\nimport fs from "node:fs";\n\nexport const exists = (p: string): boolean => fs.existsSync(p);\nexport const one = (): number => 10;\n`);
+  assert.match(ok("edit", "lib.both"), /added lib\.both to scratch\.ts \(took out lib\.exists: saved as it is\)/);
+  const text = fs.readFileSync(scratch, "utf8");
+  assert.doesNotMatch(text, /exists|node:fs/);
+  assert.match(text, /export const one = \(\): number => 10;/);
+  assert.match(text, /^import \{ two \} from "#codebase\/lib";$/m);
+  assert.match(text, /export const both = \(\): number => one\(\) \+ two\(\)/);
+  // (both reads one as the file's own: the edited one)
+  assert.match(ok("check"), /~ update +lib\.one[\s\S]*~ update +lib\.both/);
+}
