@@ -102,8 +102,8 @@ export const commands = {
   ),
   export: command(
     name("export"),
-    description("write the files kept under a namespace (Markdown, CSS, images) to a directory, laid out by their names, links and names as they are now"),
-    argument(name("namespace"), description("the namespace, like docs"), schema(text(null))),
+    description("write the files kept under a namespace (Markdown, CSS, images), or one file, to a directory, laid out by their names, links and names as they are now"),
+    argument(name("namespace"), description("the namespace, like docs, or a file, like docs.guide"), schema(text(null))),
     argument(name("dir"), description("where to write them"), schema(text(null))),
   ),
   mv: command(name("mv"), description("rename a definition or namespace (no code changes)"), argument(name("from"), description("a name or namespace"), schema(text(null))), argument(name("to"), description("its new name"), schema(text(null)))),

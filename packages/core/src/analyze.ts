@@ -7,7 +7,7 @@ import { extract, TcmError, type DefSite, type ExtractMode, type Piece } from ".
 import { canonicalizeSite, declKey, type CanonContext, type Resolved, type SiteResult, type SymbolLookup } from "./canonicalize.ts";
 import { compareVersions, compatRange } from "./semver.ts";
 import { checkProfile, compilerOptions, createProgram, fileDiagnostics, type Compile, type CompilerOptions, type Diagnostic } from "./program.ts";
-import { depRef, SERVER_API_MODULE, type DefRecord, type Dep, type DocRef, type ExtRef, type Span } from "./types.ts";
+import { depRef, HOST_MODULES, SERVER_API_MODULE, type DefRecord, type Dep, type DocRef, type ExtRef, type Span } from "./types.ts";
 import { paramsSchema, typeSchema, type ParamsSchema, type TableSchema } from "./schema.ts";
 import { createHash } from "node:crypto";
 import { cacheRefOf, shapeBuilder, type TypeShape } from "./shape.ts";
@@ -216,6 +216,8 @@ function isServerApiFile(spec: string, file: string, host: AnalyzeHost): boolean
 function externalModule(spec: string, file: string, at: ts.Node, exportName: string, host?: AnalyzeHost): ExtRef {
   if (spec === SERVER_API) return { module: SERVER_API_MODULE, subpath: "", export: exportName };
   if (isBuiltin(spec)) return { module: spec.startsWith("node:") ? spec : `node:${spec}`, subpath: "", export: exportName };
+  // provided by where the code runs (an editor's API): unversioned, like Node's own
+  if (HOST_MODULES.has(spec)) return { module: spec, subpath: "", export: exportName };
   const parts = spec.split("/");
   const pkgName = spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
   const subpath = parts.slice(pkgName.split("/").length).join("/");

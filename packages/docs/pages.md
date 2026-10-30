@@ -57,7 +57,7 @@ links to doesn't make the code using it run on the server or in the browser.
 ## Writing them out
 
 `tcm export <namespace> <dir>` writes a namespace's files to a directory, laid out by their names (`docs.a.b` is
-`a/b.md`), with links and names as they are now. A package can ship them too: an entry of its manifest's `files`
+`a/b.md`), with links and names as they are now; `tcm export docs.guide <dir>` writes the one file, `guide.md`. A package can ship them too: an entry of its manifest's `files`
 can be a namespace of files instead of a path ([publishing](publishing.md#packages)).
 
 In a [mirror](importing.md#mirrors), the files under the mirrored directory that aren't code or configuration

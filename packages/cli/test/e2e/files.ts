@@ -42,6 +42,9 @@ export const testFilesInAMirror = () => {
   // bytes are kept as bytes
   ok("export", "app.media", path.join(root, "out"));
   assert.ok(fs.readFileSync(path.join(root, "out", "logo.png")).equals(png));
+  // one file is written by its name
+  ok("export", "app.docs.guide", path.join(root, "one"));
+  assert.deepEqual(fs.readdirSync(path.join(root, "one")), ["guide.md"]);
   assert.match(ok("mirror", "--check"), /the files hash to what the codebase holds/);
 }
 

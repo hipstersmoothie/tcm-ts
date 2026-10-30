@@ -12,7 +12,7 @@ import { createProgram, exportId, ts, type DefKind } from "@tcm/core";
 import { externalsOf, npmAlias, parseModule, render, type DefSource } from "@tcm/loader";
 import type { NameRow } from "@tcm/store";
 import type { Codebase } from "./codebase.ts";
-import { exportFiles, filesIn } from "./files.ts";
+import { exportFiles, fileContent, filesIn, formatOf } from "./files.ts";
 
 export interface PackOptions {
   name: string;
@@ -31,6 +31,8 @@ export interface PackOptions {
   names?: NameRow[];
   /** CHANGELOG.md's contents, for a release */
   changelog?: string;
+  /** fields package.json starts from: tcm's own (version, module type, entries, dependencies) are written over them */
+  packageJson?: Record<string, unknown>;
   /** other packages of the codebase: what of theirs this one uses comes from their releases, not copied in */
   siblings?: Sibling[];
 }
@@ -308,24 +310,35 @@ export function pack(cb: Codebase, opts: PackOptions): { dir: string; modules: n
   if (opts.changelog) fs.writeFileSync(path.join(dir, "CHANGELOG.md"), opts.changelog);
   for (const f of opts.files) {
     const from = path.resolve(cb.lay.root, f);
-    // or a namespace of the codebase's files (pages, images), written out under its last name
+    // or one of the codebase's files, or a namespace of them (pages, images), written out under its last name
     if (!fs.existsSync(from) && filesIn(cb, f).size) {
-      exportFiles(cb, f, path.join(dir, f.slice(f.lastIndexOf(".") + 1)));
+      const leaf = f.slice(f.lastIndexOf(".") + 1);
+      const file = cb.store.hashesAt(f).map((h) => cb.store.getDef(h)!).find((d) => d.kind === "file");
+      if (file) fs.writeFileSync(path.join(dir, `${leaf}.${formatOf(file)}`), fileContent(cb, file, f.slice(0, Math.max(0, f.lastIndexOf(".")))));
+      exportFiles(cb, f, path.join(dir, leaf), false);
       continue;
     }
     if (!fs.existsSync(from)) throw new Error(`--files: ${f} doesn't exist, and isn't a namespace with files in it`);
     const rel = path.relative(cb.lay.root, from);
     fs.cpSync(from, path.join(dir, rel.startsWith("..") ? path.basename(from) : rel), { recursive: true });
   }
+  // what package.json starts from (a VS Code extension's contributes), without what tcm works out itself
+  const { dependencies: givenDeps, devDependencies: _dd, peerDependencies: _p, scripts: _s, ...given } = opts.packageJson ?? {};
+  // of the dependencies it gives, those shipped with the package (`file:./plugin`) stay: tcm can't see them
+  const shipped = Object.entries((givenDeps ?? {}) as Record<string, string>).filter(([, v]) => v.startsWith("file:"));
+  const entry = (exportsField["."] as { default?: string } | undefined)?.default;
   const pkg = {
-    name: opts.name,
+    ...given,
+    name: typeof given.name === "string" ? given.name : opts.name,
     version: opts.version,
-    ...(opts.description ? { description: opts.description } : {}),
+    ...(opts.description && !given.description ? { description: opts.description } : {}),
     type: "module",
     ...(Object.keys(binField).length ? { bin: binField } : {}),
     ...(Object.keys(exportsField).length ? { exports: exportsField } : {}),
-    engines: { node: ">=22.18" },
-    dependencies: Object.fromEntries(Object.entries(dependencies).sort()),
+    // (an editor loads an extension from `main`)
+    ...(given.main !== undefined && entry ? { main: entry } : {}),
+    engines: { ...(given.engines as Record<string, string> | undefined), node: ">=22.18" },
+    dependencies: Object.fromEntries([...Object.entries(dependencies), ...shipped].sort()),
   };
   fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
   return { dir, modules: kept.size, dependencies: pkg.dependencies };

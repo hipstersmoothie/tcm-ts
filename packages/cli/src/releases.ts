@@ -309,6 +309,11 @@ export function packPackage(cb: Codebase, name: string | undefined, version: str
       }),
     }));
   const hasReleases = cb.store.releases(pkg.name).length > 0;
+  // the fields its package.json starts from, from a JSON file of the codebase
+  const jsonAt = pkg.manifest.packageJson && absolute(pkg.namespace, pkg.manifest.packageJson);
+  const json = jsonAt ? cb.store.hashesAt(jsonAt).map((h) => cb.store.getDef(h)!).find((d) => d.kind === "file") : undefined;
+  if (jsonAt && !json) throw new Error(`${pkg.manifestPath}: packageJson names ${jsonAt}, which isn't a file of the codebase`);
+  const packageJson = json && (JSON.parse(json.sourceText) as Record<string, unknown>);
   const r = pack(cb, {
     name: pkg.name,
     version: release?.version ?? "0.0.0",
@@ -322,6 +327,7 @@ export function packPackage(cb: Codebase, name: string | undefined, version: str
     names: rows,
     changelog: release ? changelog(cb, pkg.name, release.version) : hasReleases ? changelog(cb, pkg.name) : undefined,
     siblings,
+    ...(packageJson ? { packageJson } : {}),
   });
   return { ...r, pkg, version: release?.version ?? "0.0.0" };
 }

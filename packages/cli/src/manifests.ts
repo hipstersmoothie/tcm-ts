@@ -18,6 +18,8 @@ export interface Manifest {
   with: string[];
   /** files to copy in, relative to the codebase root */
   files: string[];
+  /** a JSON file of the codebase (relative to the namespace) whose fields the package's package.json starts from (a VS Code extension's `contributes`, `engines`) */
+  packageJson?: string;
   /** command → test files that run it as a program (relative to the codebase root): `tcm test` runs them */
   suites: Record<string, string[]>;
 }
@@ -75,7 +77,8 @@ function validate(at: string, v: Record<string, unknown>, doc: string | undefine
   }
   const list = (k: "with" | "files") => (v[k] === undefined ? [] : strings(v[k], `\`${k}\``));
   const description = typeof v.description === "string" ? v.description : doc?.split(/\n\s*\n/)[0]!.replace(/\s+/g, " ").trim() || undefined;
-  return { name: v.name as string, description, exports, bin, with: list("with"), files: list("files"), suites };
+  if (v.packageJson !== undefined && typeof v.packageJson !== "string") fail("`packageJson` must name a JSON file of the codebase");
+  return { name: v.name as string, description, exports, bin, with: list("with"), files: list("files"), suites, ...(typeof v.packageJson === "string" ? { packageJson: v.packageJson } : {}) };
 }
 
 /** The packages a branch's names (or a past namespace's) declare. */

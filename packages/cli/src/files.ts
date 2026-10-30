@@ -195,12 +195,14 @@ export function markdownLinks(text: string): { start: number; end: number; targe
 }
 
 /**
- * Write the files kept under `ns` to `dir`, laid out by their names (`ns.a.b` is `a/b.<format>`): how many.
+ * Write the files kept under `ns` to `dir`, laid out by their names (`ns.a.b` is `a/b.<format>`), and the file
+ * named `ns` itself, if there is one and `own`, as `<its name>.<format>`: how many.
  */
-export function exportFiles(cb: Codebase, ns: string, dir: string): number {
+export function exportFiles(cb: Codebase, ns: string, dir: string, own = true): number {
   const files = filesIn(cb, ns);
+  if (!own) files.delete(ns);
   for (const [name, rec] of files) {
-    const rel = (ns ? name.slice(ns.length + 1) : name).split(".");
+    const rel = (name === ns ? name.slice(name.lastIndexOf(".") + 1) : ns ? name.slice(ns.length + 1) : name).split(".");
     const file = path.join(dir, ...rel.slice(0, -1), `${rel.at(-1)}.${formatOf(rec)}`);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, fileContent(cb, rec, name.slice(0, Math.max(0, name.lastIndexOf(".")))));

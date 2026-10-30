@@ -14,7 +14,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { compareVersions, compatRange, isExactVersion, satisfies, type ExtRef } from "@tcm/core";
+import { compareVersions, compatRange, HOST_MODULES, isExactVersion, satisfies, type ExtRef } from "@tcm/core";
 import type { Layout } from "./index.ts";
 
 /** The codebase's package lock: the exact version of each package used within each compatible range. */
@@ -217,6 +217,17 @@ export function ensureExternals(lay: Layout, exts: Iterable<ExtRef>): void {
   const lock = lockOf(lay);
   const wanted = new Map<string, { name: string; range: string }>();
   for (const e of exts) {
+    // a module where the code runs provides (`vscode`): only its types, installed under their own name, where
+    // TypeScript looks for them; at the newest range the codebase has locked them at, else the newest release
+    const types = HOST_MODULES.get(e.module);
+    if (types) {
+      if (wanted.has(types)) continue;
+      const locked = lock.all().filter((l) => l.name === types).sort((x, y) => compareVersions(y.version, x.version))[0];
+      const latest = locked ? undefined : newestVersion(types);
+      const range = locked?.range ?? (latest && compatRange(latest));
+      if (range) wanted.set(types, { name: types, range });
+      continue;
+    }
     if (!e.module.startsWith("npm:")) continue;
     const { name, version } = parseModule(e.module);
     const range = compatRange(version);

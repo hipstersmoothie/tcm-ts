@@ -62,7 +62,8 @@ package along. A `manifest` at the root makes the whole codebase one package.
 | `exports` | subpath (`"."`, `"./ui"`) → names under the namespace whose definitions it exports (`""` is all of it). Default `{ ".": "" }` |
 | `bin` | command → the definition it runs |
 | `with` | packages the code needs but doesn't import, like `@types/node@^24` |
-| `files` | files to copy in: paths relative to the codebase root (a README, a licence), or namespaces of the codebase's [files](pages.md), relative to the package's, written out under their last name (`docs` is `docs/`) |
+| `files` | files to copy in: paths relative to the codebase root (a README, a licence), or the codebase's own [files](pages.md), relative to the package's, written out under their last name: a namespace of them as a directory (`docs` is `docs/`), one as itself (`files.README` is `README.md`) |
+| `packageJson` | a JSON file of the codebase, relative to the package's namespace, that its `package.json` starts from: fields tcm doesn't write, like a VS Code extension's `contributes`, `publisher` and `engines`. tcm's own fields win (`type`, `exports`, `bin`, `version`), `main` is the main entry if it gives one, and its dependencies are dropped but for ones shipped in the package (`file:./plugin`); its scripts and dev dependencies are dropped too |
 | `suites` | command → namespaces of test definitions that run it, relative to the package's: `tcm test` runs them as programs ([suites](testing.md#suites-testing-a-command-as-a-program)). Not packed |
 | `description` | defaults to the first paragraph of the manifest's doc comment |
 
@@ -116,6 +117,14 @@ In a manifest, or on the command line:
   of `package.json`. The output directory is replaced each time, so it has to be empty or an earlier pack.
 
 The package is ESM (`"type": "module"`) and needs Node 22.18 or newer, as tcm does.
+
+### Code for an editor
+
+Some modules aren't installed but come from where the code runs: `vscode`, the API VS Code gives its extensions.
+Code imports it as usual (`import * as vscode from "vscode"`); tcm checks it against `@types/vscode` (provided
+like any [package](packages.md)), records it unversioned, as it does Node's builtins, and a package never depends
+on it. The version of VS Code it needs is the package's to say, as `engines.vscode` in its `packageJson`. tcm's
+own [VS Code extension](editors.md#vs-code) is packed this way: `pnpm tcm pack tcm-ts-vscode`.
 
 ## What a package can hold
 

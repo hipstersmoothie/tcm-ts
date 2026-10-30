@@ -5,6 +5,13 @@ import type { TypeShape } from "./shape.ts";
 export const SERVER_API_MODULE = "tcm:server";
 
 /**
+ * Modules provided by where code runs, rather than installed: an editor's API to its extensions. Imports of one are
+ * unversioned (like Node's builtins), nothing is installed for it, and a package doesn't depend on it; its types
+ * come from the package named here. The version the code needs is its package's to say (`engines`).
+ */
+export const HOST_MODULES: ReadonlyMap<string, string> = new Map([["vscode", "@types/vscode"]]);
+
+/**
  * A file (`file`: Markdown, CSS, an image) is kept as written: a value, in the space terms and classes share.
  */
 export type DefKind = "term" | "type" | "class" | "file";

@@ -125,3 +125,68 @@ export const testPackRefusesAmbiguousExports = () => {
   assert.match(spawn(process.execPath, [tcmBin(), "pack", "greet", "--name", "x", "--out", "."]).out, /--out \.: .* isn't empty or an earlier tcm pack/);
   assert.ok(fs.existsSync(path.join(dir, ".tcm", "codebase.sqlite")));
 };
+
+/**
+ * A package for an editor (a VS Code extension): its API comes from where it runs (`vscode`, its types from
+ * @types/vscode, never a dependency), its package.json starts from a file of the codebase, and files ship beside it.
+ */
+export const testPackForAnEditor = () => {
+  const dir = tempDir("pack editor");
+  const env = plainEnv();
+  const tcm = (...args: string[]) => {
+    const r = spawnSync(process.execPath, [tcmBin(), ...args], { cwd: dir, encoding: "utf8", env });
+    if (r.status !== 0) throw new Error(`tcm ${args.join(" ")} exited ${r.status}:\n${strip(r.stdout + r.stderr)}`);
+    return strip(r.stdout + r.stderr);
+  };
+  const write = (file: string, text: string) => {
+    fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    fs.writeFileSync(path.join(dir, file), text);
+  };
+  tcm("init");
+  fs.rmSync(path.join(dir, "scratch.ts"));
+  const manifest = {
+    name: "hello-ext",
+    main: "./extension.js",
+    engines: { vscode: "^1.90.0" },
+    contributes: { commands: [{ command: "hello.say", title: "Say hello" }] },
+    dependencies: { helper: "file:./helper" },
+    scripts: { build: "nothing to build" },
+  };
+  write("files/package.json", JSON.stringify(manifest, null, 2));
+  write("files/README.md", "# hello\n");
+  write("files/helper/package.json", JSON.stringify({ name: "helper", main: "index.js" }));
+  tcm("add", "files/package.json", "--into", "ext.files");
+  tcm("add", "files/README.md", "--into", "ext.files");
+  tcm("add", "files/helper/package.json", "--into", "ext.files.helper");
+  write(
+    "ext.ts",
+    `// tcm: namespace ext
+import * as vscode from "vscode";
+
+export const manifest = { name: "hello-ext", exports: { ".": ["activate"] }, packageJson: "files.package", files: ["files.README", "files.helper"] };
+
+export function activate(context: vscode.ExtensionContext): void {
+  context.subscriptions.push(vscode.commands.registerCommand("hello.say", () => vscode.window.showInformationMessage("hello")));
+}
+`,
+  );
+  tcm("add", "ext.ts");
+  assert.match(tcm("deps", "ext.activate"), /vscode/);
+  // checked again from the codebase, the types come from @types/vscode there too
+  assert.match(tcm("verify"), /verified \d+ definitions/);
+
+  tcm("pack", "hello-ext");
+  const out = path.join(dir, ".tcm", "pack", "hello-ext");
+  const pkg = JSON.parse(fs.readFileSync(path.join(out, "package.json"), "utf8"));
+  assert.equal(pkg.name, "hello-ext");
+  assert.equal(pkg.type, "module");
+  assert.equal(pkg.main, "./index.js", "main is the entry tcm writes");
+  assert.deepEqual(pkg.contributes, manifest.contributes);
+  assert.deepEqual(pkg.engines, { vscode: "^1.90.0", node: ">=22.18" });
+  assert.deepEqual(pkg.dependencies, { helper: "file:./helper" }, "what ships with it stays; vscode isn't installed");
+  assert.equal(pkg.scripts, undefined);
+  assert.equal(fs.readFileSync(path.join(out, "README.md"), "utf8"), "# hello\n");
+  assert.ok(fs.existsSync(path.join(out, "helper", "package.json")));
+  const modules = fs.readdirSync(path.join(out, "modules")).filter((f) => f.endsWith(".js")).map((f) => fs.readFileSync(path.join(out, "modules", f), "utf8")).join("\n");
+  assert.match(modules, /from "vscode";/);
+};

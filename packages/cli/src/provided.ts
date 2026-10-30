@@ -14,7 +14,7 @@
 // Nothing here is part of a hash: definitions record the range their imports resolved to, as always.
 import fs from "node:fs";
 import path from "node:path";
-import { compareVersions, compatRange, packageNameOf, pinnedRange, scratchNamespace, ts, type CompilerOptions, type ExtRef, type PackageResolver } from "@tcm/core";
+import { compareVersions, compatRange, HOST_MODULES, packageNameOf, pinnedRange, scratchNamespace, ts, type CompilerOptions, type ExtRef, type PackageResolver } from "@tcm/core";
 import { ensureExternals, newestVersion, npmAlias } from "@tcm/loader";
 import type { Codebase } from "./codebase.ts";
 
@@ -108,9 +108,11 @@ export function providePackages(cb: Codebase, file: string, text: string, option
   const dirs = new Map<string, string>();
   const exts: ExtRef[] = [];
   for (const name of importedPackages(file, text, options)) {
-    const r = rangeFor(cb, name, file, text);
+    // a module where the code runs provides (`vscode`): only its types are provided
+    const pkg = HOST_MODULES.get(name) ?? name;
+    const r = rangeFor(cb, pkg, file, text);
     if (!r || r.project) continue;
-    const module = `npm:${name}@${r.range}`;
+    const module = `npm:${pkg}@${r.range}`;
     exts.push({ module, subpath: "", export: "*" });
     dirs.set(name, path.join(cb.lay.cacheDir, "node_modules", npmAlias(module)));
   }
