@@ -550,7 +550,12 @@ export function syncMirror(cb: Codebase): boolean {
       }
       try {
         const code = codeFor(rec, was ?? leaf, spelling, true);
-        added += `\n${rec.doc ? docComment(rec.doc) : ""}${terminated(code, /^(export )?(const|let|var|type) /.test(code))}\n`;
+        const written = `${rec.doc ? docComment(rec.doc) : ""}${terminated(code, /^(export )?(const|let|var|type) /.test(code))}\n`;
+        // before the first declaration here that uses it (a value is only there once its declaration has run),
+        // else at the end
+        const users = [...decls].filter(([l]) => cur[l] && cb.store.getDef(cur[l]!)?.deps.some((d) => d.ref === `#${h}`)).map(([, d]) => d.doc?.start ?? d.start);
+        if (users.length) edits.push({ start: Math.min(...users), end: Math.min(...users), text: `${written}\n` });
+        else added += `\n${written}`;
       } catch (e) {
         problems.push(`${joinName(f.ns, leaf)}: ${(e as Error).message}`);
       }

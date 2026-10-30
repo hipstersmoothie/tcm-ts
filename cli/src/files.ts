@@ -102,7 +102,9 @@ export function fileDefinition(cb: Codebase, name: string, format: string, conte
  */
 export function fileFormat(file: string): string | undefined {
   const ext = path.extname(file).slice(1).toLowerCase();
-  return TEXT_FORMATS.has(ext) || BINARY_FORMATS.has(ext) ? ext : undefined;
+  // anything but TypeScript, the code a scratch file holds: shell scripts, configuration, … (text or bytes, by
+  // their content)
+  return ext && !/^(m|c)?tsx?$/.test(ext) ? ext : undefined;
 }
 
 /**
