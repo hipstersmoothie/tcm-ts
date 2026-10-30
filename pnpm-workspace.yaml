@@ -1,6 +1,0 @@
-packages:
-  - cli
-  - core
-  - loader
-  - store
-  - vscode

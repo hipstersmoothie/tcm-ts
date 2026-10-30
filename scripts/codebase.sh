@@ -1,42 +1,41 @@
 #!/bin/sh
-# tcm, working on tcm's own codebase: `pnpm tcm edit tcmts.core.semver.compatRange`, `pnpm tcm update`, `pnpm tcm mv …`.
-# The codebase lives in codebase/ (not in git) and mirrors the repository: changes made through tcm are written back
-# to its files as edits, which are what's committed. The first run makes it from tcm's server (TCM_ORIGIN, Railway
-# by default) when TCM_TOKEN has its token: the codebase with its history and releases, pulled, then the files
-# linked as its mirror (what they changed since, as updates). Without a token, or a server to pull from, it imports
-# the files instead.
+# tcm, working on tcm's own codebase: `pnpm tcm edit tcmts.core.semver.compatRange`, `pnpm tcm patch …`,
+# `pnpm tcm update`. The code lives in the codebase, in codebase/ (not in git); this repository only says how to get
+# it. The first run gets tcm itself, when there's no known-good build here yet (tcm's server has the one it runs:
+# $ORIGIN/tcm-ts.tgz), and makes the codebase by pulling it from the server (TCM_TOKEN has the server's token), with
+# its history and releases.
 #
-# It runs the known-good tcm, the build the last passing `pnpm verify` tested (dist/known-good), not the repository as
-# it is: a change that breaks tcm can't break the tcm making it, and a git checkout doesn't change it mid-session.
-# TCM_LIVE=1 runs the codebase's own tcm, as it is now (to try a change before verifying it): the known-good one runs
-# it from the codebase (`tcm run tcmts.cli.main.runCli`). A repository with no known-good build yet runs its files'.
+# It runs the known-good tcm, the build the last passing `pnpm verify` tested (dist/known-good): a change that breaks
+# tcm can't break the tcm making it. TCM_LIVE=1 runs the codebase's own tcm, as it is now (to try a change before
+# verifying it): the known-good one runs it from the codebase (`tcm run tcmts.cli.main.runCli`).
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-TCM="$REPO/dist/known-good/node_modules/tcm-ts/bin/tcm.js"
-LIVE=""
-if [ -n "${TCM_LIVE:-}" ] && [ -f "$TCM" ]; then
-  LIVE=1
-elif [ ! -f "$TCM" ]; then
-  echo "tcm: no known-good build yet (\`pnpm verify\` makes one); running the repository's as it is" >&2
-  TCM="$REPO/cli/bin/tcm.js"
-fi
+GOOD="$REPO/dist/known-good"
+TCM="$GOOD/node_modules/tcm-ts/bin/tcm.js"
 ORIGIN="${TCM_ORIGIN-https://tcm-server-production.up.railway.app}"
+# (what setting up prints goes to stderr: `pnpm tcm mcp`'s stdout is the protocol channel)
+if [ ! -f "$TCM" ]; then
+  echo "tcm: no known-good build here yet; getting the one $ORIGIN runs" >&2
+  mkdir -p "$GOOD"
+  curl -fsSL "$ORIGIN/tcm-ts.tgz" -o "$GOOD/tcm-ts.tgz" || { echo "tcm: couldn't get $ORIGIN/tcm-ts.tgz" >&2; exit 1; }
+  (cd "$GOOD" && npm init -y > /dev/null && npm install ./tcm-ts.tgz --no-audit --no-fund --loglevel=error >&2)
+  echo "from $ORIGIN, $(date -u '+%Y-%m-%d %H:%M')" > "$GOOD/VERIFIED"
+fi
 mkdir -p "$REPO/codebase"
 cd "$REPO/codebase"
-# (what making it prints goes to stderr: `pnpm tcm mcp`'s stdout is the protocol channel)
 if [ ! -f .tcm/codebase.sqlite ]; then
+  if [ -z "${TCM_TOKEN:-}" ]; then
+    echo "tcm: the codebase comes from tcm's server ($ORIGIN): set TCM_TOKEN to its token" >&2
+    exit 1
+  fi
   node "$TCM" init > /dev/null
   rm -f scratch.ts
-  if [ -n "$ORIGIN" ] && [ -n "${TCM_TOKEN:-}" ] && node "$TCM" remote add origin "$ORIGIN" --token "$TCM_TOKEN" >&2 && node "$TCM" pull >&2; then
-    node "$TCM" import .. --into tcmts --tests --mirror --update >&2
-  else
-    echo "tcm: making the codebase from the files (TCM_TOKEN, the server's token, makes it from $ORIGIN)" >&2
-    node "$TCM" import .. --into tcmts --tests --mirror >&2
-  fi
+  node "$TCM" remote add origin "$ORIGIN" --token "$TCM_TOKEN" >&2
+  node "$TCM" pull >&2
 fi
-# run from where it was called (pnpm says where: INIT_CWD), so paths given to it are the caller's; TCM_CODEBASE
-# says which codebase (tcm takes it out of the environment of what it runs, so tests work on their own)
+# run from where it was called (pnpm says where: INIT_CWD), so paths given to it are the caller's; TCM_CODEBASE says
+# which codebase (tcm leaves it out of what tests run, so they work on their own)
 export TCM_CODEBASE="$REPO/codebase"
 cd "${INIT_CWD:-$REPO/codebase}"
-if [ -n "$LIVE" ]; then exec node "$TCM" run tcmts.cli.main.runCli -- "$@"; fi
+if [ -n "${TCM_LIVE:-}" ]; then exec node "$TCM" run tcmts.cli.main.runCli -- "$@"; fi
 exec node "$TCM" "$@"
