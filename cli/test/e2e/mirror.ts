@@ -320,3 +320,38 @@ export const testMirrorWholeRepository = () => {
   assert.doesNotMatch(tcm("ls", "r"), /r\.scripts/);
   assert.match(tcm("mirror", "--check"), /the files hash to what the codebase holds/);
 };
+
+/**
+ * JSX coming to a namespace whose file is `.ts` makes it `.tsx` (JSX only parses there), and imports of it follow;
+ * the JSX is written, and edited, as it is.
+ */
+export const testMirrorJsxMakesTheFileTsx = () => {
+  const proj = path.join(tempDir("mirror tsx"), "proj");
+  const cbDir = path.join(proj, "codebase");
+  // a stand-in for React 19 (what JSX compiles to), so nothing is installed in the project
+  const react = path.join(proj, "node_modules", "react");
+  fs.mkdirSync(react, { recursive: true });
+  fs.mkdirSync(cbDir);
+  fs.writeFileSync(path.join(react, "package.json"), JSON.stringify({ name: "react", version: "19.0.0", type: "module", exports: { "./jsx-runtime": { types: "./jsx-runtime.d.ts", default: "./jsx-runtime.js" } } }));
+  fs.writeFileSync(path.join(react, "jsx-runtime.js"), `export const jsx = (type, props) => ({ type, props });\nexport const jsxs = jsx;\nexport const Fragment = "fragment";\n`);
+  fs.writeFileSync(path.join(react, "jsx-runtime.d.ts"), `export declare function jsx(type: unknown, props: unknown): JSX.Element;\nexport declare const jsxs: typeof jsx;\nexport declare const Fragment: unique symbol;\nexport declare namespace JSX {\n  type Element = { type: unknown; props: unknown };\n  interface IntrinsicElements { [name: string]: Record<string, unknown> }\n}\n`);
+  fs.writeFileSync(path.join(proj, ".gitignore"), "node_modules/\ncodebase/\n");
+  fs.writeFileSync(path.join(proj, "package.json"), JSON.stringify({ type: "module", dependencies: { react: "19.0.0" } }));
+  fs.writeFileSync(path.join(proj, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, module: "nodenext", jsx: "react-jsx", noEmit: true, allowImportingTsExtensions: true } }));
+  fs.writeFileSync(path.join(proj, "ui.ts"), "export const shout = (s: string): string => s.toUpperCase();\n");
+  fs.writeFileSync(path.join(proj, "main.ts"), `import { shout } from "./ui.ts";\n\nexport const hi = (): string => shout("hi");\n`);
+  assert.equal(spawnSync("git", ["-C", proj, "init", "-q"]).status, 0);
+  const ok = (...args: string[]) => okIn(cbDir, ...args);
+  ok("init");
+  fs.rmSync(path.join(cbDir, "scratch.ts"));
+  ok("import", "..", "--into", "app", "--mirror");
+  const title = `export const Title = ({ text }: { text: string }) => <>{text && <b className="t">{shout(text)}</b>}</>;`;
+  fs.writeFileSync(path.join(cbDir, "scratch.tsx"), `// tcm: namespace app.ui\nimport { shout } from "#codebase/app/ui";\n\n${title}\n`);
+  assert.match(ok("add", "scratch.tsx"), /mirror: wrote ui\.ts \(now ui\.tsx\)/);
+  assert.ok(!fs.existsSync(path.join(proj, "ui.ts")));
+  assert.equal(fs.readFileSync(path.join(proj, "ui.tsx"), "utf8"), `export const shout = (s: string): string => s.toUpperCase();\n\n${title}\n`);
+  assert.match(fs.readFileSync(path.join(proj, "main.ts"), "utf8"), /import \{ shout \} from "\.\/ui\.tsx";/);
+  assert.match(ok("mirror", "--check"), /the files hash to what the codebase holds/);
+  ok("edit", "app.ui.Title", "--file", "edit.tsx");
+  assert.match(fs.readFileSync(path.join(cbDir, "edit.tsx"), "utf8"), /\nexport const Title = \(\{ text \}: \{ text: string \}\) => <>\{text && <b className="t">\{shout\(text\)\}<\/b>\}<\/>/);
+}

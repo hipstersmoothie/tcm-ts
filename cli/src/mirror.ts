@@ -28,13 +28,13 @@ export function sourceFiles(dir: string, exclude: Set<string>, tests: boolean): 
     // (a directory marked as holding files is files of the codebase, not code)
     // (nor another codebase, inside this one's directory)
     if (e.isDirectory()) return e.name.startsWith(".") || (SKIP_DIRS.has(e.name) && !(tests && TEST_DIRS.has(e.name))) || fs.existsSync(path.join(p, FILES_MARK)) || fs.existsSync(path.join(p, ".tcm")) ? [] : sourceFiles(p, exclude, tests);
-    return /\.(m|c)?ts$/.test(e.name) && !/\.d\.(m|c)?ts$|\.(test|spec)(-d)?\.(m|c)?ts$/.test(e.name) ? [p] : [];
+    return /\.(m|c)?tsx?$/.test(e.name) && !/\.d\.(m|c)?ts$|\.(test|spec)(-d)?\.(m|c)?tsx?$/.test(e.name) ? [p] : [];
   });
 }
 
 /** `core/src/analyze.ts` → `core.analyze`, `store/src/index.ts` → `store` */
 export function namespaceForFile(root: string, file: string): string {
-  const segs = path.relative(root, file).replace(/\.(m|c)?ts$/, "").split(path.sep).filter((s) => s !== "src");
+  const segs = path.relative(root, file).replace(/\.(m|c)?tsx?$/, "").split(path.sep).filter((s) => s !== "src");
   if (segs.at(-1) === "index") segs.pop();
   return segs.map((s) => s.replace(/[^\w$]/g, "_").replace(/^(\d)/, "_$1")).join(".");
 }
@@ -335,7 +335,8 @@ function codeFor(rec: DefRecord, leaf: string, spelling: Spelling, exported: boo
     text = text.slice(0, s.start) + spelled + text.slice(s.end);
   }
   if (!exported) return text;
-  const starts = ts.parse("code.ts", text).statements.map((st) => st.getStart());
+  // (JSX only parses as .tsx)
+  const starts = ts.parse(rec.jsx ? "code.tsx" : "code.ts", text).statements.map((st) => st.getStart());
   for (const at of [...starts].reverse()) text = text.slice(0, at) + "export " + text.slice(at);
   return text;
 }
@@ -430,6 +431,21 @@ export function syncMirror(cb: Codebase): boolean {
     byNs.set(ns, rel);
     now.set(ns, names);
     created.push(rel);
+  }
+  // JSX comes to a namespace whose file is .ts, where it can't parse: the file becomes .tsx, and imports of it follow
+  const renamedFiles: { from: string; to: string }[] = [];
+  for (const [rel, f] of code()) {
+    if (!/(?<!\.d)\.ts$/.test(rel) || !Object.values(now.get(f.ns)!).some((h) => cb.store.getDef(h)?.jsx)) continue;
+    const to = `${rel}x`;
+    if (fs.existsSync(abs(to))) {
+      problems.push(`${f.ns} has JSX now, which ${rel} can't hold, and ${to} is there already`);
+      continue;
+    }
+    fs.renameSync(abs(rel), abs(to));
+    m.files[to] = f;
+    delete m.files[rel];
+    byNs.set(f.ns, to);
+    renamedFiles.push({ from: rel, to });
   }
   // where each definition of the mirror lives now, for references to it
   const home = new Map<string, { file: string; ns: string; leaf: string }>();
@@ -567,6 +583,10 @@ export function syncMirror(cb: Codebase): boolean {
   }
   // files outside the mirror that a rename reached, as they were
   let outside = new Map<string, string>();
+  for (const r of renamedFiles) {
+    const files = [...Object.keys(m.files).filter((rel) => !isAsset(rel, m.dir)).map(abs), ...nearbyFiles(m, [path.basename(r.from)])];
+    for (const [file, text] of followFileRename(files, new Set(Object.keys(m.files).map(abs)), abs(r.from), abs(r.to))) if (!outside.has(file)) outside.set(file, text);
+  }
   if (moves.length && !problems.length) {
     const files = [...Object.keys(m.files).map(abs), ...nearbyFiles(m, moves.map((v) => v.leaf))];
     outside = followMoves(files, new Set(Object.keys(m.files).map(abs)), moves, problems);
@@ -584,13 +604,18 @@ export function syncMirror(cb: Codebase): boolean {
     for (const rel of created) fs.rmSync(abs(rel), { force: true });
     for (const [file, text] of outside) fs.writeFileSync(file, text);
     for (const [rel, bytes] of assetsBefore) fs.writeFileSync(abs(rel), bytes);
+    for (const r of renamedFiles) {
+      fs.renameSync(abs(r.to), abs(r.from));
+      m.files[r.from] = m.files[r.to]!;
+      delete m.files[r.to];
+    }
     for (const rel of createdAssets) {
       fs.rmSync(abs(rel), { force: true });
       delete m.files[rel];
     }
   };
   // nothing written (the codebase's changes left the text alone): the files are as they were
-  const wrote = created.length > 0 || outside.size > 0 || assetsBefore.size > 0 || createdAssets.length > 0 || [...before].some(([rel, text]) => fs.readFileSync(abs(rel), "utf8") !== text);
+  const wrote = created.length > 0 || renamedFiles.length > 0 || outside.size > 0 || assetsBefore.size > 0 || createdAssets.length > 0 || [...before].some(([rel, text]) => fs.readFileSync(abs(rel), "utf8") !== text);
   if (!problems.length && wrote) {
     // the files must hash to what the codebase holds; a renamed function or class doesn't until the codebase takes
     // the renamed code
@@ -607,7 +632,7 @@ export function syncMirror(cb: Codebase): boolean {
     for (const p of problems.slice(0, 10)) console.log(red(`  ${p}`));
     return false;
   }
-  const changed = [...[...before].filter(([rel, text]) => fs.readFileSync(abs(rel), "utf8") !== text).map(([rel]) => rel), ...assetsBefore.keys(), ...createdAssets];
+  const changed = [...renamedFiles.map((r) => `${r.from} (now ${r.to})`), ...[...before].filter(([rel, text]) => fs.readFileSync(abs(rel), "utf8") !== text).map(([rel]) => rel), ...assetsBefore.keys(), ...createdAssets];
   if (changed.length) console.log(dim(`mirror: wrote ${changed.join(", ")}${outside.size ? ` (and renamed in ${[...outside.keys()].map((f) => path.relative(m.dir, f)).join(", ")}, outside it)` : ""}`));
   for (const [rel, f] of Object.entries(m.files)) {
     if (!isAsset(rel, m.dir)) {
@@ -1158,3 +1183,26 @@ export const assetFormat = (file: string): string => fileFormat(file) ?? path.ex
  * Whether this process works on the branch a mirror's files are (a session on another doesn't touch them).
  */
 export const onMirrorBranch = (cb: Codebase, m: Mirror): boolean => cb.store.branch().name === m.branch;
+
+/**
+ * Imports and re-exports of the file `from`, renamed `to` (`site.ts` to `site.tsx`), pointed at its new name.
+ * Returns the text of the files outside `mirrored` it changed, as they were.
+ */
+export function followFileRename(files: string[], mirrored: Set<string>, from: string, to: string): Map<string, string> {
+  const outside = new Map<string, string>();
+  for (const file of new Set(files)) {
+    if (!fs.existsSync(file)) continue;
+    const text = fs.readFileSync(file, "utf8");
+    const edits: Edit[] = [];
+    for (const st of ts.parse(file, text).statements) {
+      const spec = (ts.isImportDeclaration(st) || ts.isExportDeclaration(st)) && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier) ? st.moduleSpecifier : undefined;
+      if (!spec?.text.startsWith(".") || path.resolve(path.dirname(file), spec.text) !== from) continue;
+      // the quotes kept, the name changed
+      edits.push({ start: spec.end - 1 - path.basename(from).length, end: spec.end - 1, text: path.basename(to) });
+    }
+    if (!edits.length) continue;
+    if (!mirrored.has(file)) outside.set(file, text);
+    fs.writeFileSync(file, applyEdits(text, edits));
+  }
+  return outside;
+}

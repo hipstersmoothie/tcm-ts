@@ -93,7 +93,8 @@ export function exampleNames(code: string): { start: number; end: number; name: 
 }
 
 /** Where each top-level statement of some code starts, after the comments above it (to put `export` there). */
-export function statementStarts(code: string): number[] {
-  const sf = ts.parse("code.ts", code);
+export function statementStarts(code: string, jsx = false): number[] {
+  // (JSX only parses as .tsx)
+  const sf = ts.parse(jsx ? "code.tsx" : "code.ts", code);
   return sf.statements.map((s) => s.getStart(sf));
 }

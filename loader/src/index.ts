@@ -271,7 +271,7 @@ export function render(members: DefRecord[], src: DefSource, lay: Layout, opts: 
     // `export` before each statement (every overload of a function needs one), after any comments above it, so
     // `// @ts-expect-error` lines stay directly above the declaration
     const body = bodies.get(m.hash)!;
-    const inserts = opts.exportDeclarations ? statementStarts(body) : [];
+    const inserts = opts.exportDeclarations ? statementStarts(body, !!m.jsx) : [];
     let exported = body;
     for (const at of [...inserts].reverse()) exported = exported.slice(0, at) + "export " + exported.slice(at);
     bodyAt.set(m.hash, { line: lines.length, inserts });

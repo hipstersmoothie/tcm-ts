@@ -30,7 +30,8 @@ and the rest of each file stays as written (comments, import style, barrels):
 - **An edited definition** (`tcm edit`, then `tcm update`; a merge; a pull) is replaced where it is in its file. What
   it refers to is spelled the way the file already spells it (`ts.Node` through a namespace import, `parse` through
   a named one); imports it needs are added, and ones it stopped using are removed.
-- **A new definition** goes at the end of its namespace's file; **a removed one** is deleted. What a file comes to
+- **A new definition** goes at the end of its namespace's file (a `.ts` file becomes `.tsx` when JSX comes to
+  it, and imports of it follow); **a removed one** is deleted. What a file comes to
   import from another (anything in the codebase can be imported) is exported there. A namespace no file
   is for yet gets one, where the mirror reads it back as that namespace: next to a sibling namespace's file, in
   its parent's directory, or by the namespace's path.
