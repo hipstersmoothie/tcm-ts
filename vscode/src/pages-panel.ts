@@ -158,6 +158,11 @@ export function html(webview: vscode.Webview): string {
   .group h3 { margin: 10px 14px 4px; font-size: .95em; opacity: .8; }
   details.kind > summary { margin: 8px 14px 2px; font-size: .95em; font-weight: 600; cursor: pointer; }
   details.kind > summary .muted { font-weight: normal; }
+  .tabs { display: flex; gap: 2px; margin: 12px 14px 6px; border-bottom: 1px solid var(--vscode-panel-border); }
+  .tab { font: inherit; background: none; border: none; border-bottom: 2px solid transparent; color: var(--vscode-foreground); opacity: .7; padding: 6px 12px; margin-bottom: -1px; cursor: pointer; }
+  .tab:hover { opacity: 1; }
+  .tab.on { opacity: 1; border-bottom-color: var(--vscode-focusBorder); font-weight: 600; }
+  .tab .muted { font-weight: normal; }
   .group ul { list-style: none; margin: 0 14px 8px; padding: 0; }
   .group li { margin: 3px 0; } .group .summary { opacity: .75; }
   /* package (releases) pages */
@@ -243,10 +248,11 @@ function packageCard(c) {
   const facts = [p.types ? "types from @types (" + esc(p.types) + ")" : "", p.integrity ? "tarball " + esc(p.integrity.slice(0, 24)) + "…" : "",
     p.otherRanges.length ? "also runs " + p.otherRanges.map((r) => '<a data-package-name="' + esc(p.name) + '" data-package-range="' + esc(r) + '">' + esc(r) + "</a>").join(", ") : ""].filter(Boolean);
   if (facts.length) h += '<div class="section why">' + facts.join(" · ") + "</div>";
-  if (p.users.length) h += '<div class="lists"><div class="list"><h4>Used by</h4><ul>' + p.users.map((u) => "<li>" + link({ hash: u.hash, name: u.path, kind: u.kind, signature: u.signature }, c.key) + "</li>").join("") + "</ul></div></div>";
-  if (c.readmeHtml) h += '<div class="group"><h3>README</h3></div><div class="doc">' + c.readmeHtml + "</div>";
+  // the rest in tabs: README, API, what uses it
+  const tabs = [];
+  if (c.readmeHtml) tabs.push(["readme", "README", '<div class="doc">' + c.readmeHtml + "</div>"]);
   if (p.api.length) {
-    h += '<div class="group"><h3>API (' + p.api.length + ")</h3></div>";
+    let api = "";
     const entry = (a, i) => '<div class="section"><b class="f">' + esc(a.name) + '</b> <span class="badge">' + esc(a.kind) + "</span>" +
       (a.signature ? '<pre class="src">' + (a.html || esc(a.signature)) + "</pre>" : "") + (c.docs[i] ? '<div class="doc">' + c.docs[i] + "</div>" : "") + "</div>";
     // by kind, each section folding; a big API starts folded, to read as an overview
@@ -255,11 +261,21 @@ function packageCard(c) {
     for (const [kind, label] of [...API_KINDS, ["", "Other"]]) {
       const items = p.api.map((a, i) => [a, i]).filter(([a]) => (kind ? a.kind === kind : !known.includes(a.kind)));
       if (!items.length) continue;
-      h += '<details class="kind"' + open + '><summary>' + label + ' <span class="muted">' + items.length + "</span></summary>" + items.map(([a, i]) => entry(a, i)).join("") + "</details>";
+      api += '<details class="kind"' + open + '><summary>' + label + ' <span class="muted">' + items.length + "</span></summary>" + items.map(([a, i]) => entry(a, i)).join("") + "</details>";
     }
+    tabs.push(["api", 'API <span class="muted">' + p.api.length + "</span>", api]);
   }
+  if (p.users.length) tabs.push(["users", 'Used by <span class="muted">' + p.users.length + "</span>", '<div class="lists"><div class="list"><ul>' + p.users.map((u) => "<li>" + link({ hash: u.hash, name: u.path, kind: u.kind, signature: u.signature }, c.key) + "</li>").join("") + "</ul></div></div>"]);
+  if (!tabs.length) return h;
+  // the tab last chosen stays chosen when the page is drawn again
+  const current = tabs.some(([id]) => id === packageTab) ? packageTab : tabs[0][0];
+  h += '<div class="tabs">' + tabs.map(([id, label]) => '<button class="tab' + (id === current ? " on" : "") + '" data-tab="' + id + '">' + label + "</button>").join("") + "</div>";
+  h += tabs.map(([id, , body]) => '<div class="tabpanel" data-panel="' + id + '"' + (id === current ? "" : " hidden") + ">" + body + "</div>").join("");
   return h;
 }
+
+/** The package page tab last chosen. */
+let packageTab;
 
 /** A package's exports, by kind, in the order its page shows them. */
 const API_KINDS = [["function", "Functions"], ["class", "Classes"], ["interface", "Interfaces"], ["type", "Types"], ["enum", "Enums"], ["value", "Values"], ["namespace", "Namespaces"]];
@@ -334,6 +350,13 @@ window.addEventListener("message", (e) => {
   root.firstChild.addEventListener("click", (ev) => {
     const a = ev.target.closest("a, button");
     if (!a) return;
+    // a tab: its panel shows, the others hide
+    if (a.dataset.tab) {
+      packageTab = a.dataset.tab;
+      for (const t of root.querySelectorAll(".tab")) t.classList.toggle("on", t === a);
+      for (const panel of root.querySelectorAll(".tabpanel")) panel.hidden = panel.dataset.panel !== packageTab;
+      return;
+    }
     if (a.dataset.hash) return vscode.postMessage({ type: "open", hash: a.dataset.hash });
     if (a.dataset.namespace !== undefined) return vscode.postMessage({ type: "open", namespace: a.dataset.namespace });
     if (a.dataset.packageName) return vscode.postMessage({ type: "open", package: { name: a.dataset.packageName, range: a.dataset.packageRange } });

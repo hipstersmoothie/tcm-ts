@@ -131,13 +131,15 @@ The `#` icon in the activity bar opens these views:
     bypass the table's own type checks and migrations.
 - **Packages.** The npm packages the codebase runs ([packages](packages.md)): each package with its locked
   version and how many definitions use it, by range when it runs more than one (React 18 and 19, say), and
-  under each, the definitions using it. Click one to open its **package page**:
-  - its README (the `@types` package's, when it has none), description, license, homepage and npm links;
-  - its API as its types declare it: every export, with its signature (highlighted) and JSDoc, in a foldable section per kind
-    (functions, classes, interfaces, types, enums, values, namespaces; folded to start with when there are many);
-  - what uses it, linking to those definitions' pages, and the other ranges the codebase runs;
-  - **Upgrade** (`tcm upgrade <package>`: newest versions within the range, nothing re-hashed) and **Move to
-    another range** (`tcm upgrade <package>@<range> [namespace]`).
+  under each, the definitions using it. Click one to open its **package page**: its description, license,
+  homepage and npm links, the other ranges the codebase runs, **Upgrade** (`tcm upgrade <package>`: newest versions
+  within the range, nothing re-hashed) and **Move to another range** (`tcm upgrade <package>@<range> [namespace]`),
+  then tabs (the one you chose stays chosen as the page refreshes):
+  - **README**: the package's (the `@types` package's, when it has none);
+  - **API**: as its types declare it, every export with its signature (highlighted) and JSDoc, in a foldable
+    section per kind (functions, classes, interfaces, types, enums, values, namespaces; folded to start with when
+    there are many);
+  - **Used by**: the definitions using it, linking to their pages.
 
   A definition page's **Packages** list links to these pages too.
 - **Releases.** The codebase's own packages ([publishing](publishing.md#packages)), each with its latest
