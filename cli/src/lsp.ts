@@ -133,6 +133,15 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
   let isVsCode = false;
   let canRefresh = { lens: false, hints: false };
   const docs = new Map<string, DocState>();
+  // a definition's document as a `tcm:` URI, rendered only when the editor asks for it (tcm/source)
+  const lazyUri = (hash: string) => `tcm:/@${hash}${cb!.store.getDef(hash)?.jsx ? ".tsx" : ".ts"}`;
+  // where the codebase's code runs, worked out once per state of the names (it reads the whole codebase)
+  let placed: { at: string; placement: Placement } | undefined;
+  const placementNow = (): Placement => {
+    const at = `${cb!.store.branch().name}@${cb!.store.logHead()}`;
+    if (placed?.at !== at) placed = { at, placement: new Placement(cb!) };
+    return placed.placement;
+  };
   let nextId = 1;
   const send = connect(process.stdin, process.stdout, (m) => {
     try {
@@ -251,7 +260,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       return { range: { start: p, end: p }, command: { title, command, arguments: args } };
     };
     if (s.typeErrors) return [lens(0, `tcm: ${s.typeErrors} type error${s.typeErrors > 1 ? "s" : ""}; nothing hashed until they're fixed`)];
-    const placement = cb ? new Placement(cb) : undefined;
+    const placement = cb ? placementNow() : undefined;
     return s.rows.flatMap((r) => {
       const at = r.def.range.start;
       const short = shortHash(r.def.hash);
@@ -296,7 +305,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     const names = c.store.pathsOf(hash);
     const lines = [`**${heading ?? (names.join(", ") || "(unnamed)")}** \`${shortHash(hash)}\``, "", "```ts", rec.kind === "type" ? `${rec.signature}` : `: ${rec.signature}`, "```"];
     if (rec.kind === "term") {
-      const d = new Placement(c).describe(hash);
+      const d = placementNow().describe(hash);
       lines.push(`${d[0]!.toUpperCase()}${d.slice(1)}.`);
     }
     const users = c.store.dependents(hash).filter((d) => c.store.pathsOf(d).length).length;
@@ -376,6 +385,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         if (!name?.startsWith("codebase.sqlite")) return;
         clearTimeout(changeTimer);
         changeTimer = setTimeout(() => {
+          placed = undefined;
           for (const d of docs.values()) {
             d.analyzed = undefined;
             schedule(d, false);
@@ -502,7 +512,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
     }
   };
   // the same text as the definition's file in .tcm/src
-  const view = (uri: string): View | undefined => viewText(cb!, hashesOf(uri).filter((h) => cb!.store.getDef(h)));
+  const view = (uri: string): View | undefined => viewText(cb!, hashesOf(uri).filter((h) => cb!.store.getDef(h)), placementNow());
   const span = (text: string, start: number, end: number) => {
     const { pos } = lines(text);
     return { start: pos(start), end: pos(end) };
@@ -602,7 +612,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       if (dot >= 0) namespaces.set(rest.slice(0, dot), (namespaces.get(rest.slice(0, dot)) ?? 0) + 1);
       else defs.push(n);
     }
-    const placement = new Placement(c);
+    const placement = placementNow();
     return {
       namespaces: [...namespaces].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([name, count]) => ({ name, path: prefix + name, count })),
       definitions: defs
@@ -673,7 +683,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
    */
   const apps = () => {
     const c = cb!;
-    const placement = new Placement(c);
+    const placement = placementNow();
     const names = c.store.names();
     const rows = rowCounts();
     return names
@@ -1108,7 +1118,7 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
       // pages, as in Unison's codebase UI
       case "tcm/page": {
         const target = p?.hash ? String(p.hash) : p?.uri ? hashesOf(String(p.uri))[0] : p?.path ? cb?.lookup(String(p.path))[0] : undefined;
-        const placement = cb && new Placement(cb);
+        const placement = cb && placementNow();
         const page = cb && target ? definitionPage(cb, target, placement!, { viewUri }) : undefined;
         // (an app's page starts it, rather than running it as a program)
         const rec = target ? cb?.store.getDef(target) : undefined;
@@ -1145,13 +1155,13 @@ export function serveLsp(findCodebase: (dir: string) => Codebase, tools: LspTool
         return;
       case "tcm/branchChanges":
         try {
-          send({ id: m.id, result: cb ? branchChanges(cb, String(p?.branch ?? ""), viewUri) : [] });
+          send({ id: m.id, result: cb ? branchChanges(cb, String(p?.branch ?? ""), lazyUri) : [] });
         } catch (e) {
           send({ id: m.id, error: { code: -32602, message: (e as Error).message } });
         }
         return;
       case "tcm/historyEntry":
-        send({ id: m.id, result: cb ? entryChanges(cb, String(p?.hash ?? ""), viewUri) : [] });
+        send({ id: m.id, result: cb ? entryChanges(cb, String(p?.hash ?? ""), lazyUri) : [] });
         return;
       // find in files, for the codebase: lines of definitions and pages with the text in them
       case "tcm/searchCode":

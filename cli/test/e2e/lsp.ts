@@ -624,9 +624,11 @@ export const testChangesInEditor = () => withChildren(async (keep) => {
   const update = await c.request("tcm/historyEntry", { hash: history[1].hash });
   assert.deepEqual(update.map((x: any) => [x.change, x.path]), [["edited", "lib.square"], ["propagated", "lib.area"]]);
   assert.deepEqual(update[1].because, ["lib.square"]);
-  // the code before and after, to diff
-  assert.match(fs.readFileSync(fileURLToPath(update[0].oldUri), "utf8"), /x \* x/);
-  assert.match(fs.readFileSync(fileURLToPath(update[0].uri), "utf8"), /x \*\* 2/);
+  // the code before and after, to diff: documents rendered when the editor asks for them
+  assert.match(update[0].oldUri, /^tcm:\/@\w+\.ts$/);
+  const text = async (uri: string) => (await c.request("tcm/source", { uri })).text as string;
+  assert.match(await text(update[0].oldUri), /x \* x/);
+  assert.match(await text(update[0].uri), /x \*\* 2/);
   const mv = await c.request("tcm/historyEntry", { hash: history[0].hash });
   assert.deepEqual(mv.map((x: any) => [x.change, x.path, x.from]), [["renamed", "lib.areaOf", "lib.area"]]);
 
@@ -638,7 +640,7 @@ export const testChangesInEditor = () => withChildren(async (keep) => {
   const toIdea = await c.request("tcm/branchChanges", { branch: "idea" });
   assert.deepEqual(toIdea.map((x: any) => [x.change, x.path]), [["added", "lib.areaOf"]]);
   // (its code, with this branch's names: here it has none, so it reads as it was written)
-  assert.match(fs.readFileSync(fileURLToPath(toIdea[0].uri), "utf8"), /=> square\(s\)/);
+  assert.match(await text(toIdea[0].uri), /=> square\(s\)/);
 });
 
 /**
