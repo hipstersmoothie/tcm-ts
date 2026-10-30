@@ -14,6 +14,7 @@ import { createProgram, ts, SERVER_API_MODULE, type DefRecord, type ExtRef, type
 import type { Codebase } from "./codebase.ts";
 import { dim, red, yellow } from "./style.ts";
 import { filesIn, fileFormat, fileDefinition, fileLeaf, fileContent, fileName, formatOf, dirSegment } from "./files.ts";
+import assert from "node:assert/strict";
 
 // ---- what a project's files are, as namespaces ---------------------------------------------------------
 
@@ -181,6 +182,12 @@ class Spelling {
   private prefix = new Map<string, string>();
   /** imports the code written here needs: what each brings in, and whether any use of it is a value's */
   private wanted: { key: string; spec: string; name: string; local: string; value: boolean; file?: string }[] = [];
+  /** what the file's code already uses as a value (the rest it may import as types only) */
+  private values = new Set<string>();
+  /** and by name (for a definition re-hashed since) */
+  private valueNames = new Set<string>();
+  /** names the file imports as types only that the code written here uses as values: their imports become value imports */
+  readonly promoted = new Set<string>();
   private taken: Set<string>;
   private cb: Codebase;
   private file: string;
@@ -206,9 +213,13 @@ class Spelling {
         const key = this.keyOf(s);
         if (!key || s.literal) continue;
         const text = rec.sourceText.slice(s.start, s.end);
+        const was = s.hash && nameWas(s.hash);
+        if (s.pos !== "type") {
+          this.values.add(key);
+          if (was) this.valueNames.add(was);
+        }
         if (s.shorthand) continue;
         if (!this.exact.has(key)) this.exact.set(key, text);
-        const was = s.hash && nameWas(s.hash);
         if (was && !this.byName.has(was)) this.byName.set(was, text);
         const dot = text.lastIndexOf(".");
         const mod = this.moduleOf(s);
@@ -262,13 +273,26 @@ class Spelling {
     if (known) {
       const w = this.wanted.find((x) => x.key === key);
       if (w && s.pos !== "type") w.value = true;
+      // imported here for its type only, until now
+      if (!w && s.pos !== "type" && !this.values.has(key) && /^[A-Za-z_$][\w$]*$/.test(known)) {
+        this.values.add(key);
+        this.promoted.add(known);
+      }
       return known;
     }
     if (s.hash) {
       const t = this.fileOf(s.hash);
       if (!t) throw new Error(`refers to #${s.hash.slice(0, 8)}, which isn't in the mirror`);
-      const named = this.byName.get(joinName(t.ns, t.leaf));
-      if (named) return this.remember(key, named);
+      const name = joinName(t.ns, t.leaf);
+      const named = this.byName.get(name);
+      if (named) {
+        // imported here for its type only, until now
+        if (s.pos !== "type" && !this.valueNames.has(name) && /^[A-Za-z_$][\w$]*$/.test(named)) {
+          this.valueNames.add(name);
+          this.promoted.add(named);
+        }
+        return this.remember(key, named);
+      }
       if (t.ns === this.ns) return this.remember(key, t.leaf);
       const pre = this.prefix.get(t.file);
       if (pre) return this.remember(key, pre + t.leaf);
@@ -537,7 +561,7 @@ export function syncMirror(cb: Codebase): boolean {
       const at = importsAt(abs(rel), text);
       edits.push({ start: at, end: at, text: (at ? "\n" : "") + spelling.imports.join("\n") + (at ? "" : "\n") });
     }
-    if (edits.length) fs.writeFileSync(abs(rel), pruneImports(abs(rel), text, applyEdits(text, edits)));
+    if (edits.length) fs.writeFileSync(abs(rel), valueImports(abs(rel), pruneImports(abs(rel), text, applyEdits(text, edits)), spelling.promoted));
     imported.push(...spelling.importedFrom);
   }
   // in the codebase anything can be imported; in the files, what's imported from another is exported there
@@ -1205,4 +1229,52 @@ export function followFileRename(files: string[], mirrored: Set<string>, from: s
     fs.writeFileSync(file, applyEdits(text, edits));
   }
   return outside;
+}
+
+/**
+ * A type-only import of what code now uses as a value becomes a value import: the whole of it, one specifier of
+ * several, or an inline `type`.
+ */
+export const testValueImports = () => {
+  const names = new Set(["Placement"]);
+  assert.equal(valueImports("a.ts", `import type { Placement } from "./placement.ts";\n`, names), `import { Placement } from "./placement.ts";\n`);
+  assert.equal(valueImports("a.ts", `import type { Placement, View } from "./p.ts";\n`, names), `import type { View } from "./p.ts";\nimport { Placement } from "./p.ts";\n`);
+  assert.equal(valueImports("a.ts", `import { type Placement, x } from "./p.ts";\n`, names), `import { Placement, x } from "./p.ts";\n`);
+  assert.equal(valueImports("a.ts", `import type { View } from "./p.ts";\n`, names), `import type { View } from "./p.ts";\n`);
+}
+
+/**
+ * `text` with its type-only imports of `names` made value imports, for code that now uses them as values:
+ * `import type { Placement }` becomes `import { Placement }`, and one of several names moves to an import of its own.
+ */
+export function valueImports(file: string, text: string, names: Set<string>): string {
+  if (!names.size) return text;
+  const sf = ts.parse(file, text);
+  const edits: Edit[] = [];
+  for (const st of sf.statements) {
+    if (!ts.isImportDeclaration(st) || !st.importClause) continue;
+    const clause = st.importClause;
+    const named = clause.namedBindings && ts.isNamedImports(clause.namedBindings) ? [...clause.namedBindings.elements] : [];
+    if (ts.isTypeOnlyImport(clause)) {
+      const moving = named.filter((e) => names.has(e.name.text));
+      const whole = (clause.name && names.has(clause.name.text)) || (moving.length && moving.length === named.length);
+      if (whole) {
+        // `import type` → `import`
+        const at = text.indexOf("type", st.getStart(sf) + "import".length);
+        edits.push({ start: at, end: at + "type".length + (/\s/.exec(text[at + 4] ?? "") ? 1 : 0), text: "" });
+      } else if (moving.length) {
+        const from = text.slice(st.moduleSpecifier.getStart(sf), st.moduleSpecifier.end);
+        const list = (es: typeof named) => es.map((e) => text.slice(e.getStart(sf), e.end)).join(", ");
+        edits.push({ start: st.getStart(sf), end: st.end, text: `import type { ${list(named.filter((e) => !names.has(e.name.text)))} } from ${from};\nimport { ${list(moving)} } from ${from};` });
+      }
+      continue;
+    }
+    // `import { type Placement }` → `import { Placement }`
+    for (const e of named) {
+      if (!e.isTypeOnly || !names.has(e.name.text)) continue;
+      const at = e.getStart(sf);
+      edits.push({ start: at, end: text.indexOf("type", at) + "type".length + 1, text: "" });
+    }
+  }
+  return applyEdits(text, edits);
 }
