@@ -24,6 +24,10 @@ directory. `tcm remote` lists them; `tcm remote rm <name>` removes one.
 - **Proposing changes for review** is a contribution: `tcm contribute` pushes a branch and opens one on the
   remote ([contributions](contributions.md)).
 
+Everything named travels: code, and the codebase's [files](pages.md) (pages, images, configuration), which are
+history like code. A file from elsewhere is checked by its content: its text and links must be what its hash
+says, and bytes must match their digest.
+
 ## Serving a codebase
 
 `tcm serve [--port 7737] [--host 127.0.0.1] [--token t] [--no-run] [--tls [--tls-cert f --tls-key f]]

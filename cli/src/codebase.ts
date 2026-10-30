@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { registerHooks } from "node:module";
 import {
   compareVersions,
@@ -401,8 +402,20 @@ export class Codebase {
    * Dependencies and signatures are taken from the local analysis, not from the sender.
    */
   receive(records: DefRecord[]): { stored: number } {
-    const fresh = records.filter((r) => !this.store.hasDef(r.hash));
-    if (!fresh.length) return { stored: 0 };
+    const all = records.filter((r) => !this.store.hasDef(r.hash));
+    if (!all.length) return { stored: 0 };
+    // files kept as written are checked by their content: they aren't modules
+    const files = all.filter((r) => r.kind === "file");
+    const fresh = all.filter((r) => r.kind !== "file");
+    const checkedFiles = files.map((f) => {
+      const why = fileProblem(f);
+      if (why) throw new Error(`rejected definitions: ${shortHash(f.hash)} ${why}`);
+      return { ...f, deps: [...new Set(f.spans.map((s) => s.hash!))].map((h) => ({ ref: `#${h}`, pos: "value" as const, strict: false })), componentHash: f.hash, componentIndex: 0, componentSize: 1 };
+    });
+    if (!fresh.length) {
+      this.putDefs(checkedFiles);
+      return { stored: checkedFiles.length };
+    }
     const byComp = new Map<string, DefRecord[]>();
     for (const r of fresh) byComp.set(r.componentHash, [...(byComp.get(r.componentHash) ?? []), r]);
     for (const [c, ms] of byComp) {
@@ -442,7 +455,8 @@ export class Codebase {
         return { ...d, deps: local.deps, signature: local.signature, params: local.params, table: local.table };
       }),
     );
-    return { stored: fresh.length };
+    this.putDefs(checkedFiles);
+    return { stored: fresh.length + checkedFiles.length };
   }
 
   /**
@@ -744,3 +758,39 @@ runs tests (cached by hash). Don't edit files under .tcm/. \`tcm help\` lists ev
 `;
   fs.writeFileSync(agents, had ? `${had.trimEnd()}\n\n${note}` : `# Agents\n\n${note}`);
 }
+
+/**
+ * What's wrong with a file definition from another codebase, if anything: its IR must hash to its hash, and its
+ * content must be what the IR says (the text between its links, each link to what the IR names; or bytes with the
+ * IR's digest).
+ */
+export function fileProblem(rec: DefRecord): string | undefined {
+  let ir: IR[];
+  try {
+    ir = JSON.parse(rec.ir) as IR[];
+  } catch {
+    return "has an IR that isn't JSON";
+  }
+  if (ir[0] !== "File" || typeof ir[1] !== "string") return "isn't a file";
+  if (hashIR(ir as IR) !== rec.hash) return "doesn't hash to its claimed hash";
+  const parts = ir.slice(2);
+  const bytes = parts[0];
+  if (Array.isArray(bytes) && bytes[0] === "Bytes") {
+    const digest = createHash("sha256").update(Buffer.from(rec.sourceText, "base64")).digest("hex");
+    return parts.length === 1 && bytes[1] === digest ? undefined : "has bytes that aren't its own";
+  }
+  let at = 0;
+  let link = 0;
+  for (const p of parts) {
+    if (typeof p === "string") {
+      if (rec.sourceText.slice(at, at + p.length) !== p) return "has text that isn't its own";
+      at += p.length;
+      continue;
+    }
+    const span = rec.spans[link++];
+    if (!Array.isArray(p) || p[0] !== "Ref" || !span || span.start !== at || span.hash !== p[1]) return "has links that aren't its own";
+    at = span.end;
+  }
+  return at === rec.sourceText.length && link === rec.spans.length ? undefined : "has text that isn't its own";
+}
+

@@ -36,6 +36,26 @@ function startServerInfo(keep: Keep, dir: string, token: string, ...extra: strin
   });
 }
 
+/** files kept as written (a page linking to code, an image) are history like code: pushed and pulled with it */
+export const testFilesTravel = () => {
+  const root = tempDir("sync files");
+  const a = codebase(root, "a");
+  a.scratch(`// tcm: namespace lib\nexport const square = (x: number) => x * x;\n`);
+  a.tcm("add");
+  fs.writeFileSync(path.join(a.dir, "guide.md"), "# Guide\n\nUse {@link lib.square}.\n");
+  a.tcm("add", "guide.md", "--into", "docs");
+  const b = codebase(root, "b");
+  fs.rmSync(path.join(b.dir, "scratch.ts"));
+  b.tcm("remote", "add", "origin", a.dir);
+  b.tcm("pull");
+  assert.match(b.tcm("view", "docs.guide"), /Use \{@link lib\.square\}\./);
+  // a change to a file alone is a change to the history
+  fs.writeFileSync(path.join(a.dir, "guide.md"), "<!-- tcm: path docs.guide -->\n# The guide\n\nUse {@link lib.square}.\n");
+  assert.match(a.tcm("update", "guide.md"), /update +docs\.guide/);
+  b.tcm("pull");
+  assert.match(b.tcm("view", "docs.guide"), /# The guide/);
+};
+
 /** pull, push and divergence between codebase directories */
 export const testPullPushDivergence = () => {
   const root = tempDir("sync");

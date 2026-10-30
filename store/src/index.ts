@@ -459,7 +459,7 @@ export class Store {
 
   /** Fingerprint of a branch's namespace, for detecting concurrent changes during sync. */
   stateHash(branch?: string): string {
-    return stateHashOf(this.names(branch));
+    return stateHashOf(this.names(branch, true));
   }
 
   /** Make `branch` name exactly `rows`, logging each change on that branch (a new causal follows). */
@@ -636,7 +636,8 @@ export class Store {
       if (name === undefined) continue;
       const head = this.head(name);
       const current = this.causal(head)!;
-      const namespace = this.namespaceOf(this.names(name));
+      // (files kept as written are history like code: they travel with it)
+      const namespace = this.namespaceOf(this.names(name, true));
       const extra = [...(this.pendingParents.get(id) ?? [])].filter((p) => p !== head);
       if (namespace === current.namespace && !extra.length) continue;
       const mine = this.made.get(id) === head;
