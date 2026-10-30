@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { okIn, repoPath, tempDir } from "./harness.ts";
+import { okIn, tempDir } from "./harness.ts";
+import { createRequire } from "node:module";
+import { tcmBin } from "./harness.ts";
 
 function hashOf(dir: string, name: string): string {
   const db = new DatabaseSync(path.join(dir, ".tcm", "codebase.sqlite"), { readOnly: true });
@@ -142,13 +144,13 @@ export const testProjectTypesFound = () => {
   // `types: ["node"]` with @types/node installed in the project (here, linked to the one tcm's tests use)
   const project = tempDir("import types");
   fs.writeFileSync(path.join(project, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, types: ["node"] } }));
-  const types = fs.realpathSync(repoPath("node_modules/@types/node"));
+  const types = fs.realpathSync(path.dirname(createRequire(tcmBin()).resolve("@types/node/package.json")));
   fs.mkdirSync(path.join(project, "node_modules", "@types"), { recursive: true });
   fs.symlinkSync(types, path.join(project, "node_modules", "@types", "node"), "dir");
   fs.writeFileSync(path.join(project, "platform.ts"), `export const platform = (): string => process.platform;\n`);
   tcm("init");
   assert.match(tcm("import", project, "--into", "host"), /\+ new/);
-};
+}
 
 /** --tests imports tests written as definitions; tcm test runs them, cached by hash */
 export const testImportTestsCachedByHash = () => {

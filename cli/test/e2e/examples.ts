@@ -5,7 +5,10 @@ import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { CHROME, hydrated, pageText, withPage } from "../browser.ts";
-import { plainEnv, repoPath, tcmBin, tempDir, withChildren } from "./harness.ts";
+import { plainEnv, tcmBin, tempDir, withChildren } from "./harness.ts";
+import { POLLS } from "../../../fixtures.ts";
+import { NOTES } from "../../../fixtures.ts";
+import { GEOMETRY } from "../../../fixtures.ts";
 
 type Keep = <C extends ChildProcess>(c: C) => C;
 
@@ -36,7 +39,7 @@ async function startApp(keep: Keep, cwd: string, app: string): Promise<string> {
 export const testPollsExample = async () => {
   if (!CHROME) return console.log("skipped: no Chrome");
   const dir = path.join(tempDir("examples"), "polls");
-  const setup = spawnSync(repoPath("examples/polls/setup.sh"), [dir], { env: env(), encoding: "utf8" });
+  const setup = spawnSync(path.join(exampleDir(POLLS), "setup.sh"), [dir], { env: env(), encoding: "utf8" });
   const out = (setup.stdout + setup.stderr).replace(/\x1b\[[0-9;]*m/g, "");
   assert.equal(setup.status, 0, out);
   assert.match(out, /4 passed, 0 failed/);
@@ -64,13 +67,13 @@ export const testPollsExample = async () => {
     assert.match(text, /Tabs or spaces\?/);
     assert.match(text, /tabs\s+█+\s+100% \(1\)/);
   });
-};
+}
 
 /** the notes example: React server components with no directives, in a browser */
 export const testNotesExample = async () => {
   if (!CHROME) return console.log("skipped: no Chrome");
   const notesDir = path.join(tempDir("examples"), "notes");
-  const setup = spawnSync(repoPath("examples/notes/setup.sh"), [notesDir], { env: env(), encoding: "utf8" });
+  const setup = spawnSync(path.join(exampleDir(NOTES), "setup.sh"), [notesDir], { env: env(), encoding: "utf8" });
   const out = (setup.stdout + setup.stderr).replace(/\x1b\[[0-9;]*m/g, "");
   assert.equal(setup.status, 0, out);
   assert.match(out, /8 passed, 0 failed/);
@@ -116,12 +119,12 @@ export const testNotesExample = async () => {
   const assets = path.join(notesDir, ".tcm", "apps", hashOf("notes.App", notesDir), "assets");
   const shipped = fs.readdirSync(assets).map((f) => fs.readFileSync(path.join(assets, f), "utf8")).join("\n");
   for (const secret of ["orderBy", "store.sqlite", "that note was deleted"]) assert.ok(!shipped.includes(secret), `${secret} must not reach the browser`);
-};
+}
 
 /** the geometry example: two packages, their releases, a contribution, and what's next */
 export const testGeometryExample = () => {
   const root = path.join(tempDir("examples"), "geometry");
-  const built = spawnSync(repoPath("examples/geometry/setup.sh"), [root], { env: env(), encoding: "utf8" });
+  const built = spawnSync(path.join(exampleDir(GEOMETRY), "setup.sh"), [root], { env: env(), encoding: "utf8" });
   const out = (built.stdout + built.stderr).replace(/\x1b\[[0-9;]*m/g, "");
   assert.equal(built.status, 0, out);
   const tcm = (...args: string[]) => {
@@ -143,4 +146,18 @@ export const testGeometryExample = () => {
   assert.match(tcm("contribution", "--all"), /#1 +merged +Hexagons/);
   assert.ok(JSON.parse(fs.readFileSync(path.join(root, ".vscode", "settings.json"), "utf8"))["tcm.path"], "the editor runs the same tcm");
   assert.match(tcm("check"), /⧩ 10/);
-};
+}
+
+/**
+ * An example's files, as the codebase keeps them, written to a directory of their own: its setup script runs from
+ * there. By path in the example.
+ */
+export function exampleDir(files: Record<string, string>): string {
+  const dir = tempDir("example");
+  for (const [rel, text] of Object.entries(files)) {
+    const file = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text, { mode: rel.endsWith(".sh") ? 0o755 : 0o644 });
+  }
+  return dir;
+}

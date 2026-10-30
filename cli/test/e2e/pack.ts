@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { plainEnv, repoPath, strip, tcmBin, tempDir } from "./harness.ts";
+import { plainEnv, strip, tcmBin, tempDir } from "./harness.ts";
 
 /** A new codebase with greet (a function with a doc, an interface, a main using a package) and ui (a component). */
 function setUp() {
@@ -94,10 +94,10 @@ export const testPackIntoPackage = () => {
   // checked the way a user's project would check it: tsc
   const compilerOptions = { module: "nodenext", strict: true, noEmit: true, allowImportingTsExtensions: true, skipLibCheck: true, types: [] };
   fs.writeFileSync(path.join(user, "tsconfig.json"), JSON.stringify({ compilerOptions, files: ["use.ts", "bad.ts"] }));
-  const tsc = path.join(path.dirname(createRequire(repoPath("package.json")).resolve("typescript/package.json")), "bin", "tsc");
+  const tsc = path.join(path.dirname(createRequire(tcmBin()).resolve("typescript/package.json")), "bin", "tsc");
   const errors = spawn(process.execPath, [tsc, "-p", ".", "--pretty", "false"], user).out.trim().split("\n");
   assert.deepEqual(errors, ["bad.ts(2,7): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'."]);
-};
+}
 
 /** A package pinned at two ranges keeps both, side by side. */
 export const testPackTwoRangesSideBySide = () => {

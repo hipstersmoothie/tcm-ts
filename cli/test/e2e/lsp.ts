@@ -7,7 +7,7 @@ import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { plainEnv, repoPath, tcmBin, tempDir, withChildren } from "./harness.ts";
+import { plainEnv, tcmBin, tempDir, withChildren } from "./harness.ts";
 
 /** What withChildren hands a test: keeps a process, to kill when the test ends. */
 type Keep = <C extends ChildProcess>(c: C) => C;
@@ -549,7 +549,8 @@ export const testVscodeRegistersNoServerCommands = () => withChildren(async (kee
   const c = client(keep);
   const init = await c.request("initialize", { processId: null, rootUri: null, capabilities: {}, clientInfo: { name: "Visual Studio Code" } });
   const offered: string[] = init.capabilities.executeCommandProvider.commands;
-  const extension = fs.readFileSync(repoPath("vscode/src/extension.ts"), "utf8");
+  // (its code, from the codebase this runs in)
+  const extension = spawnSync(process.execPath, [tcmBin(), "view", "tcmts.vscode.extension.activate"], { cwd: process.cwd(), env: plainEnv(), encoding: "utf8" }).stdout;
   const registered = [...extension.matchAll(/registerCommand\("([^"]+)"/g)].map((m) => m[1]);
   assert.ok(registered.length > 10);
   assert.deepEqual(registered.filter((r) => offered.includes(r)), [], "both registering one fails the client's start: 'command already exists'");

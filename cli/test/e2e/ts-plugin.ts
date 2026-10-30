@@ -5,13 +5,15 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import ts from "typescript6";
-import { plainEnv, repoPath, tcmBin, tempDir } from "./harness.ts";
+import { plainEnv, tcmBin, tempDir } from "./harness.ts";
+import { TS_PLUGIN } from "../../../fixtures.ts";
 
 type Plugin = () => { create(info: { languageService: ts.LanguageService }): ts.LanguageService };
 
 /** The VS Code extension's TypeScript plugin (vscode/files/plugin). */
 function vscodePlugin(): Plugin {
-  const file = repoPath("vscode/files/plugin/index.js");
+  const file = path.join(tempDir("ts plugin"), "index.js");
+  fs.writeFileSync(file, TS_PLUGIN);
   return createRequire(file)(file) as Plugin;
 }
 

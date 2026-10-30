@@ -14,7 +14,11 @@ export function tcmBin(): string {
 }
 
 /** The environment tcm runs in here: no colours, so its output reads as text. */
-export const plainEnv = (): NodeJS.ProcessEnv => ({ ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" });
+export const plainEnv = (): NodeJS.ProcessEnv => {
+  // (a test's tcm works on the test's own directories, whatever codebase runs it)
+  const { TCM_CODEBASE: _, ...env } = process.env;
+  return { ...env, NO_COLOR: "1", FORCE_COLOR: "0" };
+}
 
 /** Text without terminal escapes. */
 export const strip = (s: string): string => s.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "");
@@ -45,14 +49,3 @@ export async function withChildren<T>(fn: (keep: <C extends ChildProcess>(c: C) 
   }
 }
 
-/**
- * A path in tcm's repository (`examples/notes`, `vscode`): TCM_REPO if set, or the nearest directory up from here
- * that has it (`tcm test` runs these in tcm's codebase, inside the repository).
- */
-export function repoPath(rel: string): string {
-  if (process.env.TCM_REPO) return path.join(process.env.TCM_REPO, rel);
-  for (let d = process.cwd(); ; d = path.dirname(d)) {
-    if (fs.existsSync(path.join(d, rel))) return path.join(d, rel);
-    if (path.dirname(d) === d) throw new Error(`no ${rel} in a directory above ${process.cwd()}`);
-  }
-}

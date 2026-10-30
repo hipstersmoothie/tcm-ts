@@ -6,7 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { LINTS } from "../../src/semver-checks.ts";
-import { plainEnv, repoPath, strip, tcmBin, tempDir } from "./harness.ts";
+import { plainEnv, strip, tcmBin, tempDir } from "./harness.ts";
+import { RELEASES_DOC } from "../../../fixtures.ts";
 
 function codebase(name: string) {
   const dir = tempDir(`releases ${name}`);
@@ -130,7 +131,7 @@ export const testSemverChecks = () => {
 
 /** every semver lint is documented */
 export const testSemverLintsDocumented = () => {
-  const docs = fs.readFileSync(repoPath("docs/releases.md"), "utf8");
+  const docs = RELEASES_DOC;
   for (const [id, l] of Object.entries(LINTS)) assert.ok(docs.includes(`| \`${id}\` | ${l.level} |`), `${id} is in docs/releases.md`);
 }
 
