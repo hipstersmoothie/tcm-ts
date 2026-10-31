@@ -21,6 +21,10 @@ tcm add           # save new definitions from scratch.ts
 
 ## What's in it
 
+What it does away with (dead code, circular imports, `package.json`, monorepo tooling, version skew, rebuilding and
+retesting), each with where it stops and the test that proves it:
+[what tcm does away with](https://tcm-server-production.up.railway.app/claims.html).
+
 - **A content-addressed codebase.** Scratch files are ordinary TypeScript. `tcm add`/`update` store
   definitions by hash; updates re-hash dependents automatically, and what stops typechecking goes to `todo`.
   [Getting started](https://tcm-server-production.up.railway.app/getting-started.html) · [hashing](https://tcm-server-production.up.railway.app/hashing.html) · [CLI](https://tcm-server-production.up.railway.app/cli.html)
@@ -35,7 +39,7 @@ tcm add           # save new definitions from scratch.ts
   follow renames and updates, examples are evaluated, and `update` reports the ones that break.
   [Docs](https://tcm-server-production.up.railway.app/documentation.html)
 - **Tests with Vitest, with nothing to set up.** A test is a definition, cached by hash; it runs in Node, or in
-  Chrome when it renders a component. [Testing](https://tcm-server-production.up.railway.app/testing.html)
+  Chrome when it renders a component. Results (and lint findings) travel with push and pull. [Testing](https://tcm-server-production.up.railway.app/testing.html)
 - **Linting and formatting with nothing to set up.** oxlint, with plugins for what the code uses and findings
   cached by hash; oxfmt, which never changes a hash, so stored code is always formatted. Both are configured by a
   definition (`lint.config`, `fmt.config`). [Linting](https://tcm-server-production.up.railway.app/linting.html) · [formatting](https://tcm-server-production.up.railway.app/formatting.html)
@@ -46,7 +50,7 @@ tcm add           # save new definitions from scratch.ts
 - **History by meaning, as Unison keeps it.** History entries are hashed namespaces with parents, the same in
   every codebase; diffs ignore renames and reformatting; merges go by history; undo anything.
   [History and merging](https://tcm-server-production.up.railway.app/history.html)
-- **Releases with versions and changelogs that can't be wrong.** Any number of packages per codebase; each
+- **Releases with versions and changelogs from the API.** Any number of packages per codebase; each
   release's version comes from semver checks of what changed in the package's API (in the manner of
   cargo-semver-checks), and its notes list those changes, so the changelog writes itself.
   [Releases](https://tcm-server-production.up.railway.app/releases.html) · [publishing](https://tcm-server-production.up.railway.app/publishing.html)
