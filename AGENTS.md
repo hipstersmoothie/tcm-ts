@@ -12,7 +12,8 @@ tcm is developed in its own codebase, and nowhere else: this repository only say
 With the tcm MCP server (this repository's `.mcp.json`), use its tools: tcm_status to start, tcm_find, tcm_view and
 tcm_at to read, tcm_patch for a small change, tcm_edit then tcm_update for a bigger one, tcm_todo, tcm_test. Without
 it, `pnpm tcm <command>` is the CLI. The tcm doing this is the last build `pnpm verify` passed, not the code being
-changed: tcm_test tests the change, `TCM_LIVE=1 pnpm tcm …` runs it (from the codebase).
+changed: tcm_test tests the change, `TCM_LIVE=1 pnpm tcm …` runs it (from the codebase), and `live: true` on tcm_edit,
+tcm_patch, tcm_check, tcm_update and tcm_add edits with it, to use a change to tcm before it's verified.
 
 ## Keep the docs current
 
@@ -30,7 +31,8 @@ save with `tcm_update`.
 - **Check claims against the code**, not memory or older docs. Remove what's no longer true.
 - **The README stays short:** a pitch, quick start, and links into the docs.
 - **The examples (`tcmts.examples`) must keep working.** `tcmts.cli.test.e2e.examples` builds and runs them; when a
-  feature changes how code is written, update the examples too.
+  feature changes how code is written, update the examples too. Their files are kept as written, so tcm's codebase
+  doesn't typecheck them: `pnpm examples:check` does, in seconds, after a change to one.
 
 ## Verifying a change
 

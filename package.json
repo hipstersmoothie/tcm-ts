@@ -14,6 +14,7 @@
     "docs:site": "sh scripts/codebase.sh run tcmts.dev.site",
     "docs:dev": "sh scripts/codebase.sh dev tcmts.site.Docs",
     "server:deploy": "sh scripts/codebase.sh run tcmts.dev.deployServer",
+    "examples:check": "sh scripts/codebase.sh run tcmts.dev.checkExamples --",
     "repository": "sh scripts/codebase.sh run tcmts.dev.writeRepository"
   }
 }
