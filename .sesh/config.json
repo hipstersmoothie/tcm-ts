@@ -1,0 +1,4 @@
+{
+  "setup": "main=\"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)\" && ln -sfn \"$main/codebase\" codebase && ln -sfn \"$main/dist\" dist && ex=\"$(git rev-parse --git-path info/exclude)\" && mkdir -p \"$(dirname \"$ex\")\" && { grep -qx /codebase \"$ex\" || printf '/codebase\\n/dist\\n' >> \"$ex\"; }",
+  "preparedCopy": false
+}
