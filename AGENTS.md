@@ -49,11 +49,14 @@ codebase (`tcmts.fixtures`). Tests that call code directly go in a `test` namesp
 
 ## Rules
 
-- **Hashes are pinned.** The hash format (v1, `IR_VERSION` in `tcmts.core.hash`) is pinned by
+- **Hashes are pinned.** The hash format (v2, `IR_VERSION` in `tcmts.core.hash`) is pinned by
   `tcmts.core.test.golden`; `tcmts.core.slots` (the order the IR visits children in) is part of it. Change hashes
-  only on purpose: bump `IR_VERSION` and re-pin. tcm is v0 with no codebases to keep, so there's no migration code:
-  don't add compatibility for old codebases or formats. History hashes (namespaces and causals, which codebases
-  compare when they sync) are pinned the same way by `tcmts.store.test.history`.
+  only on purpose: bump `IR_VERSION`, add the step from the last format's IR (`tcmts.core.migrate.IR_STEPS`), and
+  re-pin, and add the old format's codebase as a fixture (`tcmts.fixtures.codebase-v1`, made with the known-good tcm
+  before the bump) for `tcmts.cli.test.e2e.migrate`. `tcm migrate` moves codebases, tcm's own included: `pnpm verify`
+  migrates it with the new tcm before making that tcm the known-good one, keeping both as they were. History hashes
+  (namespaces and causals, which codebases compare when they sync) are pinned the same way by
+  `tcmts.store.test.history`.
 - **`tcmts.cli.server_api.createServerApi` must stay self-contained:** its source is written to
   `.tcm/cache/tcm-server.js`, so it can only use what comes in through `deps`.
 - **No explicit client/server boundaries** (no `"use server"`): placement is inferred.
