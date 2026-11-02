@@ -13,7 +13,8 @@ With the tcm MCP server (this repository's `.mcp.json`), use its tools: tcm_stat
 tcm_at to read, tcm_patch for a small change, tcm_edit then tcm_update for a bigger one, tcm_todo, tcm_test. Without
 it, `pnpm tcm <command>` is the CLI. The tcm doing this is the last build `pnpm verify` passed, not the code being
 changed: tcm_test tests the change, `TCM_LIVE=1 pnpm tcm …` runs it (from the codebase), and `live: true` on tcm_edit,
-tcm_patch, tcm_check, tcm_update and tcm_add edits with it, to use a change to tcm before it's verified.
+tcm_patch, tcm_check, tcm_update, tcm_add and tcm_test uses it, to use a change to tcm before it's verified
+(tcm_cli with `live` and `cwd` runs it on a codebase made for a repro).
 
 ## Keep the docs current
 
@@ -25,8 +26,9 @@ save with `tcm_update`.
   API, error message users act on, guarantee or limitation.
 - **Put it on the page for its area.** A new area gets a new page, listed in the `tcmts.docs.README` index (and in
   the README's feature list, `tcmts.README`, if it's a headline feature).
-- **New CLI commands or flags** also go in `tcmts.docs.cli` and the command definitions in `tcmts.cli.commands`
-  (`tcm help`, `--help` and shell completion read them).
+- **New CLI commands or flags** also go in `tcmts.docs.cli` and the command's definitions: its route and help in
+  `tcmts.cli.commands` (`routeFind`, `helpFind`: `tcm help`, `--help` and shell completion read them) and its handler
+  in `tcmts.cli.run` (`runFind`); `tcmts.docs.developing` says how they fit.
 - **Fixed or newly found limits** are updated in `tcmts.docs.limitations`.
 - **Check claims against the code**, not memory or older docs. Remove what's no longer true.
 - **The README stays short:** a pitch, quick start, and links into the docs.
@@ -36,7 +38,10 @@ save with `tcm_update`.
 
 ## Verifying a change
 
-Run `pnpm verify` when a change is done; it names any failing tests. It's a definition in tcm's codebase
+Run `pnpm verify` when a change is done; it names any failing tests. A change on a session's branch (each MCP
+session has one: tcm_status names it) is verified there, `TCM_BRANCH=<branch> pnpm verify`: that checks it all
+without making it the known-good tcm, which waits for the change to land on main (when the user says to) and main
+to be verified. Plain `pnpm verify` checks main. It's a definition in tcm's codebase
 (`tcmts.dev.verify`, run with `pnpm tcm run`): it checks the codebase (`tcm todo`, `tcm verify`), runs its test
 definitions, builds the docs site, and packs tcm-ts and runs the end-to-end tests against that, all side by side.
 Tests run again only where code they ran changed, so with nothing changed it takes under a second, and a few
@@ -72,4 +77,7 @@ codebase (`tcmts.fixtures`). Tests that call code directly go in a `test` namesp
 - The repository's own few files (README, AGENTS.md, package.json, scripts/codebase.sh) are written from the
   codebase by `pnpm repository`; commit them when they change, ending the message with
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` when an agent wrote the change.
-- Never push (`tcm push` or git) or publish; that's done by hand.
+- Work stays on its branch until the user says to land it on main (then tcm_merge, approved); never land it
+  otherwise.
+- Never push (`tcm push`, `tcm contribute` or git) or publish; that's done by hand. Contributing from outside is
+  `tcmts.docs.contributing`.

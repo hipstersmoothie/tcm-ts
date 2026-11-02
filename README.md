@@ -68,6 +68,9 @@ retesting), each with where it stops and the test that proves it:
   atomic updates and transactions. [Data](https://tcm-server-production.up.railway.app/data.html)
 - **Background jobs pinned to the code that enqueued them,** plus cron schedules. [Jobs](https://tcm-server-production.up.railway.app/jobs.html)
 - **Deploy and roll back by moving a name;** old tabs keep working. [Production](https://tcm-server-production.up.railway.app/production.html)
+- **Local-first PWAs and static sites.** A `pwa` beside the app makes it installable, opening offline and updating
+  itself; `tcm build --static` writes an app that needs no server as files for any static host.
+  [PWAs](https://tcm-server-production.up.railway.app/pwa.html)
 - **Self-hosting:** tcm-ts is developed in tcm: all of it is in its own codebase, served by tcm's server, and
   this repository only says how to get it (`pnpm tcm`). It verifies itself, and its tests run against its own
   build. [Browse its code](https://tcm-server-production.up.railway.app/code/index.html) ·
@@ -75,6 +78,7 @@ retesting), each with where it stops and the test that proves it:
 
 New here? Read the [introduction](https://tcm-server-production.up.railway.app/introduction.html), then follow the tutorials:
 [your first codebase](https://tcm-server-production.up.railway.app/tutorial-codebase.html) and [your first web app](https://tcm-server-production.up.railway.app/tutorial-app.html). Or try the
-[examples](https://tcm-server-production.up.railway.app/examples.html): polls, a React notes app, and packages with their releases and changelogs.
+[examples](https://tcm-server-production.up.railway.app/examples.html): polls, a React notes app, a local-first PWA, and packages with their releases and changelogs.
+To work on tcm itself: [contributing](CONTRIBUTING.md).
 
 All documentation: [the docs site](https://tcm-server-production.up.railway.app/). Open items: [limitations](https://tcm-server-production.up.railway.app/limitations.html).

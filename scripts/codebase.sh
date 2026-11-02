@@ -2,8 +2,8 @@
 # tcm, working on tcm's own codebase: `pnpm tcm edit tcmts.core.semver.compatRange`, `pnpm tcm patch …`,
 # `pnpm tcm update`. The code lives in the codebase, in codebase/ (not in git); this repository only says how to get
 # it. The first run gets tcm itself, when there's no known-good build here yet (tcm's server has the one it runs:
-# $ORIGIN/tcm-ts.tgz), and makes the codebase by pulling it from the server (TCM_TOKEN has the server's token), with
-# its history and releases.
+# $ORIGIN/tcm-ts.tgz), and makes the codebase by pulling it from the server, which anyone can, with its history and
+# releases. TCM_TOKEN, if set, is the token `origin` gets: the maintainer's, or a contributor's (`tcm user add`).
 #
 # It runs the known-good tcm, the build the last passing `pnpm verify` tested (dist/known-good): a change that breaks
 # tcm can't break the tcm making it. TCM_LIVE=1 runs the codebase's own tcm, as it is now (to try a change before
@@ -24,13 +24,9 @@ fi
 mkdir -p "$REPO/codebase"
 cd "$REPO/codebase"
 if [ ! -f .tcm/codebase.sqlite ]; then
-  if [ -z "${TCM_TOKEN:-}" ]; then
-    echo "tcm: the codebase comes from tcm's server ($ORIGIN): set TCM_TOKEN to its token" >&2
-    exit 1
-  fi
   node "$TCM" init > /dev/null
   rm -f scratch.ts
-  node "$TCM" remote add origin "$ORIGIN" --token "$TCM_TOKEN" >&2
+  node "$TCM" remote add origin "$ORIGIN" ${TCM_TOKEN:+--token "$TCM_TOKEN"} >&2
   node "$TCM" pull >&2
 fi
 # `pnpm tcm` works in codebase/ too (its package.json is the codebase's own)
@@ -38,6 +34,8 @@ node -e 'const fs = require("fs"); const p = JSON.parse(fs.readFileSync("package
 # run from where it was called (pnpm says where: INIT_CWD), so paths given to it are the caller's; TCM_CODEBASE says
 # which codebase (tcm leaves it out of what tests run, so they work on their own)
 export TCM_CODEBASE="$REPO/codebase"
+# and where the builds are kept (the known-good one, the one before it, older ones): `tcm builds`, `tcm --build <name>`
+export TCM_BUILDS="$REPO/dist"
 cd "${INIT_CWD:-$REPO/codebase}"
 if [ -n "${TCM_LIVE:-}" ]; then exec node "$TCM" run tcmts.cli.main.runCli -- "$@"; fi
 exec node "$TCM" "$@"
