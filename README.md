@@ -54,8 +54,11 @@ retesting), each with where it stops and the test that proves it:
   release's version comes from semver checks of what changed in the package's API (in the manner of
   cargo-semver-checks), and its notes list those changes, so the changelog writes itself.
   [Releases](https://tcm-server-production.up.railway.app/releases.html) · [publishing](https://tcm-server-production.up.railway.app/publishing.html)
+- **A forge in every server.** `tcm serve` has a web UI: the codebase's front page, its code by namespace and
+  definition, search by name, doc or type, history, and contributions reviewed along a review path (new code
+  before what uses it, re-hashed definitions folded), commented on and merged. [Web UI](https://tcm-server-production.up.railway.app/web-ui.html) ·
 - **Contributions.** Propose a branch with `tcm contribute`, review it as a diff of definitions (in the terminal
-  or on `tcm serve`'s review page), comment, and merge it on the server. [Contributions](https://tcm-server-production.up.railway.app/contributions.html)
+  or in the web UI), comment, and merge it on the server. [Contributions](https://tcm-server-production.up.railway.app/contributions.html)
 - **Sync and remote execution by hash.** Push, pull and `run --on` send only missing hashes, and received
   code is re-verified, never trusted. [Sync](https://tcm-server-production.up.railway.app/sync.html)
 - **Browser apps with no network boundary to write.** Placement is inferred from what code uses; server
