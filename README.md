@@ -56,7 +56,7 @@ retesting), each with where it stops and the test that proves it:
   [Releases](https://tcm-server-production.up.railway.app/releases.html) · [publishing](https://tcm-server-production.up.railway.app/publishing.html)
 - **A forge in every server.** `tcm serve` has a web UI: the codebase's front page, its code by namespace and
   definition, search by name, doc or type, history, and contributions reviewed along a review path (new code
-  before what uses it, re-hashed definitions folded), commented on and merged. [Web UI](https://tcm-server-production.up.railway.app/web-ui.html) ·
+  before what uses it, re-hashed definitions folded), commented on and merged. [Web UI](https://tcm-server-production.up.railway.app/web-ui.html)
 - **Contributions.** Propose a branch with `tcm contribute`, review it as a diff of definitions (in the terminal
   or in the web UI), comment, and merge it on the server. [Contributions](https://tcm-server-production.up.railway.app/contributions.html)
 - **Sync and remote execution by hash.** Push, pull and `run --on` send only missing hashes, and received
